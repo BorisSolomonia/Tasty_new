@@ -1,0 +1,132 @@
+# Production Deployment - Tasty ERP Microservices
+# Deploy with: docker-compose up -d
+# Uses same pattern as legacy app: GitHub Actions -> Artifact Registry -> VM
+
+version: "3.9"
+
+services:
+  # Frontend - static build served in container
+  frontend:
+    image: us-central1-docker.pkg.dev/tastyapp-ff8b2/tastydebt/tasty-erp-frontend:${TAG:-latest}
+    container_name: tasty-erp-frontend
+    restart: unless-stopped
+    expose: ["80"]
+    networks: [web]
+    mem_limit: 256m
+    cpus: "0.25"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # Waybill Service - RS.ge integration
+  waybill-service:
+    image: us-central1-docker.pkg.dev/tastyapp-ff8b2/tastydebt/tasty-erp-waybill:${TAG:-latest}
+    container_name: tasty-erp-waybill
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      - SERVER_PORT=8081
+      - SPRING_PROFILES_ACTIVE=production
+    expose: ["8081"]
+    networks: [web]
+    mem_limit: 768m
+    cpus: "0.5"
+    volumes:
+      - ./secrets/firebase-sa.json:/secrets/firebase-sa.json:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+
+  # Payment Service - Excel processing & reconciliation
+  payment-service:
+    image: us-central1-docker.pkg.dev/tastyapp-ff8b2/tastydebt/tasty-erp-payment:${TAG:-latest}
+    container_name: tasty-erp-payment
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      - SERVER_PORT=8082
+      - SPRING_PROFILES_ACTIVE=production
+    expose: ["8082"]
+    networks: [web]
+    mem_limit: 768m
+    cpus: "0.5"
+    volumes:
+      - ./secrets/firebase-sa.json:/secrets/firebase-sa.json:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+
+  # Config Service - Settings & initial debts
+  config-service:
+    image: us-central1-docker.pkg.dev/tastyapp-ff8b2/tastydebt/tasty-erp-config:${TAG:-latest}
+    container_name: tasty-erp-config
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      - SERVER_PORT=8888
+      - SPRING_PROFILES_ACTIVE=production
+    expose: ["8888"]
+    networks: [web]
+    mem_limit: 256m
+    cpus: "0.25"
+    volumes:
+      - ./secrets/firebase-sa.json:/secrets/firebase-sa.json:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+
+  # Caddy - Reverse Proxy (same as legacy)
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile.production:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - caddy_logs:/var/log/caddy
+    networks: [web]
+    mem_limit: 128m
+    cpus: "0.25"
+    healthcheck:
+      test: ["CMD", "caddy", "version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      frontend:
+        condition: service_healthy
+      waybill-service:
+        condition: service_healthy
+      payment-service:
+        condition: service_healthy
+      config-service:
+        condition: service_healthy
+
+volumes:
+  caddy_data:
+    external: true
+  caddy_config:
+  caddy_logs:
+
+networks:
+  web:
+    external: true

@@ -1,0 +1,32 @@
+.git
+.github
+.claude
+
+# Frontend dependencies/build outputs (break docker context on Windows)
+tasty-erp-frontend/node_modules
+tasty-erp-frontend/dist
+tasty-erp-frontend/.vite
+
+# Node artifacts anywhere
+**/node_modules
+**/.vite
+**/dist
+**/build
+
+# Maven/Gradle outputs
+**/target
+**/.gradle
+
+# IDE/OS noise
+**/.idea
+**/.vscode
+**/*.iml
+**/.DS_Store
+**/Thumbs.db
+
+# Local secrets and logs
+secrets
+**/*.log
+
+# Other local projects that may be adjacent in the workspace
+tasty_sal_app_2

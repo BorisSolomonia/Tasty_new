@@ -1,0 +1,79 @@
+# Caddyfile for Tasty ERP
+# Handles SSL termination and routing directly to services (Bypassing Java Gateway)
+
+{
+    # Global options
+    email admin@tastyerp.ge
+
+    # Logging
+    log {
+        output file /var/log/caddy/access.log
+        format console
+    }
+}
+
+# Development/staging - HTTP only
+:80 {
+    # ==================== CORS Configuration ====================
+    # Note: Allowing credentials with "*" is invalid, so we echo the Origin.
+    @cors_origin header Origin *
+    @cors_preflight {
+        method OPTIONS
+        path /api/*
+        header Origin *
+        header Access-Control-Request-Method *
+    }
+    handle @cors_preflight {
+        header {
+            Access-Control-Allow-Origin "{http.request.header.Origin}"
+            Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+            Access-Control-Allow-Headers "{http.request.header.Access-Control-Request-Headers}"
+            Access-Control-Allow-Credentials "true"
+            Access-Control-Max-Age "86400"
+            Vary "Origin, Access-Control-Request-Method, Access-Control-Request-Headers"
+        }
+        respond "" 204
+    }
+
+    # ==================== Service Routing (Direct, No Java Gateway) ====================
+    # Apply CORS response headers for any API request that included an Origin.
+    handle /api/* {
+        header @cors_origin {
+            Access-Control-Allow-Origin "{http.request.header.Origin}"
+            Access-Control-Allow-Credentials "true"
+            Vary "Origin"
+        }
+
+        # Route by prefix (explicit handles avoid matcher ambiguity).
+        handle /api/waybills* {
+            reverse_proxy waybill-service:8081 host.docker.internal:8081 localhost:8081 {
+                lb_try_duration 5s
+                lb_try_interval 250ms
+            }
+        }
+
+        handle /api/payments* {
+            reverse_proxy payment-service:8082 host.docker.internal:8082 localhost:8082 {
+                lb_try_duration 5s
+                lb_try_interval 250ms
+            }
+        }
+
+        handle /api/config* {
+            reverse_proxy config-service:8888 host.docker.internal:8888 localhost:8888 {
+                lb_try_duration 5s
+                lb_try_interval 250ms
+            }
+        }
+
+        respond "Unknown API route" 404
+    }
+
+    # Health check endpoint
+    respond /health 200
+
+    # Frontend (Vite dev server in Docker)
+    handle {
+        reverse_proxy frontend:3000
+    }
+}

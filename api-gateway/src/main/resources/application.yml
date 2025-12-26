@@ -1,0 +1,79 @@
+spring:
+  application:
+    name: api-gateway
+  config:
+    import: "optional:file:../.env[.properties],optional:file:.env[.properties]"
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:default}
+  cloud:
+    gateway:
+      routes:
+        # Waybill Service Routes
+        - id: waybill-service
+          uri: ${WAYBILL_SERVICE_URL:http://localhost:8081}
+          predicates:
+            - Path=/api/waybills/**
+
+        # Payment Service Routes
+        - id: payment-service
+          uri: ${PAYMENT_SERVICE_URL:http://localhost:8082}
+          predicates:
+            - Path=/api/payments/**
+
+        # Config Service Routes
+        - id: config-service
+          uri: ${CONFIG_SERVICE_URL:http://localhost:8888}
+          predicates:
+            - Path=/api/config/**
+
+      # Global CORS configuration
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOriginPatterns:
+              - ${FRONTEND_URL:http://localhost:3000}
+              - ${ALLOWED_ORIGIN_PATTERN:http://localhost:*}
+            allowedMethods:
+              - GET
+              - POST
+              - PUT
+              - DELETE
+              - OPTIONS
+            allowedHeaders: "*"
+            allowCredentials: true
+            maxAge: 3600
+
+server:
+  port: ${SERVER_PORT:3005}
+
+# Actuator
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway,metrics
+  endpoint:
+    gateway:
+      enabled: true
+    health:
+      show-details: when-authorized
+
+# OpenAPI aggregation
+springdoc:
+  swagger-ui:
+    urls:
+      - name: waybill-service
+        url: /api/waybills/api-docs
+      - name: payment-service
+        url: /api/payments/api-docs
+      - name: config-service
+        url: /api/config/api-docs
+
+# Logging
+logging:
+  level:
+    ge.tastyerp: ${LOG_LEVEL:INFO}
+    org.springframework.cloud.gateway: INFO
+    reactor.netty: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

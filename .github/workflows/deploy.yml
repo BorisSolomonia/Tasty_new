@@ -1,0 +1,106 @@
+name: Deploy Tasty ERP
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: tastyapp-ff8b2
+  REGION: us-central1
+  AR_REPO: tastydebt
+  IMAGE_PREFIX: us-central1-docker.pkg.dev/tastyapp-ff8b2/tastydebt
+  SECRET_PROJECT: "282950310544"
+  SECRET_ENV: env
+  SECRET_FIREBASE: firebase-sa
+  DEPLOY_DIR: /opt/apps/tasty-erp
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push images
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_SHA}"
+
+          docker build -f waybill-service/Dockerfile \
+            -t "${IMAGE_PREFIX}/tasty-erp-waybill:${TAG}" \
+            -t "${IMAGE_PREFIX}/tasty-erp-waybill:latest" .
+          docker push "${IMAGE_PREFIX}/tasty-erp-waybill:${TAG}"
+          docker push "${IMAGE_PREFIX}/tasty-erp-waybill:latest"
+
+          docker build -f payment-service/Dockerfile \
+            -t "${IMAGE_PREFIX}/tasty-erp-payment:${TAG}" \
+            -t "${IMAGE_PREFIX}/tasty-erp-payment:latest" .
+          docker push "${IMAGE_PREFIX}/tasty-erp-payment:${TAG}"
+          docker push "${IMAGE_PREFIX}/tasty-erp-payment:latest"
+
+          docker build -f config-service/Dockerfile \
+            -t "${IMAGE_PREFIX}/tasty-erp-config:${TAG}" \
+            -t "${IMAGE_PREFIX}/tasty-erp-config:latest" .
+          docker push "${IMAGE_PREFIX}/tasty-erp-config:${TAG}"
+          docker push "${IMAGE_PREFIX}/tasty-erp-config:latest"
+
+          docker build -f tasty-erp-frontend/Dockerfile \
+            --build-arg VITE_API_URL=/api \
+            -t "${IMAGE_PREFIX}/tasty-erp-frontend:${TAG}" \
+            -t "${IMAGE_PREFIX}/tasty-erp-frontend:latest" .
+          docker push "${IMAGE_PREFIX}/tasty-erp-frontend:${TAG}"
+          docker push "${IMAGE_PREFIX}/tasty-erp-frontend:latest"
+
+      - name: Upload compose and Caddy config
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_SSH_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          source: "compose.production.yml,Caddyfile.production"
+          target: ${{ env.DEPLOY_DIR }}
+          overwrite: true
+
+      - name: Deploy on VM
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_SSH_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: |
+            set -e
+
+            mkdir -p "${{ env.DEPLOY_DIR }}/secrets"
+
+            gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+            gcloud secrets versions access latest \
+              --secret="${{ env.SECRET_ENV }}" \
+              --project="${{ env.SECRET_PROJECT }}" > "${{ env.DEPLOY_DIR }}/.env"
+
+            gcloud secrets versions access latest \
+              --secret="${{ env.SECRET_FIREBASE }}" \
+              --project="${{ env.SECRET_PROJECT }}" > "${{ env.DEPLOY_DIR }}/secrets/firebase-sa.json"
+
+            docker network create web 2>/dev/null || true
+            docker volume create caddy_data 2>/dev/null || true
+            docker volume create caddy_config 2>/dev/null || true
+            docker volume create caddy_logs 2>/dev/null || true
+
+            cd "${{ env.DEPLOY_DIR }}"
+            docker compose -f compose.production.yml pull
+            docker compose -f compose.production.yml up -d --wait
+
+            curl -f http://localhost/health >/dev/null

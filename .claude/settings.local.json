@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir /s /b \"C:\\Users\\Boris\\Dell\\Projects\\APPS\\ERP\\Tasty_erp_new\")",
+      "Bash(findstr:*)",
+      "Bash(tree:*)",
+      "Bash(dir /s /b)",
+      "Bash(mvn:*)",
+      "mcp__ide__getDiagnostics",
+      "Bash(docker --version:*)",
+      "Bash(docker-compose:*)",
+      "Bash(docker compose:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker logs:*)",
+      "Bash(curl:*)",
+      "Bash(npm run build:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx vite:*)",
+      "Bash(npm install)",
+      "Bash(cat:*)",
+      "Bash(python3:*)",
+      "Bash(tasklist:*)",
+      "Bash(docker exec:*)",
+      "Bash(dir:*)",
+      "Bash(npm run dev:*)",
+      "Bash(node:*)",
+      "Bash(python -m json.tool:*)",
+      "Bash(timeout /t 1)",
+      "Bash(ping:*)",
+      "Bash(cmd /c \"cd /d C:\\\\Users\\\\Boris\\\\Dell\\\\Projects\\\\APPS\\\\ERP\\\\Tasty_erp_new\\\\tasty-erp-frontend && npm run dev\")",
+      "Bash(if exist compose.yml move compose.yml compose.production.yml)",
+      "Bash(if exist docker-compose.dev.yml copy docker-compose.dev.yml compose.yml)",
+      "Bash(ren:*)",
+      "Bash(copy:*)",
+      "Bash(timeout /t 15)"
+    ]
+  }
+}

@@ -1,0 +1,66 @@
+spring:
+  application:
+    name: payment-service
+  config:
+    import: "optional:file:../.env[.properties],optional:file:.env[.properties]"
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:default}
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+server:
+  port: ${SERVER_PORT:8082}
+
+# Firebase Configuration - ALL FROM ENVIRONMENT VARIABLES
+firebase:
+  project-id: ${FIREBASE_PROJECT_ID}
+  credentials-path: ${FIREBASE_CREDENTIALS_PATH:/secrets/firebase-sa.json}
+
+# Business Logic Defaults
+business:
+  cutoff-date: ${CUTOFF_DATE:2025-04-29}
+  payment-cutoff-date: ${PAYMENT_CUTOFF_DATE:2025-04-29}
+  batch-size: ${BATCH_SIZE:100}
+  max-date-range-months: ${MAX_DATE_RANGE_MONTHS:12}
+
+# Future: Banking API Configuration
+bank-api:
+  tbc:
+    enabled: ${TBC_BANK_API_ENABLED:false}
+    base-url: ${TBC_BANK_API_URL:}
+    client-id: ${TBC_BANK_CLIENT_ID:}
+    client-secret: ${TBC_BANK_CLIENT_SECRET:}
+  bog:
+    enabled: ${BOG_BANK_API_ENABLED:false}
+    base-url: ${BOG_BANK_API_URL:}
+    api-key: ${BOG_BANK_API_KEY:}
+  sync-interval-minutes: ${BANK_SYNC_INTERVAL:60}
+
+# Actuator endpoints
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+
+# OpenAPI/Swagger
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operationsSorter: method
+
+# Logging
+logging:
+  level:
+    ge.tastyerp: ${LOG_LEVEL:INFO}
+    com.google.cloud: WARN
+    org.apache.poi: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} [%X{requestId}] - %msg%n"

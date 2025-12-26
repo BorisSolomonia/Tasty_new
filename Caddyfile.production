@@ -1,0 +1,24 @@
+:80 {
+    log {
+        output file /var/log/caddy/access.log
+        format console
+    }
+
+    handle /api/waybills* {
+        reverse_proxy waybill-service:8081
+    }
+
+    handle /api/payments* {
+        reverse_proxy payment-service:8082
+    }
+
+    handle /api/config* {
+        reverse_proxy config-service:8888
+    }
+
+    respond /health 200
+
+    handle {
+        reverse_proxy frontend:80
+    }
+}

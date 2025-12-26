@@ -1,0 +1,116 @@
+version: "3.9"
+
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: tasty-erp-frontend/Dockerfile.dev
+    container_name: tasty-erp-frontend
+    restart: unless-stopped
+    environment:
+      - VITE_API_URL=/api
+      - VITE_PROXY_TARGET=http://caddy
+    expose:
+      - "3000"
+    networks: [web]
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: api-gateway/Dockerfile
+    container_name: tasty-erp-gateway
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      - SERVER_PORT=3005
+      - SPRING_PROFILES_ACTIVE=dev
+      - WAYBILL_SERVICE_URL=http://waybill-service:8081
+      - PAYMENT_SERVICE_URL=http://payment-service:8082
+      - CONFIG_SERVICE_URL=http://config-service:8888
+    ports:
+      - "3005:3005"
+    networks: [web]
+    volumes:
+      - ./secrets/firebase-sa.json:/secrets/firebase-sa.json:ro
+    depends_on:
+      - waybill-service
+      - payment-service
+      - config-service
+
+  waybill-service:
+    build:
+      context: .
+      dockerfile: waybill-service/Dockerfile
+    container_name: tasty-erp-waybill
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      - SERVER_PORT=8081
+      - SPRING_PROFILES_ACTIVE=dev
+    ports:
+      - "8081:8081"
+    networks: [web]
+    volumes:
+      - ./secrets/firebase-sa.json:/secrets/firebase-sa.json:ro
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: payment-service/Dockerfile
+    container_name: tasty-erp-payment
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      - SERVER_PORT=8082
+      - SPRING_PROFILES_ACTIVE=dev
+    ports:
+      - "8082:8082"
+    networks: [web]
+    volumes:
+      - ./secrets/firebase-sa.json:/secrets/firebase-sa.json:ro
+
+  config-service:
+    build:
+      context: .
+      dockerfile: config-service/Dockerfile
+    container_name: tasty-erp-config
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      - SERVER_PORT=8888
+      - SPRING_PROFILES_ACTIVE=dev
+    ports:
+      - "8888:8888"
+    networks: [web]
+    volumes:
+      - ./secrets/firebase-sa.json:/secrets/firebase-sa.json:ro
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - caddy_logs:/var/log/caddy
+    networks: [web]
+    depends_on:
+      - frontend
+      - waybill-service
+      - payment-service
+      - config-service
+
+volumes:
+  caddy_data:
+  caddy_config:
+  caddy_logs:
+
+networks:
+  web:
+    driver: bridge

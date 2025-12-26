@@ -1,0 +1,53 @@
+spring:
+  application:
+    name: waybill-service
+  config:
+    import: "optional:file:../.env[.properties],optional:file:.env[.properties]"
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:default}
+
+server:
+  port: ${SERVER_PORT:8081}
+
+# Firebase Configuration
+firebase:
+  project-id: ${FIREBASE_PROJECT_ID}
+  credentials-path: ${FIREBASE_CREDENTIALS_PATH:/secrets/firebase-sa.json}
+
+# RS.ge SOAP Configuration
+rsge:
+  endpoint: ${SOAP_ENDPOINT:https://services.rs.ge/WayBillService/WayBillService.asmx}
+  username: ${SOAP_SU}
+  password: ${SOAP_SP}
+  timeout-seconds: ${RSGE_TIMEOUT:120}
+  # Debug helpers (set rsge.debug=true to log samples)
+  debug: ${RSGE_DEBUG:false}
+  debug-sample-count: ${RSGE_DEBUG_SAMPLE_COUNT:3}
+  debug-response-snippet-length: ${RSGE_DEBUG_RESPONSE_SNIPPET_LENGTH:0}
+
+# Business Logic
+business:
+  cutoff-date: ${CUTOFF_DATE:2025-04-29}
+  max-date-range-months: ${MAX_DATE_RANGE_MONTHS:12}
+
+# Actuator
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+# OpenAPI
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+# Logging
+logging:
+  level:
+    ge.tastyerp: ${LOG_LEVEL:INFO}
+    com.google.cloud: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} [%X{requestId}] - %msg%n"
