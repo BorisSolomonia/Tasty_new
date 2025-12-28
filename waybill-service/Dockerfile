@@ -2,8 +2,26 @@
 FROM maven:3.9.11-eclipse-temurin-17 AS build
 
 WORKDIR /workspace
-COPY . .
-RUN mvn -q -DskipTests -pl waybill-service -am package
+
+# Copy only pom files first for better caching
+COPY pom.xml .
+COPY common/pom.xml common/
+COPY waybill-service/pom.xml waybill-service/
+COPY payment-service/pom.xml payment-service/
+COPY config-service/pom.xml config-service/
+
+# Download dependencies (cached layer unless pom.xml changes)
+RUN mvn dependency:go-offline -pl waybill-service -am -B -q || \
+    mvn dependency:go-offline -pl waybill-service -am -B -q || \
+    mvn dependency:go-offline -pl waybill-service -am -B -q
+
+# Copy source code
+COPY common/src common/src
+COPY waybill-service/src waybill-service/src
+
+# Build with retries for transient network issues
+RUN mvn -B -DskipTests -pl waybill-service -am package || \
+    mvn -B -DskipTests -pl waybill-service -am package
 
 FROM eclipse-temurin:17-jre-alpine
 

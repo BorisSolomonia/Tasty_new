@@ -4,13 +4,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { startOfMonth, addDays } from 'date-fns'
 import { ApiError, waybillsApi, paymentsApi } from '@/lib/api-client'
 import { Card } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { formatCurrency, formatDate, formatDateISO, getPaymentCutoffDate } from '@/lib/utils'
-import { isConfirmedWaybillStatus, sumPaymentAmount, sumWaybillAmount } from '@/lib/erp-calculations'
-import type { Waybill } from '@/types/domain'
+import { sumPaymentAmount, sumWaybillAmount } from '@/lib/erp-calculations'
 
 function getApiErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
@@ -34,13 +31,9 @@ export function WaybillsPage() {
   const [endDate, setEndDate] = React.useState<string>(formatDateISO(new Date()))
   const [syncMessage, setSyncMessage] = React.useState<string>('')
 
-  // DEPRECATED: salesQuery and purchasesQuery disabled - they use deprecated Firebase endpoints
+  // DEPRECATED: Waybill list queries disabled - they used deprecated Firebase endpoints
   // NEW ARCHITECTURE: Waybills are not stored in Firebase, only fetched on-demand from RS.ge
   // Use VAT summary endpoint instead for calculations
-  const sales: never[] = []
-  const purchases: never[] = []
-  const salesQuery = { isLoading: false, isError: false, error: null }
-  const purchasesQuery = { isLoading: false, isError: false, error: null }
 
   const vatSummaryQuery = useQuery({
     queryKey: ['waybills', 'vat', startDate, endDate],
@@ -273,17 +266,15 @@ export function WaybillsPage() {
         </Card>
       </div>
 
-      {(salesQuery.isError || purchasesQuery.isError || vatSummaryQuery.isError) && (
+      {vatSummaryQuery.isError && (
         <Card className="border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive md:p-4">
-          <div className="font-medium">Failed to load waybills</div>
+          <div className="font-medium">Failed to load VAT data</div>
           <div className="mt-1 text-xs text-destructive/90">
-            Ensure backend is reachable via `VITE_API_URL`, and that purchase waybills have been fetched/stored.
+            Ensure backend is reachable via `VITE_API_URL`.
           </div>
-          <ul className="mt-2 list-disc space-y-1 pl-5 text-xs">
-            {salesQuery.isError && <li>Sales list: {getApiErrorMessage(salesQuery.error)}</li>}
-            {purchasesQuery.isError && <li>Purchases list: {getApiErrorMessage(purchasesQuery.error)}</li>}
-            {vatSummaryQuery.isError && <li>VAT summary: {getApiErrorMessage(vatSummaryQuery.error)}</li>}
-          </ul>
+          <div className="mt-2 text-xs">
+            VAT summary: {getApiErrorMessage(vatSummaryQuery.error)}
+          </div>
         </Card>
       )}
 
@@ -292,97 +283,6 @@ export function WaybillsPage() {
         <div className="mt-2 text-xs text-blue-800">
           Waybills are no longer stored in Firebase to avoid quota limits. They are fetched fresh from RS.ge on-demand.
           The VAT summary above is calculated in real-time from RS.ge data.
-        </div>
-      </Card>
-    </div>
-  )
-}
-
-function WaybillList(props: {
-  title: string
-  counterpartyLabel: string
-  items: Waybill[]
-  isLoading: boolean
-}) {
-  return (
-    <div className="space-y-3">
-      <Card className="p-3 md:p-4">
-        <div className="text-sm font-medium">{props.title}</div>
-        <div className="mt-1 text-sm text-muted-foreground">Mobile = cards; Desktop = dense table.</div>
-      </Card>
-
-      <div className="grid grid-cols-1 gap-3 md:hidden">
-        {props.isLoading
-          ? Array.from({ length: 6 }).map((_, idx) => (
-              <Card key={idx} className="p-3">
-                <div className="space-y-2">
-                  <Skeleton className="h-4 w-28" />
-                  <Skeleton className="h-4 w-44" />
-                  <Skeleton className="h-4 w-24" />
-                </div>
-              </Card>
-            ))
-          : props.items.slice(0, 40).map((wb, idx) => (
-              <Card key={wb.id ?? wb.waybillId ?? String(idx)} className="p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium">{wb.waybillId ?? wb.id}</div>
-                    <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                      {props.counterpartyLabel}: {wb.customerName ?? wb.customerId ?? '—'}
-                    </div>
-                  </div>
-                  <Badge variant={isConfirmedWaybillStatus(wb.status) ? 'default' : 'secondary'}>
-                    {isConfirmedWaybillStatus(wb.status) ? 'CONFIRMED' : String(wb.status ?? '—')}
-                  </Badge>
-                </div>
-                <div className="mt-3 text-sm">
-                  <span className="text-muted-foreground">Date:</span> {formatDate(wb.date ?? '')}
-                </div>
-                <div className="mt-1 text-sm">
-                  <span className="text-muted-foreground">Amount:</span> {formatCurrency(Number(wb.amount ?? 0))}
-                </div>
-              </Card>
-            ))}
-      </div>
-
-      <Card className="hidden p-4 md:block">
-        <div className="mt-3 overflow-auto">
-          <table className="w-full text-sm">
-            <thead className="text-xs text-muted-foreground">
-              <tr className="border-b">
-                <th className="px-3 py-2 text-left font-medium">Date</th>
-                <th className="px-3 py-2 text-left font-medium">Waybill</th>
-                <th className="px-3 py-2 text-left font-medium">{props.counterpartyLabel}</th>
-                <th className="px-3 py-2 text-right font-medium">Amount</th>
-                <th className="px-3 py-2 text-right font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {props.isLoading
-                ? Array.from({ length: 10 }).map((_, idx) => (
-                    <tr key={idx} className="border-b">
-                      <td className="px-3 py-3" colSpan={5}>
-                        <Skeleton className="h-4 w-full" />
-                      </td>
-                    </tr>
-                  ))
-                : props.items.slice(0, 200).map((wb, idx) => (
-                    <tr key={wb.id ?? wb.waybillId ?? String(idx)} className="border-b">
-                      <td className="px-3 py-2">{formatDate(wb.date ?? '')}</td>
-                      <td className="px-3 py-2">{wb.waybillId ?? wb.id ?? '—'}</td>
-                      <td className="px-3 py-2">{wb.customerName ?? wb.customerId ?? '—'}</td>
-                      <td className="px-3 py-2 text-right">{formatCurrency(Number(wb.amount ?? 0))}</td>
-                      <td className="px-3 py-2 text-right">
-                        {isConfirmedWaybillStatus(wb.status) ? (
-                          <span className="text-success">CONFIRMED</span>
-                        ) : (
-                          <span className="text-muted-foreground">{String(wb.status ?? '—')}</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-            </tbody>
-          </table>
         </div>
       </Card>
     </div>
