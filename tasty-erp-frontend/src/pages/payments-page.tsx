@@ -6,7 +6,6 @@ import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { formatCurrency, formatDateISO } from '@/lib/utils'
-import { sumPaymentAmount, sumWaybillAmount } from '@/lib/erp-calculations'
 import { useCachedQuery } from '@/lib/use-cached-query'
 import type { CustomerAnalysis, Waybill, Payment, InitialDebt, AggregationJob } from '@/types/domain'
 
