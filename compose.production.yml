@@ -1,21 +1,24 @@
 # Production Deployment - Tasty ERP Microservices
-# Deploy with: docker-compose up -d
-# Uses same pattern as legacy app: GitHub Actions -> Artifact Registry -> VM
-
-version: "3.9"
+# Deploy with: TAG=<commit-sha> docker compose -f compose.production.yml up -d
+# Images from GCP Artifact Registry
 
 services:
-  # Frontend - static build served in container
+  # Frontend - static build served by Nginx
   frontend:
     image: us-central1-docker.pkg.dev/tastyapp-ff8b2/tastydebt/tasty-erp-frontend:${TAG:-latest}
     container_name: tasty-erp-frontend
     restart: unless-stopped
-    expose: ["80"]
-    networks: [web]
-    mem_limit: 256m
-    cpus: "0.25"
+    expose:
+      - "80"
+    networks:
+      - web
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/"]
+      test: ["CMD", "curl", "-sf", "http://localhost/"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -26,74 +29,93 @@ services:
     image: us-central1-docker.pkg.dev/tastyapp-ff8b2/tastydebt/tasty-erp-waybill:${TAG:-latest}
     container_name: tasty-erp-waybill
     restart: unless-stopped
-    env_file: [.env]
+    env_file:
+      - .env
     environment:
       - SERVER_PORT=8081
       - SPRING_PROFILES_ACTIVE=production
-    expose: ["8081"]
-    networks: [web]
-    mem_limit: 768m
-    cpus: "0.5"
+      - FIREBASE_CREDENTIALS_PATH=/secrets/firebase-sa.json
+    expose:
+      - "8081"
+    networks:
+      - web
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: "0.5"
     volumes:
       - ./secrets/firebase-sa.json:/secrets/firebase-sa.json:ro
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8081/actuator/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 45s
+      start_period: 60s
 
   # Payment Service - Excel processing & reconciliation
   payment-service:
     image: us-central1-docker.pkg.dev/tastyapp-ff8b2/tastydebt/tasty-erp-payment:${TAG:-latest}
     container_name: tasty-erp-payment
     restart: unless-stopped
-    env_file: [.env]
+    env_file:
+      - .env
     environment:
       - SERVER_PORT=8082
       - SPRING_PROFILES_ACTIVE=production
-    expose: ["8082"]
-    networks: [web]
-    mem_limit: 768m
-    cpus: "0.5"
+      - FIREBASE_CREDENTIALS_PATH=/secrets/firebase-sa.json
+    expose:
+      - "8082"
+    networks:
+      - web
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: "0.5"
     volumes:
       - ./secrets/firebase-sa.json:/secrets/firebase-sa.json:ro
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8082/actuator/health"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8082/actuator/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 45s
+      start_period: 60s
 
   # Config Service - Settings & initial debts
   config-service:
     image: us-central1-docker.pkg.dev/tastyapp-ff8b2/tastydebt/tasty-erp-config:${TAG:-latest}
     container_name: tasty-erp-config
     restart: unless-stopped
-    env_file: [.env]
+    env_file:
+      - .env
     environment:
       - SERVER_PORT=8888
       - SPRING_PROFILES_ACTIVE=production
-    expose: ["8888"]
-    networks: [web]
-    mem_limit: 256m
-    cpus: "0.25"
+      - FIREBASE_CREDENTIALS_PATH=/secrets/firebase-sa.json
+    expose:
+      - "8888"
+    networks:
+      - web
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
     volumes:
       - ./secrets/firebase-sa.json:/secrets/firebase-sa.json:ro
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8888/actuator/health"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8888/actuator/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 45s
+      start_period: 60s
 
-  # Caddy - Reverse Proxy (same as legacy)
+  # Caddy - Reverse Proxy
   caddy:
     image: caddy:2-alpine
     container_name: caddy
     restart: unless-stopped
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     ports:
       - "80:80"
       - "443:443"
@@ -102,15 +124,19 @@ services:
       - caddy_data:/data
       - caddy_config:/config
       - caddy_logs:/var/log/caddy
-    networks: [web]
-    mem_limit: 128m
-    cpus: "0.25"
+    networks:
+      - web
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.25"
     healthcheck:
-      test: ["CMD", "caddy", "version"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 15s
     depends_on:
       frontend:
         condition: service_healthy

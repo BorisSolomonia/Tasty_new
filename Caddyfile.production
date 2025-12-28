@@ -1,24 +1,74 @@
+# Tasty ERP Production Caddyfile
+# HTTP only (IP-based access)
+# To enable HTTPS with domain, replace :80 with your domain name
+
 :80 {
+    # Access logging
     log {
-        output file /var/log/caddy/access.log
-        format console
+        output file /var/log/caddy/access.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+        format json
     }
 
+    # CORS headers for API routes
+    @api {
+        path /api/*
+    }
+    handle @api {
+        # Handle preflight OPTIONS
+        @options method OPTIONS
+        handle @options {
+            header Access-Control-Allow-Origin "*"
+            header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+            header Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With"
+            header Access-Control-Max-Age "86400"
+            respond 204
+        }
+
+        # Add CORS headers to all API responses
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+        header Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With"
+    }
+
+    # Waybill Service - RS.ge integration
     handle /api/waybills* {
-        reverse_proxy waybill-service:8081
+        reverse_proxy waybill-service:8081 {
+            health_uri /actuator/health
+            health_interval 30s
+            health_timeout 5s
+        }
     }
 
+    # Payment Service - Excel processing & reconciliation
     handle /api/payments* {
-        reverse_proxy payment-service:8082
+        reverse_proxy payment-service:8082 {
+            health_uri /actuator/health
+            health_interval 30s
+            health_timeout 5s
+        }
     }
 
+    # Config Service - Settings & initial debts
     handle /api/config* {
-        reverse_proxy config-service:8888
+        reverse_proxy config-service:8888 {
+            health_uri /actuator/health
+            health_interval 30s
+            health_timeout 5s
+        }
     }
 
+    # Health endpoint for load balancer / deployment checks
     respond /health 200
 
+    # Frontend - static files served by Nginx
     handle {
-        reverse_proxy frontend:80
+        reverse_proxy frontend:80 {
+            health_uri /
+            health_interval 30s
+            health_timeout 5s
+        }
     }
 }
