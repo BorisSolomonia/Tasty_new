@@ -218,8 +218,8 @@ jobs:
               --secret="${{ env.SECRET_FIREBASE }}" \
               --project="${{ env.SECRET_PROJECT }}" > secrets/firebase-sa.json
 
-          chmod 600 .env
-          chmod 644 secrets/firebase-sa.json
+            chmod 600 .env
+            chmod 644 secrets/firebase-sa.json
 
             # Ensure network and volumes exist
             docker network create web 2>/dev/null || true
