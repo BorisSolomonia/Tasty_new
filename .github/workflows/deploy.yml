@@ -28,7 +28,7 @@ env:
   SECRET_PROJECT: "282950310544"
   SECRET_ENV: env
   SECRET_FIREBASE: firebase-sa
-  DEPLOY_DIR: /opt/apps/tasty-erp
+  DEPLOY_DIR: /home/borissolomonia/apps/tasty-erp
 
 jobs:
   # Run tests first - deploy only if tests pass
