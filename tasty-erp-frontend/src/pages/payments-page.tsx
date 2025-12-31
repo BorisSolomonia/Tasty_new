@@ -685,25 +685,16 @@ export function PaymentsPage() {
             <thead className="bg-muted">
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase">
-                  ჩართვა
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase">
-                  ხელით
-                </th>
-                <th
-                  onClick={() => handleSort('customerId')}
-                  className="px-4 py-3 text-left text-xs font-medium uppercase cursor-pointer hover:bg-accent"
-                >
-                  ID {sortBy === 'customerId' && (sortOrder === 'desc' ? '↓' : '↑')}
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase">
                   სახელი
                 </th>
                 <th
-                  onClick={() => handleSort('totalSales')}
+                  onClick={() => handleSort('currentDebt')}
                   className="px-4 py-3 text-left text-xs font-medium uppercase cursor-pointer hover:bg-accent"
                 >
-                  გაყიდვები {sortBy === 'totalSales' && (sortOrder === 'desc' ? '↓' : '↑')}
+                  ვალი {sortBy === 'currentDebt' && (sortOrder === 'desc' ? '↓' : '↑')}
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase">
+                  ხელით
                 </th>
                 <th
                   onClick={() => handleSort('totalPayments')}
@@ -712,16 +703,25 @@ export function PaymentsPage() {
                   გადახდები {sortBy === 'totalPayments' && (sortOrder === 'desc' ? '↑' : '↓')}
                 </th>
                 <th
-                  onClick={() => handleSort('currentDebt')}
+                  onClick={() => handleSort('totalSales')}
                   className="px-4 py-3 text-left text-xs font-medium uppercase cursor-pointer hover:bg-accent"
                 >
-                  ვალი {sortBy === 'currentDebt' && (sortOrder === 'desc' ? '↓' : '↑')}
+                  გაყიდვები {sortBy === 'totalSales' && (sortOrder === 'desc' ? '↓' : '↑')}
                 </th>
                 <th
                   onClick={() => handleSort('startingDebt')}
                   className="px-4 py-3 text-left text-xs font-medium uppercase cursor-pointer hover:bg-accent"
                 >
                   საწყისი {sortBy === 'startingDebt' && (sortOrder === 'desc' ? '↓' : '↑')}
+                </th>
+                <th
+                  onClick={() => handleSort('customerId')}
+                  className="px-4 py-3 text-left text-xs font-medium uppercase cursor-pointer hover:bg-accent"
+                >
+                  ID {sortBy === 'customerId' && (sortOrder === 'desc' ? '↓' : '↑')}
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase">
+                  ჩართვა
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase">
                   დეტალები
@@ -732,12 +732,13 @@ export function PaymentsPage() {
               {paginatedCustomers.map((customer) => (
                 <React.Fragment key={customer.customerId}>
                   <tr className="hover:bg-accent/50">
-                    <td className="px-4 py-3 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={!excludedCustomers.has(customer.customerId)}
-                        onChange={() => handleToggleExcluded(customer.customerId)}
-                      />
+                    <td className="px-4 py-3 text-sm">{customer.customerName}</td>
+                    <td className={`px-4 py-3 text-sm font-medium ${
+                      customer.currentDebt > 0 ? 'text-red-600 dark:text-red-500' :
+                      customer.currentDebt < 0 ? 'text-green-600 dark:text-green-500' :
+                      ''
+                    }`}>
+                      {formatCurrency(customer.currentDebt)}
                     </td>
                     <td className="px-4 py-3 text-sm">
                       <Button
@@ -748,18 +749,17 @@ export function PaymentsPage() {
                         დამატება
                       </Button>
                     </td>
-                    <td className="px-4 py-3 text-sm font-medium">{customer.customerId}</td>
-                    <td className="px-4 py-3 text-sm">{customer.customerName}</td>
-                    <td className="px-4 py-3 text-sm">{formatCurrency(customer.totalSales)}</td>
                     <td className="px-4 py-3 text-sm">{formatCurrency(customer.totalPayments)}</td>
-                    <td className={`px-4 py-3 text-sm font-medium ${
-                      customer.currentDebt > 0 ? 'text-red-600 dark:text-red-500' :
-                      customer.currentDebt < 0 ? 'text-green-600 dark:text-green-500' :
-                      ''
-                    }`}>
-                      {formatCurrency(customer.currentDebt)}
-                    </td>
+                    <td className="px-4 py-3 text-sm">{formatCurrency(customer.totalSales)}</td>
                     <td className="px-4 py-3 text-sm">{formatCurrency(customer.startingDebt)}</td>
+                    <td className="px-4 py-3 text-sm font-medium">{customer.customerId}</td>
+                    <td className="px-4 py-3 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={!excludedCustomers.has(customer.customerId)}
+                        onChange={() => handleToggleExcluded(customer.customerId)}
+                      />
+                    </td>
                     <td className="px-4 py-3 text-sm">
                       <Button
                         size="sm"
