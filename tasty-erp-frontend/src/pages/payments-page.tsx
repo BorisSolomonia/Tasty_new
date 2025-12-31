@@ -131,10 +131,11 @@ export function PaymentsPage() {
   // Calculate customer analysis - EXACT logic from legacy project
   const customerAnalysis = React.useMemo((): Record<string, CustomerAnalysis> => {
     const analysis: Record<string, CustomerAnalysis> = {}
-    const customerSales = new Map<string, { totalSales: number; waybillCount: number; waybills: Waybill[] }>()
+    const customerSales = new Map<string, { totalSales: number; waybillCount: number; waybills: Waybill[]; buyerName: string }>()
     const customerPayments = new Map<string, { totalPayments: number; paymentCount: number; payments: any[] }>()
+    // Resolve customer name from waybill - prioritize buyerName as it's the actual customer name
     const resolveWaybillCustomerName = (waybill?: Waybill) =>
-      waybill?.customerName || waybill?.buyerName || waybill?.sellerName || ''
+      waybill?.buyerName || waybill?.customerName || waybill?.sellerName || ''
 
     // Process sales (waybills after cutoff)
     waybills.forEach(wb => {
@@ -146,7 +147,8 @@ export function PaymentsPage() {
         customerSales.set(wb.customerId, {
           totalSales: 0,
           waybillCount: 0,
-          waybills: []
+          waybills: [],
+          buyerName: ''
         })
       }
 
@@ -154,6 +156,10 @@ export function PaymentsPage() {
       customer.totalSales += Number(wb.amount) || 0
       customer.waybillCount += 1
       customer.waybills.push(wb)
+      // Save buyerName from waybill if not already set
+      if (!customer.buyerName) {
+        customer.buyerName = resolveWaybillCustomerName(wb)
+      }
     })
 
     // Process payments (after cutoff date)
@@ -208,15 +214,15 @@ export function PaymentsPage() {
 
     // Build final analysis for each customer
     allIds.forEach(customerId => {
-      const sales = customerSales.get(customerId) || { totalSales: 0, waybillCount: 0, waybills: [] }
+      const sales = customerSales.get(customerId) || { totalSales: 0, waybillCount: 0, waybills: [], buyerName: '' }
       const pays = customerPayments.get(customerId) || { totalPayments: 0, paymentCount: 0, payments: [] }
       const sd = startingDebtsMap.get(customerId) || { amount: 0, date: null, name: '' }
 
-      // Get customer name from multiple sources (priority: waybill > starting debt > firebase customers > ID)
+      // Get customer name from multiple sources (priority: waybill buyerName > starting debt > firebase customers > ID)
       let customerName = customerId
-      const waybillName = resolveWaybillCustomerName(sales.waybills?.[0])
-      if (waybillName) {
-        customerName = waybillName
+      // First try the saved buyerName from waybills
+      if (sales.buyerName) {
+        customerName = sales.buyerName
       } else if (sd.name) {
         customerName = sd.name
       } else {
@@ -521,164 +527,25 @@ export function PaymentsPage() {
         </div>
       </Card>
 
-      {/* Bank Statement Upload */}
-      <Card className="p-4 md:p-5">
-        <div className="text-sm font-medium mb-3">ბანკის ამონაწერის ატვირთვა</div>
-        <div className="flex flex-col gap-3">
-          <div className="flex gap-2">
-            <Button
-              variant={selectedBank === 'tbc' ? 'default' : 'outline'}
-              onClick={() => setSelectedBank('tbc')}
-              className="flex-1"
-            >
-              თიბისი ბანკი
-            </Button>
-            <Button
-              variant={selectedBank === 'bog' ? 'default' : 'outline'}
-              onClick={() => setSelectedBank('bog')}
-              className="flex-1"
-            >
-              საქართველოს ბანკი
-            </Button>
-          </div>
-
-          <div
-            className="relative rounded-lg border-2 border-dashed p-8 text-center transition-colors hover:border-primary hover:bg-accent cursor-pointer"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".xlsx,.xls"
-              onChange={handleFileSelect}
-              className="hidden"
-            />
-            <div className="text-sm text-muted-foreground">
-              დააჭირეთ Excel ფაილის ასარჩევად
-            </div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              არჩეული ბანკი: {selectedBank.toUpperCase()} | მაქს. ზომა: 10MB
-            </div>
-          </div>
-
-          {uploadStatus && (
-            <div className={`text-sm p-3 rounded-md ${
-              uploadStatus.startsWith('✅') ? 'bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300' :
-              uploadStatus.startsWith('❌') ? 'bg-red-100 dark:bg-red-900/20 text-red-800 dark:text-red-300' :
-              'bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-300'
-            }`}>
-              {uploadStatus}
-            </div>
-          )}
-
-          {/* NEW: Aggregation Progress Indicator */}
-          {aggregationJob && isPolling && (
-            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-2">
-                <div className="font-medium text-blue-900 dark:text-blue-100">
-                  🔄 აგრეგაცია მიმდინარეობს...
-                </div>
-                <div className="text-sm text-blue-700 dark:text-blue-300">
-                  {aggregationJob.progressPercent || 0}%
-                </div>
-              </div>
-
-              {/* Progress bar */}
-              <div className="w-full bg-blue-200 dark:bg-blue-800 rounded-full h-2 mb-2">
-                <div
-                  className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                  style={{ width: `${aggregationJob.progressPercent || 0}%` }}
-                />
-              </div>
-
-              {/* Current step */}
-              {aggregationJob.currentStep && (
-                <div className="text-xs text-blue-600 dark:text-blue-400">
-                  {aggregationJob.currentStep}
-                </div>
-              )}
-            </div>
-          )}
+      {/* Search Bar - Standalone at top */}
+      <Card className="p-4">
+        <div className="flex flex-col md:flex-row items-start md:items-center gap-4">
+          <input
+            type="text"
+            placeholder="მომხმარებლის ძებნა (ID ან სახელი)..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="px-4 py-3 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary w-full md:w-96 text-sm"
+          />
+          <span className="text-sm text-muted-foreground whitespace-nowrap">
+            {sortedCustomers.length} მომხმარებელი (გვერდი {currentPage}/{totalPages || 1})
+          </span>
         </div>
       </Card>
-
-      {/* Manual Cash Excel Upload */}
-      <Card className="p-4 md:p-5">
-        <div className="text-sm font-medium mb-3">Manual cash payments (Excel)</div>
-        <div className="flex flex-col gap-3">
-          <div
-            className="relative rounded-lg border-2 border-dashed p-8 text-center transition-colors hover:border-primary hover:bg-accent cursor-pointer"
-            onClick={() => manualFileInputRef.current?.click()}
-          >
-            <input
-              ref={manualFileInputRef}
-              type="file"
-              accept=".xlsx,.xls"
-              onChange={handleManualFileSelect}
-              className="hidden"
-            />
-            <div className="text-sm text-muted-foreground">
-              Upload Excel file (A=Date, C=Amount, E=Customer)
-            </div>
-          </div>
-
-          {manualUploadStatus && (
-            <div className={`text-sm p-3 rounded-md ${
-              manualUploadStatus.startsWith('OK') ? 'bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300' :
-              manualUploadStatus.startsWith('Error') ? 'bg-red-100 dark:bg-red-900/20 text-red-800 dark:text-red-300' :
-              'bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-300'
-            }`}>
-              {manualUploadStatus}
-            </div>
-          )}
-        </div>
-      </Card>
-
-      {/* Summary Stats */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
-        <Card className="p-3 md:p-4">
-          <div className="text-xs text-muted-foreground">გაყიდვები</div>
-          <div className="mt-1 text-lg font-semibold md:text-xl">
-            {waybillsQuery.isLoading ? <Skeleton className="h-6 w-24" /> : formatCurrency(totalExpected)}
-          </div>
-        </Card>
-        <Card className="p-3 md:p-4">
-          <div className="text-xs text-muted-foreground">ბანკი</div>
-          <div className="mt-1 text-lg font-semibold md:text-xl">
-            {paymentsQuery.isLoading ? <Skeleton className="h-6 w-24" /> : formatCurrency(totalReceived - totalCashReceived)}
-          </div>
-        </Card>
-        <Card className="p-3 md:p-4">
-          <div className="text-xs text-muted-foreground">ნაღდი</div>
-          <div className="mt-1 text-lg font-semibold md:text-xl">
-            {paymentsQuery.isLoading ? <Skeleton className="h-6 w-24" /> : formatCurrency(totalCashReceived)}
-          </div>
-        </Card>
-        <Card className="p-3 md:p-4">
-          <div className="text-xs text-muted-foreground">გადახდები</div>
-          <div className="mt-1 text-lg font-semibold md:text-xl">
-            {paymentsQuery.isLoading ? <Skeleton className="h-6 w-16" /> : payments.length}
-          </div>
-        </Card>
-      </div>
 
       {/* Customer Analysis Table */}
       <Card className="p-4 md:p-6">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
-          <h2 className="text-lg font-semibold">მომხმარებელთა ანალიზი</h2>
-          <div className="flex items-center gap-4 w-full md:w-auto">
-            <input
-              type="text"
-              placeholder="ძებნა (ID ან სახელი)..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary w-full md:w-64 text-sm"
-            />
-            <span className="text-sm text-muted-foreground whitespace-nowrap">
-              {sortedCustomers.length} ჩანაწერი სულ (გვერდი {currentPage}/{totalPages})
-            </span>
-          </div>
-        </div>
+        <h2 className="text-lg font-semibold mb-4">მომხმარებელთა ანალიზი</h2>
 
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y">
@@ -950,6 +817,147 @@ export function PaymentsPage() {
             </Button>
           </div>
         )}
+      </Card>
+
+      {/* Summary Stats */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
+        <Card className="p-3 md:p-4">
+          <div className="text-xs text-muted-foreground">გაყიდვები</div>
+          <div className="mt-1 text-lg font-semibold md:text-xl">
+            {waybillsQuery.isLoading ? <Skeleton className="h-6 w-24" /> : formatCurrency(totalExpected)}
+          </div>
+        </Card>
+        <Card className="p-3 md:p-4">
+          <div className="text-xs text-muted-foreground">ბანკი</div>
+          <div className="mt-1 text-lg font-semibold md:text-xl">
+            {paymentsQuery.isLoading ? <Skeleton className="h-6 w-24" /> : formatCurrency(totalReceived - totalCashReceived)}
+          </div>
+        </Card>
+        <Card className="p-3 md:p-4">
+          <div className="text-xs text-muted-foreground">ნაღდი</div>
+          <div className="mt-1 text-lg font-semibold md:text-xl">
+            {paymentsQuery.isLoading ? <Skeleton className="h-6 w-24" /> : formatCurrency(totalCashReceived)}
+          </div>
+        </Card>
+        <Card className="p-3 md:p-4">
+          <div className="text-xs text-muted-foreground">გადახდები</div>
+          <div className="mt-1 text-lg font-semibold md:text-xl">
+            {paymentsQuery.isLoading ? <Skeleton className="h-6 w-16" /> : payments.length}
+          </div>
+        </Card>
+      </div>
+
+      {/* Bank Statement Upload */}
+      <Card className="p-4 md:p-5">
+        <div className="text-sm font-medium mb-3">ბანკის ამონაწერის ატვირთვა</div>
+        <div className="flex flex-col gap-3">
+          <div className="flex gap-2">
+            <Button
+              variant={selectedBank === 'tbc' ? 'default' : 'outline'}
+              onClick={() => setSelectedBank('tbc')}
+              className="flex-1"
+            >
+              თიბისი ბანკი
+            </Button>
+            <Button
+              variant={selectedBank === 'bog' ? 'default' : 'outline'}
+              onClick={() => setSelectedBank('bog')}
+              className="flex-1"
+            >
+              საქართველოს ბანკი
+            </Button>
+          </div>
+
+          <div
+            className="relative rounded-lg border-2 border-dashed p-8 text-center transition-colors hover:border-primary hover:bg-accent cursor-pointer"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+            <div className="text-sm text-muted-foreground">
+              დააჭირეთ Excel ფაილის ასარჩევად
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              არჩეული ბანკი: {selectedBank.toUpperCase()} | მაქს. ზომა: 10MB
+            </div>
+          </div>
+
+          {uploadStatus && (
+            <div className={`text-sm p-3 rounded-md ${
+              uploadStatus.startsWith('✅') ? 'bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300' :
+              uploadStatus.startsWith('❌') ? 'bg-red-100 dark:bg-red-900/20 text-red-800 dark:text-red-300' :
+              'bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-300'
+            }`}>
+              {uploadStatus}
+            </div>
+          )}
+
+          {/* Aggregation Progress Indicator */}
+          {aggregationJob && isPolling && (
+            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 rounded-lg p-4">
+              <div className="flex items-center justify-between mb-2">
+                <div className="font-medium text-blue-900 dark:text-blue-100">
+                  🔄 აგრეგაცია მიმდინარეობს...
+                </div>
+                <div className="text-sm text-blue-700 dark:text-blue-300">
+                  {aggregationJob.progressPercent || 0}%
+                </div>
+              </div>
+
+              {/* Progress bar */}
+              <div className="w-full bg-blue-200 dark:bg-blue-800 rounded-full h-2 mb-2">
+                <div
+                  className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${aggregationJob.progressPercent || 0}%` }}
+                />
+              </div>
+
+              {/* Current step */}
+              {aggregationJob.currentStep && (
+                <div className="text-xs text-blue-600 dark:text-blue-400">
+                  {aggregationJob.currentStep}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </Card>
+
+      {/* Manual Cash Excel Upload */}
+      <Card className="p-4 md:p-5">
+        <div className="text-sm font-medium mb-3">ნაღდი გადახდები (Excel)</div>
+        <div className="flex flex-col gap-3">
+          <div
+            className="relative rounded-lg border-2 border-dashed p-8 text-center transition-colors hover:border-primary hover:bg-accent cursor-pointer"
+            onClick={() => manualFileInputRef.current?.click()}
+          >
+            <input
+              ref={manualFileInputRef}
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={handleManualFileSelect}
+              className="hidden"
+            />
+            <div className="text-sm text-muted-foreground">
+              Excel ფაილის ატვირთვა (A=თარიღი, C=თანხა, E=მომხმარებელი)
+            </div>
+          </div>
+
+          {manualUploadStatus && (
+            <div className={`text-sm p-3 rounded-md ${
+              manualUploadStatus.startsWith('OK') ? 'bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300' :
+              manualUploadStatus.startsWith('Error') ? 'bg-red-100 dark:bg-red-900/20 text-red-800 dark:text-red-300' :
+              'bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-300'
+            }`}>
+              {manualUploadStatus}
+            </div>
+          )}
+        </div>
       </Card>
 
       {(waybillsQuery.isError || paymentsQuery.isError) && (
