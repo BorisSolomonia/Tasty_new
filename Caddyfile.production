@@ -36,6 +36,9 @@
     # Waybill Service - RS.ge integration
     handle /api/waybills* {
         reverse_proxy waybill-service:8081 {
+            # Retry on connection failure (service starting up)
+            lb_try_duration 30s
+            lb_try_interval 1s
             health_uri /actuator/health
             health_interval 30s
             health_timeout 5s
@@ -45,6 +48,8 @@
     # Payment Service - Excel processing & reconciliation
     handle /api/payments* {
         reverse_proxy payment-service:8082 {
+            lb_try_duration 30s
+            lb_try_interval 1s
             health_uri /actuator/health
             health_interval 30s
             health_timeout 5s
@@ -54,6 +59,8 @@
     # Config Service - Settings & initial debts
     handle /api/config* {
         reverse_proxy config-service:8888 {
+            lb_try_duration 30s
+            lb_try_interval 1s
             health_uri /actuator/health
             health_interval 30s
             health_timeout 5s
@@ -66,6 +73,8 @@
     # Frontend - static files served by Nginx
     handle {
         reverse_proxy frontend:80 {
+            lb_try_duration 10s
+            lb_try_interval 1s
             health_uri /
             health_interval 30s
             health_timeout 5s

@@ -112,6 +112,8 @@ services:
       start_period: 60s
 
   # Caddy - Reverse Proxy
+  # NOTE: Caddy starts independently and handles upstream failures gracefully.
+  # It will retry backend connections automatically.
   caddy:
     image: caddy:2-alpine
     container_name: caddy
@@ -138,14 +140,10 @@ services:
       retries: 3
       start_period: 15s
     depends_on:
-      frontend:
-        condition: service_healthy
-      waybill-service:
-        condition: service_healthy
-      payment-service:
-        condition: service_healthy
-      config-service:
-        condition: service_healthy
+      - frontend
+      - waybill-service
+      - payment-service
+      - config-service
 
 volumes:
   caddy_data:

@@ -241,11 +241,12 @@ jobs:
             docker compose -f compose.production.yml up -d
 
             # Wait for services to be healthy
-            echo "Waiting for services to become healthy..."
-            sleep 15
+            # Java services need 60-90s to start (JVM + Spring context + Firebase connection)
+            echo "Waiting for services to become healthy (Java services need ~60s)..."
+            sleep 30
 
-            # Health check with retries
-            MAX_RETRIES=18
+            # Health check with retries (total wait: 30s initial + 30*5s = 180s max)
+            MAX_RETRIES=30
             RETRY_COUNT=0
             until curl -sf http://localhost/health >/dev/null 2>&1; do
               RETRY_COUNT=$((RETRY_COUNT + 1))
