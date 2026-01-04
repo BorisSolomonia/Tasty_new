@@ -7,6 +7,7 @@ import ge.tastyerp.common.dto.payment.PaymentDto;
 import ge.tastyerp.payment.service.PaymentService;
 import ge.tastyerp.payment.service.ExcelProcessingService;
 import ge.tastyerp.payment.service.AsyncAggregationService;
+import ge.tastyerp.payment.service.DeduplicationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +34,7 @@ public class PaymentController {
     private final PaymentService paymentService;
     private final ExcelProcessingService excelProcessingService;
     private final AsyncAggregationService asyncAggregationService;
+    private final DeduplicationService deduplicationService;
 
     // ==================== EXCEL UPLOAD ====================
 
@@ -133,5 +135,40 @@ public class PaymentController {
         return asyncAggregationService.getJobStatus(jobId)
                 .map(job -> ResponseEntity.ok(ApiResponse.success(job)))
                 .orElse(ResponseEntity.notFound().build());
+    }
+
+    // ==================== DEDUPLICATION ====================
+
+    @GetMapping("/deduplicate/analyze")
+    @Operation(summary = "Analyze payments for duplicates (dry run)",
+            description = "Returns list of duplicate payment groups without making any changes. " +
+                         "Use this to preview what will be removed before calling the remove endpoint.")
+    public ResponseEntity<ApiResponse<DeduplicationService.DeduplicationResult>> analyzeDuplicates() {
+        DeduplicationService.DeduplicationResult result = deduplicationService.analyzeDuplicates();
+        String message = String.format("Found %d duplicate groups (%d payments to delete, ₾%.2f to recover)",
+                result.duplicateGroups(), result.paymentsDeleted(), result.amountRecovered());
+        return ResponseEntity.ok(ApiResponse.success(result, message));
+    }
+
+    @PostMapping("/deduplicate/remove")
+    @Operation(summary = "Remove duplicate payments",
+            description = "Removes duplicate payments keeping the oldest in each group. " +
+                         "This action cannot be undone. Run /analyze first to preview changes.")
+    public ResponseEntity<ApiResponse<DeduplicationService.DeduplicationResult>> removeDuplicates() {
+        DeduplicationService.DeduplicationResult result = deduplicationService.removeDuplicates();
+
+        // Trigger aggregation after deduplication to update customer debt summaries
+        String jobId = null;
+        if (result.paymentsDeleted() > 0) {
+            try {
+                jobId = asyncAggregationService.triggerAggregation("deduplication");
+            } catch (Exception e) {
+                // Don't fail if aggregation trigger fails
+            }
+        }
+
+        String message = String.format("Removed %d duplicate payments (₾%.2f recovered). Aggregation job: %s",
+                result.paymentsDeleted(), result.amountRecovered(), jobId != null ? jobId : "none");
+        return ResponseEntity.ok(ApiResponse.success(result, message));
     }
 }

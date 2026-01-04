@@ -535,6 +535,11 @@ public class PaymentRepository {
         return data;
     }
 
+    /**
+     * Reconstruct uniqueCode from document fields.
+     * NOTE: Balance is intentionally excluded (2025-01-04 fix) to match new uniqueCode format.
+     * This prevents duplicates from overlapping bank statement uploads.
+     */
     private String reconstructUniqueCode(DocumentSnapshot doc) {
         try {
             Object dateObj = doc.get("paymentDate");
@@ -547,16 +552,14 @@ public class PaymentRepository {
 
             Double amount = doc.getDouble("amount");
             String customerId = doc.getString("supplierName");
-            Double balance = doc.getDouble("balance");
 
             if (dateStr == null || amount == null || customerId == null) {
                 return null;
             }
 
             int amountCents = (int) Math.round(amount * 100);
-            int balanceCents = balance != null ? (int) Math.round(balance * 100) : 0;
-
-            return String.format("%s|%d|%s|%d", dateStr, amountCents, customerId.trim(), balanceCents);
+            // Balance intentionally excluded - causes duplicates with overlapping bank statements
+            return String.format("%s|%d|%s", dateStr, amountCents, customerId.trim());
         } catch (Exception e) {
             log.debug("Could not reconstruct uniqueCode for doc {}: {}", doc.getId(), e.getMessage());
             return null;
