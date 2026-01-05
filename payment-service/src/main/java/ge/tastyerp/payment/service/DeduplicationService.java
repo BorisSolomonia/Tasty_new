@@ -16,15 +16,13 @@ import java.util.concurrent.ExecutionException;
 /**
  * Service for deduplicating payments in Firebase.
  *
- * Created 2025-01-04 to fix duplicate payments caused by overlapping bank statement uploads.
- * The old uniqueCode format included balance, which varies between statements.
+ * Updated 2025-01-05: UniqueCode now includes balance again to distinguish
+ * same-day, same-amount payments from the same customer.
  *
- * New uniqueCode format: date|amountCents|customerId (no balance)
+ * Current uniqueCode format: date|amountCents|customerId|balanceCents
  *
- * This service:
- * 1. Groups payments by the NEW uniqueCode format (without balance)
- * 2. For each group with duplicates, keeps the oldest payment and deletes the rest
- * 3. Updates the remaining payment's uniqueCode to the new format
+ * This service groups by the FULL uniqueCode (including balance) to find
+ * exact duplicates only. Payments with different balances are considered unique.
  */
 @Slf4j
 @Service
@@ -89,8 +87,8 @@ public class DeduplicationService {
                 PaymentRecord record = documentToRecord(doc);
                 if (record == null) continue;
 
-                String newCode = buildNewUniqueCode(record);
-                groups.computeIfAbsent(newCode, k -> new ArrayList<>()).add(record);
+                String code = buildUniqueCode(record);
+                groups.computeIfAbsent(code, k -> new ArrayList<>()).add(record);
             }
 
             // Find duplicate groups (more than 1 payment per code)
@@ -173,13 +171,16 @@ public class DeduplicationService {
     }
 
     /**
-     * Build NEW uniqueCode format (without balance).
+     * Build uniqueCode format (with balance).
      */
-    private String buildNewUniqueCode(PaymentRecord record) {
+    private String buildUniqueCode(PaymentRecord record) {
         int amountCents = record.amount.multiply(BigDecimal.valueOf(100))
                 .setScale(0, java.math.RoundingMode.HALF_UP)
                 .intValue();
-        return String.format("%s|%d|%s", record.date.toString(), amountCents, record.customerId.trim());
+        int balanceCents = record.balance.multiply(BigDecimal.valueOf(100))
+                .setScale(0, java.math.RoundingMode.HALF_UP)
+                .intValue();
+        return String.format("%s|%d|%s|%d", record.date.toString(), amountCents, record.customerId.trim(), balanceCents);
     }
 
     private record PaymentRecord(

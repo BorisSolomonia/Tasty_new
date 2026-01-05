@@ -7,17 +7,21 @@ import java.time.format.DateTimeFormatter;
 /**
  * Utility class for generating unique payment codes.
  *
- * The unique code format is: date|amountCents|customerId
+ * The unique code format is: date|amountCents|customerId|balanceCents
  *
- * IMPORTANT: Balance was REMOVED from uniqueCode (2025-01-04) because:
- * - Bank statements from overlapping date ranges show different balances for the same transaction
- * - This caused duplicate payments when uploading overlapping Excel files
- * - Example: Same payment in Jan-Mar statement vs Feb-Apr statement had different balances
+ * Balance is INCLUDED because:
+ * - Same customer can make multiple payments of the same amount on the same day
+ * - The balance after each transaction is unique and distinguishes these payments
+ * - Without balance, legitimate separate payments would be marked as duplicates
  *
- * This ensures exact matching for:
- * - Same date
- * - Same amount (in cents to avoid floating point issues)
- * - Same customer
+ * Example: Customer pays 1410 twice on 2025-05-13:
+ * - Payment 1: balance after = 2322.46 → uniqueCode includes |232246
+ * - Payment 2: balance after = 6773.46 → uniqueCode includes |677346
+ * - Both payments are correctly saved as unique
+ *
+ * For overlapping bank statements with the same payment:
+ * - The account balance after a transaction should be identical regardless of statement
+ * - If duplicates occur, use DeduplicationService to clean them up
  */
 public final class UniqueCodeGenerator {
 
@@ -30,33 +34,33 @@ public final class UniqueCodeGenerator {
 
     /**
      * Build a unique code for payment deduplication.
-     * NOTE: Balance is intentionally excluded to prevent duplicates from overlapping bank statements.
+     * Includes balance to distinguish same-day, same-amount payments.
      *
      * @param date       Transaction date
      * @param amount     Payment amount
      * @param customerId Customer identifier (TIN)
-     * @param balance    Account balance (IGNORED - kept for backward compatibility)
+     * @param balance    Account balance after transaction
      * @return Unique code string
      */
     public static String buildUniqueCode(LocalDate date, BigDecimal amount, String customerId, BigDecimal balance) {
-        // Balance intentionally excluded - causes duplicates with overlapping bank statements
         return String.join(DELIMITER,
                 date.format(DATE_FORMAT),
                 toCents(amount),
-                normalizeId(customerId)
+                normalizeId(customerId),
+                toCents(balance)
         );
     }
 
     /**
      * Build a unique code from string date (YYYY-MM-DD format).
-     * NOTE: Balance is intentionally excluded to prevent duplicates from overlapping bank statements.
+     * Includes balance to distinguish same-day, same-amount payments.
      */
     public static String buildUniqueCode(String dateStr, BigDecimal amount, String customerId, BigDecimal balance) {
-        // Balance intentionally excluded - causes duplicates with overlapping bank statements
         return String.join(DELIMITER,
                 dateStr,
                 toCents(amount),
-                normalizeId(customerId)
+                normalizeId(customerId),
+                toCents(balance)
         );
     }
 

@@ -32,7 +32,8 @@
       "Bash(if exist docker-compose.dev.yml copy docker-compose.dev.yml compose.yml)",
       "Bash(ren:*)",
       "Bash(copy:*)",
-      "Bash(timeout /t 15)"
+      "Bash(timeout /t 15)",
+      "Bash(git add:*)"
     ]
   }
 }
