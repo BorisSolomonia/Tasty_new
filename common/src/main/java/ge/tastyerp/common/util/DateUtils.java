@@ -13,7 +13,10 @@ import java.util.regex.Pattern;
 public final class DateUtils {
 
     private static final DateTimeFormatter ISO_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
-    private static final Pattern MDY_PATTERN = Pattern.compile("^(\\d{1,2})/(\\d{1,2})/(\\d{4})$");
+    // DD/MM/YYYY format used by Georgian bank statements (TBC, BOG)
+    private static final Pattern DMY_PATTERN = Pattern.compile("^(\\d{1,2})/(\\d{1,2})/(\\d{4})$");
+    // DD.MM.YYYY format (alternative European format)
+    private static final Pattern DMY_DOT_PATTERN = Pattern.compile("^(\\d{1,2})\\.(\\d{1,2})\\.(\\d{4})$");
     private static final Pattern YMD_PATTERN = Pattern.compile("^(\\d{4})-(\\d{1,2})-(\\d{1,2})$");
     // ISO datetime pattern: YYYY-MM-DDTHH:mm:ss (with optional milliseconds)
     private static final Pattern ISO_DATETIME_PATTERN = Pattern.compile("^(\\d{4})-(\\d{1,2})-(\\d{1,2})T.*$");
@@ -32,7 +35,8 @@ public final class DateUtils {
      *
      * Supports:
      * - Excel serial numbers
-     * - MM/DD/YYYY strings
+     * - DD/MM/YYYY strings (Georgian bank statement format)
+     * - DD.MM.YYYY strings (alternative European format)
      * - YYYY-MM-DD strings
      * - ISO date strings
      *
@@ -42,6 +46,11 @@ public final class DateUtils {
     public static LocalDate parseDate(Object dateValue) {
         if (dateValue == null) {
             return null;
+        }
+
+        // Handle LocalDate directly (from Excel cell with date formatting)
+        if (dateValue instanceof LocalDate) {
+            return (LocalDate) dateValue;
         }
 
         // Handle numeric (Excel serial date)
@@ -62,13 +71,30 @@ public final class DateUtils {
             // Not a number, try string formats
         }
 
-        // Try MM/DD/YYYY
-        Matcher mdyMatcher = MDY_PATTERN.matcher(dateStr);
-        if (mdyMatcher.matches()) {
-            int month = Integer.parseInt(mdyMatcher.group(1));
-            int day = Integer.parseInt(mdyMatcher.group(2));
-            int year = Integer.parseInt(mdyMatcher.group(3));
-            return LocalDate.of(year, month, day);
+        // Try DD/MM/YYYY (Georgian bank statement format - TBC, BOG)
+        Matcher dmyMatcher = DMY_PATTERN.matcher(dateStr);
+        if (dmyMatcher.matches()) {
+            int day = Integer.parseInt(dmyMatcher.group(1));
+            int month = Integer.parseInt(dmyMatcher.group(2));
+            int year = Integer.parseInt(dmyMatcher.group(3));
+            try {
+                return LocalDate.of(year, month, day);
+            } catch (Exception e) {
+                // Invalid date, continue to next format
+            }
+        }
+
+        // Try DD.MM.YYYY (alternative European format)
+        Matcher dmyDotMatcher = DMY_DOT_PATTERN.matcher(dateStr);
+        if (dmyDotMatcher.matches()) {
+            int day = Integer.parseInt(dmyDotMatcher.group(1));
+            int month = Integer.parseInt(dmyDotMatcher.group(2));
+            int year = Integer.parseInt(dmyDotMatcher.group(3));
+            try {
+                return LocalDate.of(year, month, day);
+            } catch (Exception e) {
+                // Invalid date, continue to next format
+            }
         }
 
         // Try YYYY-MM-DD
@@ -77,7 +103,11 @@ public final class DateUtils {
             int year = Integer.parseInt(ymdMatcher.group(1));
             int month = Integer.parseInt(ymdMatcher.group(2));
             int day = Integer.parseInt(ymdMatcher.group(3));
-            return LocalDate.of(year, month, day);
+            try {
+                return LocalDate.of(year, month, day);
+            } catch (Exception e) {
+                // Invalid date, continue to next format
+            }
         }
 
         // Try ISO datetime format YYYY-MM-DDTHH:mm:ss (RS.ge format)
@@ -86,7 +116,11 @@ public final class DateUtils {
             int year = Integer.parseInt(isoDatetimeMatcher.group(1));
             int month = Integer.parseInt(isoDatetimeMatcher.group(2));
             int day = Integer.parseInt(isoDatetimeMatcher.group(3));
-            return LocalDate.of(year, month, day);
+            try {
+                return LocalDate.of(year, month, day);
+            } catch (Exception e) {
+                // Invalid date, continue to next format
+            }
         }
 
         // Try ISO format
