@@ -266,15 +266,18 @@ export function PaymentsPage() {
     let totalSales = 0
     let totalPayments = 0
     let totalCashPayments = 0
+    let totalStartingDebts = 0
 
     Object.values(customerAnalysis).forEach(customer => {
       if (excludedCustomers.has(customer.customerId)) return
       totalSales += customer.totalSales
       totalPayments += customer.totalPayments
       totalCashPayments += customer.totalCashPayments
+      totalStartingDebts += customer.startingDebt
     })
 
-    const totalOutstanding = totalSales - totalPayments
+    // FIXED: Include starting debts in total calculation (same formula as individual customer debt)
+    const totalOutstanding = totalStartingDebts + totalSales - totalPayments
 
     return {
       totalSales,
