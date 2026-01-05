@@ -261,6 +261,33 @@ export const paymentsApi = {
     const response = await fetchWithAuth(`/payments/aggregation/job/${jobId}`)
     return jsonData<import('@/types/domain').AggregationJob>(response)
   },
+
+  // Delete all bank payments (TBC/BOG)
+  deleteBankPayments: async () => {
+    const response = await fetchWithAuth('/payments/bank', { method: 'DELETE' })
+    return jsonData<{ deleted: number; aggregationJobId?: string }>(response)
+  },
+
+  // Deduplication
+  analyzeDuplicates: async () => {
+    const response = await fetchWithAuth('/payments/deduplicate/analyze')
+    return jsonData<{
+      totalPayments: number
+      duplicateGroups: number
+      paymentsDeleted: number
+      amountRecovered: number
+    }>(response)
+  },
+
+  removeDuplicates: async () => {
+    const response = await fetchWithAuth('/payments/deduplicate/remove', { method: 'POST' })
+    return jsonData<{
+      totalPayments: number
+      duplicateGroups: number
+      paymentsDeleted: number
+      amountRecovered: number
+    }>(response)
+  },
 }
 
 // Config API

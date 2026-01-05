@@ -414,6 +414,44 @@ export function PaymentsPage() {
     },
   })
 
+  // Clear bank payments mutation
+  const clearBankPaymentsMutation = useMutation({
+    mutationFn: () => paymentsApi.deleteBankPayments(),
+    onSuccess: (data) => {
+      setUploadStatus(`✅ წაიშალა ${data.deleted} ბანკის გადახდა`)
+      void queryClient.invalidateQueries({ queryKey: ['payments'] })
+      void queryClient.invalidateQueries({ queryKey: ['waybills'] })
+
+      // Start polling for aggregation if job was triggered
+      if (data.aggregationJobId) {
+        setAggregationJobId(data.aggregationJobId)
+        setIsPolling(true)
+        setAggregationJob({
+          jobId: data.aggregationJobId,
+          status: 'PENDING',
+          source: 'bank_purge',
+          createdAt: new Date().toISOString(),
+          progressPercent: 0
+        })
+      }
+    },
+    onError: (err) => {
+      setUploadStatus(`❌ წაშლა ვერ მოხერხდა: ${getApiErrorMessage(err)}`)
+    },
+  })
+
+  const handleClearBankPayments = () => {
+    const confirmed = window.confirm(
+      'დარწმუნებული ხართ, რომ გსურთ ყველა ბანკის გადახდის წაშლა?\n\n' +
+      'ეს მოქმედება წაშლის ყველა TBC და BOG გადახდას Firebase-დან.\n' +
+      'ეს მოქმედება შეუქცევადია!'
+    )
+    if (!confirmed) return
+
+    setUploadStatus('⏳ იშლება ბანკის გადახდები...')
+    clearBankPaymentsMutation.mutate()
+  }
+
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -925,6 +963,21 @@ export function PaymentsPage() {
               )}
             </div>
           )}
+
+          {/* Clear Bank Payments Button */}
+          <div className="border-t pt-3 mt-3">
+            <Button
+              variant="destructive"
+              onClick={handleClearBankPayments}
+              disabled={clearBankPaymentsMutation.isPending}
+              className="w-full"
+            >
+              {clearBankPaymentsMutation.isPending ? '⏳ იშლება...' : '🗑️ ბანკის გადახდების წაშლა'}
+            </Button>
+            <div className="mt-1 text-xs text-muted-foreground text-center">
+              წაშლის ყველა TBC და BOG გადახდას Firebase-დან
+            </div>
+          </div>
         </div>
       </Card>
 
