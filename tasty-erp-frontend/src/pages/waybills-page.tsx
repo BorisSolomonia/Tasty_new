@@ -7,7 +7,6 @@ import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { formatCurrency, formatDate, formatDateISO, getPaymentCutoffDate } from '@/lib/utils'
-import { sumPaymentAmount, sumWaybillAmount } from '@/lib/erp-calculations'
 import { useCachedQuery } from '@/lib/use-cached-query'
 import type { InitialDebt } from '@/types/domain'
 
@@ -110,13 +109,64 @@ export function WaybillsPage() {
   const afterCutoffPayments = afterCutoffPaymentsQuery.data ?? []
   const initialDebts = initialDebtsQuery.data ?? []
 
-  const totalSales = sumWaybillAmount(afterCutoffWaybills)
-  const totalPayments = sumPaymentAmount(afterCutoffPayments, { authorizedOnly: true })
+  // Read excluded customers from localStorage (same as payments page)
+  const excludedCustomers = React.useMemo(() => {
+    if (typeof window === 'undefined') return new Set<string>()
+    const raw = window.localStorage.getItem('tasty-erp-excluded-customers')
+    if (!raw) return new Set<string>()
+    try {
+      const list = JSON.parse(raw) as string[]
+      return new Set(list)
+    } catch {
+      return new Set<string>()
+    }
+  }, [])
 
-  // Calculate total starting debts (SAME formula as payments page)
-  const totalStartingDebts = initialDebts.reduce((sum, debt) => sum + debt.debt, 0)
+  // Group data by customer to calculate per-customer totals
+  const customerSales = new Map<string, number>()
+  afterCutoffWaybills.forEach(w => {
+    const id = w.buyerTin || w.customerId
+    if (id) {
+      const amount = typeof w.amount === 'number' ? w.amount : Number(w.amount || 0)
+      customerSales.set(id, (customerSales.get(id) || 0) + amount)
+    }
+  })
 
-  // Net debt calculation (EXACT same formula as payments page)
+  const customerPayments = new Map<string, number>()
+  afterCutoffPayments.forEach(p => {
+    if (p.customerId && (p.source === 'tbc' || p.source === 'bog' || p.source === 'manual-cash')) {
+      const amount = typeof p.amount === 'number' ? p.amount : Number(p.amount || 0)
+      customerPayments.set(p.customerId, (customerPayments.get(p.customerId) || 0) + amount)
+    }
+  })
+
+  // Calculate totals ONLY for INCLUDED customers (EXACT same logic as payments page)
+  let totalSales = 0
+  let totalPayments = 0
+  let totalStartingDebts = 0
+
+  // Sum starting debts for included customers
+  initialDebts.forEach(debt => {
+    if (!excludedCustomers.has(debt.customerId)) {
+      totalStartingDebts += debt.debt
+    }
+  })
+
+  // Sum sales for included customers
+  customerSales.forEach((amount, customerId) => {
+    if (!excludedCustomers.has(customerId)) {
+      totalSales += amount
+    }
+  })
+
+  // Sum payments for included customers
+  customerPayments.forEach((amount, customerId) => {
+    if (!excludedCustomers.has(customerId)) {
+      totalPayments += amount
+    }
+  })
+
+  // Net debt calculation (EXACT same formula as payments page, with excluded customers filtered)
   const netDebt = totalStartingDebts + totalSales - totalPayments
 
   const syncSalesMutation = useMutation({
