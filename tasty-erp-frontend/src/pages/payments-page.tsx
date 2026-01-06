@@ -106,6 +106,7 @@ export function PaymentsPage() {
     staleTime: 1000 * 60 * 10, // Cache for 10 minutes
     gcTime: 1000 * 60 * 20, // Keep in cache for 20 minutes
     retry: 1,
+    enabled: true, // Always enabled
   })
 
   const customersQuery = useQuery({
@@ -122,6 +123,13 @@ export function PaymentsPage() {
   const initialDebts = (initialDebtsQuery.data || []) as InitialDebt[]
   const firebaseCustomers = (customersQuery.data || []) as Array<{ identification: string; customerName: string; contactInfo?: string }>
   const paymentStatus = (paymentStatusQuery.data || {}) as Record<string, import('@/types/domain').PaymentStatus>
+
+  // Debug logging
+  React.useEffect(() => {
+    if (paymentStatusQuery.error) {
+      console.error('Payment status query error:', paymentStatusQuery.error)
+    }
+  }, [paymentStatusQuery.error])
 
   const handleToggleExcluded = (customerId: string) => {
     setExcludedCustomers(prev => {
