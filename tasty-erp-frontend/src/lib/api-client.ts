@@ -268,6 +268,12 @@ export const paymentsApi = {
     return jsonData<{ deleted: number; aggregationJobId?: string }>(response)
   },
 
+  // Get payment status indicators (color warnings based on days since last payment)
+  getStatus: async () => {
+    const response = await fetchWithAuth('/payments/status')
+    return jsonData<Record<string, import('@/types/domain').PaymentStatus>>(response)
+  },
+
   // Deduplication
   analyzeDuplicates: async () => {
     const response = await fetchWithAuth('/payments/deduplicate/analyze')

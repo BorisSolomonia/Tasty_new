@@ -4,10 +4,12 @@ import ge.tastyerp.common.dto.ApiResponse;
 import ge.tastyerp.common.dto.payment.CustomerPaymentSummary;
 import ge.tastyerp.common.dto.payment.ExcelUploadResponse;
 import ge.tastyerp.common.dto.payment.PaymentDto;
+import ge.tastyerp.common.dto.payment.PaymentStatusDto;
 import ge.tastyerp.payment.service.PaymentService;
 import ge.tastyerp.payment.service.ExcelProcessingService;
 import ge.tastyerp.payment.service.AsyncAggregationService;
 import ge.tastyerp.payment.service.DeduplicationService;
+import ge.tastyerp.payment.service.PaymentStatusService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +37,7 @@ public class PaymentController {
     private final ExcelProcessingService excelProcessingService;
     private final AsyncAggregationService asyncAggregationService;
     private final DeduplicationService deduplicationService;
+    private final PaymentStatusService paymentStatusService;
 
     // ==================== EXCEL UPLOAD ====================
 
@@ -122,6 +125,16 @@ public class PaymentController {
     public ResponseEntity<ApiResponse<Object>> getPaymentStats() {
         Object stats = paymentService.getPaymentStatistics();
         return ResponseEntity.ok(ApiResponse.success(stats));
+    }
+
+    @GetMapping("/status")
+    @Operation(summary = "Get payment status indicators for all customers",
+            description = "Returns color indicators based on days since last payment: " +
+                         "< 14 days = none, 14-30 days = yellow, 30+ days = red. " +
+                         "Used for visual warnings on payments page.")
+    public ResponseEntity<ApiResponse<Map<String, PaymentStatusDto>>> getPaymentStatus() {
+        Map<String, PaymentStatusDto> statusMap = paymentStatusService.calculatePaymentStatus();
+        return ResponseEntity.ok(ApiResponse.success(statusMap));
     }
 
     // ==================== AGGREGATION JOB STATUS ====================

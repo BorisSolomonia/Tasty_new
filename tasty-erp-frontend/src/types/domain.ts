@@ -44,6 +44,13 @@ export type Payment = {
   excelRowIndex?: number | null
 }
 
+export type PaymentStatus = {
+  customerId: string
+  lastPaymentDate: string
+  daysSinceLastPayment: number
+  statusColor: 'none' | 'yellow' | 'red'
+}
+
 export type InitialDebt = {
   customerId: string
   customerName: string

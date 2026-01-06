@@ -99,6 +99,15 @@ export function PaymentsPage() {
     retry: 1,
   })
 
+  // Fetch payment status indicators (color warnings)
+  const paymentStatusQuery = useQuery({
+    queryKey: ['payments', 'status'],
+    queryFn: () => paymentsApi.getStatus(),
+    staleTime: 1000 * 60 * 10, // Cache for 10 minutes
+    gcTime: 1000 * 60 * 20, // Keep in cache for 20 minutes
+    retry: 1,
+  })
+
   const customersQuery = useQuery({
     queryKey: ['config', 'customers'],
     queryFn: () => configApi.getCustomers(),
@@ -112,6 +121,7 @@ export function PaymentsPage() {
   const payments = (paymentsQuery.data || []) as Payment[]
   const initialDebts = (initialDebtsQuery.data || []) as InitialDebt[]
   const firebaseCustomers = (customersQuery.data || []) as Array<{ identification: string; customerName: string; contactInfo?: string }>
+  const paymentStatus = (paymentStatusQuery.data || {}) as Record<string, import('@/types/domain').PaymentStatus>
 
   const handleToggleExcluded = (customerId: string) => {
     setExcludedCustomers(prev => {
@@ -637,9 +647,21 @@ export function PaymentsPage() {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {paginatedCustomers.map((customer) => (
+              {paginatedCustomers.map((customer) => {
+                // Get payment status color (only for customers with debt > 0)
+                const status = paymentStatus[customer.customerId]
+                const statusColor = customer.currentDebt > 0 && status?.statusColor !== 'none'
+                  ? status?.statusColor
+                  : null
+                const rowBgClass = statusColor === 'yellow'
+                  ? 'bg-yellow-50/50 dark:bg-yellow-900/10 hover:bg-yellow-100/50 dark:hover:bg-yellow-900/20'
+                  : statusColor === 'red'
+                  ? 'bg-red-50/50 dark:bg-red-900/10 hover:bg-red-100/50 dark:hover:bg-red-900/20'
+                  : 'hover:bg-accent/50'
+
+                return (
                 <React.Fragment key={customer.customerId}>
-                  <tr className="hover:bg-accent/50">
+                  <tr className={rowBgClass}>
                     <td className="px-4 py-3 text-sm">{customer.customerName}</td>
                     <td className={`px-4 py-3 text-sm font-medium ${
                       customer.currentDebt > 0 ? 'text-red-600 dark:text-red-500' :
@@ -824,7 +846,8 @@ export function PaymentsPage() {
                     </tr>
                   )}
                 </React.Fragment>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>

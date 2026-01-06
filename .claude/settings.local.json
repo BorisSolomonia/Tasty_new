@@ -39,7 +39,8 @@
       "Bash(git push:*)",
       "Bash(gh run list:*)",
       "Bash(timeout /t 90)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(git commit:*)"
     ]
   }
 }
