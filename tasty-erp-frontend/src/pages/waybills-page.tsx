@@ -2,12 +2,14 @@ import * as React from 'react'
 import { Link } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { startOfMonth, addDays } from 'date-fns'
-import { ApiError, waybillsApi, paymentsApi } from '@/lib/api-client'
+import { ApiError, waybillsApi, paymentsApi, configApi } from '@/lib/api-client'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { formatCurrency, formatDate, formatDateISO, getPaymentCutoffDate } from '@/lib/utils'
 import { sumPaymentAmount, sumWaybillAmount } from '@/lib/erp-calculations'
+import { useCachedQuery } from '@/lib/use-cached-query'
+import type { InitialDebt } from '@/types/domain'
 
 function getApiErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
@@ -79,15 +81,43 @@ export function WaybillsPage() {
     retry: 1,
   })
 
+  // Fetch initial debts (same as payments page) - React Query will dedupe/cache this
+  const PAYMENT_CUTOFF_DATE = '2025-04-29'
+  const initialDebtsQuery = useCachedQuery({
+    queryKey: ['config', 'initialDebts'],
+    queryFn: async () => {
+      const result = await configApi.getInitialDebts()
+      // Convert Firebase response to InitialDebt array
+      if (Array.isArray(result)) return result as InitialDebt[]
+      if (typeof result === 'object' && result !== null) {
+        return Object.entries(result).map(([customerId, data]: [string, any]) => ({
+          customerId,
+          customerName: data.name || data.customerName || customerId,
+          debt: Number(data.debt || data.amount || 0),
+          date: data.date || PAYMENT_CUTOFF_DATE
+        }))
+      }
+      return []
+    },
+    cacheKey: 'initial_debts',
+    cacheTTL: 7 * 24 * 60 * 60 * 1000, // Cache for 7 days
+    staleTime: 1000 * 60 * 60 * 4, // Refetch after 4 hours
+    gcTime: 1000 * 60 * 60 * 24, // Keep in memory for 24 hours
+    retry: 1,
+  })
+
   const afterCutoffWaybills = afterCutoffSalesQuery.data ?? []
   const afterCutoffPayments = afterCutoffPaymentsQuery.data ?? []
+  const initialDebts = initialDebtsQuery.data ?? []
 
   const totalSales = sumWaybillAmount(afterCutoffWaybills)
   const totalPayments = sumPaymentAmount(afterCutoffPayments, { authorizedOnly: true })
 
-  // Fetch total outstanding directly from payments page calculation
-  const cachedTotalOutstanding = queryClient.getQueryData(['totalOutstanding']) as number
-  const netDebt = cachedTotalOutstanding ?? (totalSales - totalPayments)
+  // Calculate total starting debts (SAME formula as payments page)
+  const totalStartingDebts = initialDebts.reduce((sum, debt) => sum + debt.debt, 0)
+
+  // Net debt calculation (EXACT same formula as payments page)
+  const netDebt = totalStartingDebts + totalSales - totalPayments
 
   const syncSalesMutation = useMutation({
     mutationFn: () => waybillsApi.fetch(startDate, endDate),

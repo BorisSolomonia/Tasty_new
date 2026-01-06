@@ -335,11 +335,6 @@ export function PaymentsPage() {
   const totalCashReceived = includedTotals.totalCashPayments
   const totalOutstanding = includedTotals.totalOutstanding
 
-  // Store total outstanding in query cache for waybills page to use
-  React.useEffect(() => {
-    queryClient.setQueryData(['totalOutstanding'], totalOutstanding)
-  }, [totalOutstanding, queryClient])
-
   // NEW: Poll aggregation job status
   React.useEffect(() => {
     if (!aggregationJobId || !isPolling) return
