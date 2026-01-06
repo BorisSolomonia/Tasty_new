@@ -33,7 +33,13 @@
       "Bash(ren:*)",
       "Bash(copy:*)",
       "Bash(timeout /t 15)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git reset:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nFix: Add balance back to uniqueCode to distinguish same-day same-amount payments\n\nSame customer can make multiple payments of the same amount on the same day.\nWithout balance in uniqueCode, these legitimate payments were incorrectly\nmarked as duplicates and skipped.\n\nExample: Customer 405135946 had 14 payments skipped because they had\nthe same date, amount, and customerId but different post-transaction balances.\n\nChanges:\n- UniqueCodeGenerator: Include balance in uniqueCode format\n- PaymentRepository: Update reconstructUniqueCode to include balance\n- DeduplicationService: Update to use full uniqueCode with balance\n\n🤖 Generated with [Claude Code]\\(https://claude.com/claude-code\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push:*)",
+      "Bash(gh run list:*)",
+      "Bash(timeout /t 90)",
+      "Bash(python:*)"
     ]
   }
 }

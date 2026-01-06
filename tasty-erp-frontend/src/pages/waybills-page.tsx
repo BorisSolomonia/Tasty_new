@@ -85,19 +85,9 @@ export function WaybillsPage() {
   const totalSales = sumWaybillAmount(afterCutoffWaybills)
   const totalPayments = sumPaymentAmount(afterCutoffPayments, { authorizedOnly: true })
 
-  // Use the same total debt formula as payments page (includes starting debts)
-  const cachedInitialDebts = queryClient.getQueryData(['config', 'initialDebts']) as any[]
-
-  // Calculate total starting debts from cached data
-  let totalStartingDebts = 0
-  if (cachedInitialDebts && Array.isArray(cachedInitialDebts)) {
-    totalStartingDebts = cachedInitialDebts.reduce((sum: number, debt: any) => {
-      return sum + (Number(debt.debt || debt.amount || 0))
-    }, 0)
-  }
-
-  // Net debt includes starting debts (same formula as payments page)
-  const netDebt = totalStartingDebts + totalSales - totalPayments
+  // Fetch total outstanding directly from payments page calculation
+  const cachedTotalOutstanding = queryClient.getQueryData(['totalOutstanding']) as number
+  const netDebt = cachedTotalOutstanding ?? (totalSales - totalPayments)
 
   const syncSalesMutation = useMutation({
     mutationFn: () => waybillsApi.fetch(startDate, endDate),
