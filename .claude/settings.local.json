@@ -40,7 +40,10 @@
       "Bash(gh run list:*)",
       "Bash(timeout /t 90)",
       "Bash(python:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(ls:*)",
+      "Bash(grep:*)",
+      "Bash(git checkout:*)"
     ]
   }
 }
