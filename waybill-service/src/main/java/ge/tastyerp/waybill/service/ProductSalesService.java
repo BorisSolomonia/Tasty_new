@@ -4,6 +4,7 @@ import ge.tastyerp.common.dto.waybill.ProductSalesDto;
 import ge.tastyerp.common.dto.waybill.WaybillDto;
 import ge.tastyerp.common.dto.waybill.WaybillGoodDto;
 import ge.tastyerp.common.dto.waybill.WaybillType;
+import ge.tastyerp.waybill.service.rsge.RsGeSoapClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -31,24 +32,43 @@ public class ProductSalesService {
     );
 
     private final WaybillService waybillService;
+    private final RsGeSoapClient rsGeSoapClient;
+    private final WaybillProcessingService waybillProcessingService;
 
     public List<ProductSalesDto> getProductSales(String startDate, String endDate) {
         log.info("Fetching product sales for date range: {} to {}", startDate, endDate);
 
+        // Step 1: Fetch waybill list (gives us customer IDs and waybill IDs)
         List<WaybillDto> waybills = waybillService.getWaybills(null, startDate, endDate, false, WaybillType.SALE);
         log.info("Fetched {} waybills for product sales analysis", waybills.size());
 
-        // Warn if no goods data was extracted (helps diagnose RS.ge field name issues)
-        long totalGoodsCount = waybills.stream()
-                .mapToLong(w -> w.getGoods() == null ? 0 : w.getGoods().size())
-                .sum();
-        if (totalGoodsCount == 0 && !waybills.isEmpty()) {
-            log.warn("No goods data found in any of {} waybills. " +
-                    "RS.ge may not return goods in this date range, or field names need updating in GOODS_CONTAINER_KEYS.",
-                    waybills.size());
+        // Step 2: Fetch per-waybill goods via get_waybill in parallel
+        List<String> waybillIds = waybills.stream()
+                .map(WaybillDto::getWaybillId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .collect(Collectors.toList());
+
+        Map<String, Map<String, Object>> rawGoodsMap = rsGeSoapClient.getWaybillGoodsMap(waybillIds);
+
+        // Step 3: Extract goods DTOs for each waybill using confirmed RS.ge field names
+        Map<String, List<WaybillGoodDto>> goodsByWaybillId = new HashMap<>();
+        for (Map.Entry<String, Map<String, Object>> entry : rawGoodsMap.entrySet()) {
+            List<WaybillGoodDto> goods = waybillProcessingService.extractGoods(entry.getValue());
+            if (!goods.isEmpty()) {
+                goodsByWaybillId.put(entry.getKey(), goods);
+            }
         }
 
-        // Group by customerId
+        long totalGoodsItems = goodsByWaybillId.values().stream().mapToLong(List::size).sum();
+        log.info("Extracted {} goods items across {} waybills", totalGoodsItems, goodsByWaybillId.size());
+
+        if (goodsByWaybillId.isEmpty() && !waybills.isEmpty()) {
+            log.warn("No goods data extracted from any waybill. " +
+                    "Check RS.ge field names — confirmed names are W_NAME and QUANTITY_F under GOODS_LIST → GOODS.");
+        }
+
+        // Step 4: Group waybills by customer and aggregate beef/pork kg
         Map<String, List<WaybillDto>> byCustomer = waybills.stream()
                 .filter(w -> w.getCustomerId() != null)
                 .collect(Collectors.groupingBy(WaybillDto::getCustomerId));
@@ -71,8 +91,10 @@ public class ProductSalesService {
             Set<String> porkProductsFound = new LinkedHashSet<>();
 
             for (WaybillDto waybill : customerWaybills) {
-                if (waybill.getGoods() == null) continue;
-                for (WaybillGoodDto good : waybill.getGoods()) {
+                List<WaybillGoodDto> goods = goodsByWaybillId.get(waybill.getWaybillId());
+                if (goods == null) continue;
+
+                for (WaybillGoodDto good : goods) {
                     String name = good.getName();
                     BigDecimal qty = good.getQuantity();
                     if (name == null || qty == null) continue;

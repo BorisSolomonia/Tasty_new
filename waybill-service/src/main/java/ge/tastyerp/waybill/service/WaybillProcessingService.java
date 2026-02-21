@@ -45,6 +45,7 @@ public class WaybillProcessingService {
     );
 
     private static final List<String> GOODS_NAME_KEYS = List.of(
+            "W_NAME", "w_name",        // Confirmed RS.ge field name
             "NAME", "name", "Name",
             "GOODS_NAME", "goods_name",
             "PROD_NAME", "prod_name",
@@ -54,11 +55,19 @@ public class WaybillProcessingService {
     );
 
     private static final List<String> GOODS_QUANTITY_KEYS = List.of(
+            "QUANTITY_F", "quantity_f",  // Confirmed RS.ge field name
             "QUANTITY", "quantity", "Quantity",
             "QTY", "qty",
             "COUNT", "count",
             "AMOUNT_KG", "amount_kg",
             "WEIGHT", "weight"
+    );
+
+    // Inner item keys inside a goods container map (e.g. GOODS_LIST → { GOODS: [...] })
+    private static final List<String> GOODS_INNER_KEYS = List.of(
+            "GOODS", "goods", "Goods",
+            "ITEMS", "items", "Item", "ITEM",
+            "PRODUCT", "product"
     );
 
     // Amount field priority list (matching legacy exactly)
@@ -256,11 +265,25 @@ public class WaybillProcessingService {
             return Collections.emptyList();
         }
 
+        // If container is a Map it may wrap the actual items under a nested key.
+        // e.g. GOODS_LIST = { "GOODS": [ item1, item2, ... ] }
+        if (goodsContainer instanceof Map) {
+            Map<String, Object> containerMap = (Map<String, Object>) goodsContainer;
+            for (String innerKey : GOODS_INNER_KEYS) {
+                Object inner = containerMap.get(innerKey);
+                if (inner != null) {
+                    log.debug("Unwrapped inner goods container under key '{}'", innerKey);
+                    goodsContainer = inner;
+                    break;
+                }
+            }
+        }
+
         List<Object> items;
         if (goodsContainer instanceof List) {
             items = (List<Object>) goodsContainer;
         } else if (goodsContainer instanceof Map) {
-            // Single item wrapped in a map — RS.ge sometimes does this
+            // Single item wrapped in a map — RS.ge sometimes does this for one-item lists
             items = Collections.singletonList(goodsContainer);
         } else {
             log.debug("Goods container is unexpected type: {}", goodsContainer.getClass().getSimpleName());

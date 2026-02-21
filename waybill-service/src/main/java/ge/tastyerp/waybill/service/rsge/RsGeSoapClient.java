@@ -22,6 +22,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 /**
@@ -71,6 +73,14 @@ public class RsGeSoapClient {
             .connectTimeout(Duration.ofSeconds(30))
             .build();
 
+    /** Thread pool for parallel per-waybill goods fetching (product-sales endpoint). */
+    private final ExecutorService goodsFetchExecutor = Executors.newFixedThreadPool(10,
+            r -> {
+                Thread t = new Thread(r, "goods-fetch");
+                t.setDaemon(true);
+                return t;
+            });
+
     /**
      * Get waybills from RS.ge.
      * Automatically handles date range chunking if needed.
@@ -114,6 +124,81 @@ public class RsGeSoapClient {
             throw new ExternalServiceException("RS.ge", e.getMessage(), e);
         }
     }
+    /**
+     * Fetch goods data for multiple waybill IDs in parallel using the get_waybill endpoint.
+     *
+     * Returns a map of waybillId → raw WAYBILL map (already navigated past the result wrapper).
+     * Missing or failed waybills are omitted from the result.
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Map<String, Object>> getWaybillGoodsMap(List<String> waybillIds) {
+        if (waybillIds == null || waybillIds.isEmpty()) {
+            return Map.of();
+        }
+
+        List<String> distinctIds = waybillIds.stream().distinct().collect(Collectors.toList());
+        log.info("Fetching goods for {} waybills via get_waybill (parallel, pool=10)", distinctIds.size());
+
+        List<CompletableFuture<Map.Entry<String, Map<String, Object>>>> futures = distinctIds.stream()
+                .map(id -> CompletableFuture.supplyAsync(() -> {
+                    Map<String, Object> waybillMap = fetchSingleWaybillMap(id);
+                    return waybillMap != null
+                            ? Map.entry(id, waybillMap)
+                            : Map.<String, Map<String, Object>>entry(id, Map.of());
+                }, goodsFetchExecutor))
+                .collect(Collectors.toList());
+
+        Map<String, Map<String, Object>> result = new HashMap<>();
+        for (CompletableFuture<Map.Entry<String, Map<String, Object>>> future : futures) {
+            try {
+                Map.Entry<String, Map<String, Object>> entry = future.join();
+                if (!entry.getValue().isEmpty()) {
+                    result.put(entry.getKey(), entry.getValue());
+                }
+            } catch (Exception e) {
+                log.warn("Goods fetch future failed: {}", e.getMessage());
+            }
+        }
+
+        log.info("Goods fetch complete: {}/{} waybills returned data", result.size(), distinctIds.size());
+        return result;
+    }
+
+    /**
+     * Fetch the WAYBILL map for a single waybill ID using get_waybill SOAP operation.
+     * Returns the inner WAYBILL map (navigated past result wrapper), or null on failure.
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> fetchSingleWaybillMap(String waybillId) {
+        try {
+            Map<String, String> params = new HashMap<>();
+            params.put("su", username);
+            params.put("sp", password);
+            params.put("waybill_id", waybillId);
+
+            String response = sendSoapRequest("get_waybill", params);
+            Map<String, Object> result = parseSoapResponse(response, "get_waybill");
+
+            // Navigate past RESULT wrapper if present
+            Object inner = result.get("RESULT");
+            if (inner instanceof Map) {
+                result = (Map<String, Object>) inner;
+            }
+
+            // Extract the WAYBILL submap which contains GOODS_LIST
+            Object waybillObj = result.get("WAYBILL");
+            if (waybillObj instanceof Map) {
+                return (Map<String, Object>) waybillObj;
+            }
+
+            log.debug("get_waybill response for id={} has no WAYBILL key; keys={}", waybillId, result.keySet());
+            return null;
+        } catch (Exception e) {
+            log.warn("Failed to fetch goods for waybill id={}: {}", waybillId, e.getMessage());
+            return null;
+        }
+    }
+
     /**
      * Call SOAP operation with retry logic.
      */
