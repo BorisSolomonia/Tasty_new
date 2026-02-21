@@ -6,6 +6,7 @@ import { DashboardPage } from '@/pages/dashboard-page'
 import { WaybillsPage } from '@/pages/waybills-page'
 import { PaymentsPage } from '@/pages/payments-page'
 import { SettingsPage } from '@/pages/settings-page'
+import { ProductSalesPage } from '@/pages/product-sales-page'
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -35,7 +36,13 @@ const settingsRoute = createRoute({
   component: SettingsPage,
 })
 
-const routeTree = rootRoute.addChildren([indexRoute, waybillsRoute, paymentsRoute, settingsRoute])
+const productSalesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'product-sales',
+  component: ProductSalesPage,
+})
+
+const routeTree = rootRoute.addChildren([indexRoute, waybillsRoute, paymentsRoute, settingsRoute, productSalesRoute])
 
 export const router = createRouter({
   routeTree,

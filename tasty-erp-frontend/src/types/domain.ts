@@ -91,6 +91,21 @@ export type CustomerAnalysis = {
   }>
 }
 
+export type ProductSales = {
+  customerId: string
+  customerName: string
+  beefKg: number
+  porkKg: number
+  totalKg: number
+  beefProductsFound?: string[]
+  porkProductsFound?: string[]
+}
+
+export type CustomerEntry = {
+  id: string
+  name: string
+}
+
 export type AggregationJob = {
   jobId: string
   status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED'

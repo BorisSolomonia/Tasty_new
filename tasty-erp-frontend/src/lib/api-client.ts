@@ -1,4 +1,4 @@
-import type { Payment, Waybill, WaybillVatSummary } from '@/types/domain'
+import type { Payment, ProductSales, Waybill, WaybillVatSummary } from '@/types/domain'
 
 const API_URL = import.meta.env.VITE_API_URL || '/api'
 
@@ -367,6 +367,14 @@ export const configApi = {
   getCustomer: async (identification: string) => {
     const response = await fetchWithAuth(`/config/customers/${identification}`)
     return jsonData<{ identification: string; customerName: string; contactInfo?: string }>(response)
+  },
+}
+
+// Product Sales API
+export const productSalesApi = {
+  getProductSales: async (params: { startDate: string; endDate: string }) => {
+    const response = await fetchWithAuth('/waybills/product-sales', { params })
+    return jsonData<ProductSales[]>(response)
   },
 }
 

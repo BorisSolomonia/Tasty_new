@@ -1,6 +1,7 @@
 package ge.tastyerp.waybill.service;
 
 import ge.tastyerp.common.dto.waybill.WaybillDto;
+import ge.tastyerp.common.dto.waybill.WaybillGoodDto;
 import ge.tastyerp.common.dto.waybill.WaybillType;
 import ge.tastyerp.common.util.AmountUtils;
 import ge.tastyerp.common.util.DateUtils;
@@ -31,6 +32,34 @@ public class WaybillProcessingService {
 
     @Value("${business.cutoff-date:2025-04-29}")
     private String cutoffDate;
+
+    // Goods container field name variants (RS.ge field names are uncertain)
+    private static final List<String> GOODS_CONTAINER_KEYS = List.of(
+            "GOODS_LIST", "goods_list", "GoodsList",
+            "GOODS_DETAILS", "goods_details",
+            "GOODS", "goods", "Goods",
+            "ITEMS", "items", "Items",
+            "PRODUCTS", "products",
+            "PRODUCT_LIST", "product_list",
+            "WAYBILL_GOODS", "waybill_goods"
+    );
+
+    private static final List<String> GOODS_NAME_KEYS = List.of(
+            "NAME", "name", "Name",
+            "GOODS_NAME", "goods_name",
+            "PROD_NAME", "prod_name",
+            "ITEM_NAME", "item_name",
+            "PRODUCT_NAME", "product_name",
+            "DESCRIPTION", "description"
+    );
+
+    private static final List<String> GOODS_QUANTITY_KEYS = List.of(
+            "QUANTITY", "quantity", "Quantity",
+            "QTY", "qty",
+            "COUNT", "count",
+            "AMOUNT_KG", "amount_kg",
+            "WEIGHT", "weight"
+    );
 
     // Amount field priority list (matching legacy exactly)
     private static final List<String> AMOUNT_FIELDS = Arrays.asList(
@@ -134,6 +163,8 @@ public class WaybillProcessingService {
         Object statusObj = getField(raw, "STATUS", "status");
         Integer status = statusObj != null ? parseStatus(statusObj) : null;
 
+        List<WaybillGoodDto> goods = extractGoods(raw);
+
         return WaybillDto.builder()
                 .waybillId(waybillId)
                 .type(type)
@@ -148,6 +179,7 @@ public class WaybillProcessingService {
                 .sellerTin(sellerTin)
                 .sellerName(sellerName)
                 .createdAt(LocalDateTime.now())
+                .goods(goods.isEmpty() ? null : goods)
                 .build();
     }
 
@@ -202,5 +234,73 @@ public class WaybillProcessingService {
         } catch (NumberFormatException e) {
             return 0;
         }
+    }
+
+    /**
+     * Extract goods line items from raw waybill map.
+     * Tries multiple field name variants since RS.ge field names are uncertain.
+     */
+    @SuppressWarnings("unchecked")
+    List<WaybillGoodDto> extractGoods(Map<String, Object> raw) {
+        Object goodsContainer = null;
+        for (String key : GOODS_CONTAINER_KEYS) {
+            goodsContainer = raw.get(key);
+            if (goodsContainer != null) {
+                log.debug("Found goods container under key '{}'", key);
+                break;
+            }
+        }
+
+        if (goodsContainer == null) {
+            log.debug("No goods found in waybill. Available keys: {}", raw.keySet());
+            return Collections.emptyList();
+        }
+
+        List<Object> items;
+        if (goodsContainer instanceof List) {
+            items = (List<Object>) goodsContainer;
+        } else if (goodsContainer instanceof Map) {
+            // Single item wrapped in a map — RS.ge sometimes does this
+            items = Collections.singletonList(goodsContainer);
+        } else {
+            log.debug("Goods container is unexpected type: {}", goodsContainer.getClass().getSimpleName());
+            return Collections.emptyList();
+        }
+
+        List<WaybillGoodDto> goods = new ArrayList<>();
+        for (Object item : items) {
+            if (!(item instanceof Map)) continue;
+            Map<String, Object> itemMap = (Map<String, Object>) item;
+
+            String name = getStringField(itemMap, GOODS_NAME_KEYS.toArray(new String[0]));
+            BigDecimal quantity = extractDecimalByKeys(itemMap, GOODS_QUANTITY_KEYS);
+            String unit = getStringField(itemMap, "UNIT", "unit", "Unit", "UNIT_NAME", "unit_name");
+            BigDecimal unitPrice = extractDecimalByKeys(itemMap, List.of("UNIT_PRICE", "unit_price", "PRICE", "price"));
+            BigDecimal totalPrice = extractDecimalByKeys(itemMap, List.of("TOTAL_PRICE", "total_price", "SUM", "sum", "AMOUNT", "amount"));
+
+            goods.add(WaybillGoodDto.builder()
+                    .name(name)
+                    .quantity(quantity)
+                    .unit(unit)
+                    .unitPrice(unitPrice)
+                    .totalPrice(totalPrice)
+                    .build());
+        }
+
+        return goods;
+    }
+
+    /**
+     * Extract BigDecimal value by trying multiple field name keys.
+     * Returns null if no key found (not ZERO, to distinguish "not present" from "zero").
+     */
+    private BigDecimal extractDecimalByKeys(Map<String, Object> map, List<String> keys) {
+        for (String key : keys) {
+            Object val = map.get(key);
+            if (val != null) {
+                return AmountUtils.parseAmount(val);
+            }
+        }
+        return null;
     }
 }

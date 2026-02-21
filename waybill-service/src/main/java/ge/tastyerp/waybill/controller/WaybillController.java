@@ -1,11 +1,13 @@
 package ge.tastyerp.waybill.controller;
 
 import ge.tastyerp.common.dto.ApiResponse;
+import ge.tastyerp.common.dto.waybill.ProductSalesDto;
 import ge.tastyerp.common.dto.waybill.WaybillDto;
 import ge.tastyerp.common.dto.waybill.WaybillFetchRequest;
 import ge.tastyerp.common.dto.waybill.WaybillFetchResponse;
 import ge.tastyerp.common.dto.waybill.WaybillType;
 import ge.tastyerp.common.dto.waybill.WaybillVatSummaryDto;
+import ge.tastyerp.waybill.service.ProductSalesService;
 import ge.tastyerp.waybill.service.WaybillService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -32,6 +34,7 @@ import java.util.Map;
 public class WaybillController {
 
     private final WaybillService waybillService;
+    private final ProductSalesService productSalesService;
 
     @PostMapping("/fetch")
     @Operation(summary = "Fetch waybills from RS.ge API")
@@ -83,6 +86,16 @@ public class WaybillController {
     public ResponseEntity<ApiResponse<Object>> getWaybillStats() {
         Object stats = waybillService.getWaybillStatistics();
         return ResponseEntity.ok(ApiResponse.success(stats));
+    }
+
+    @GetMapping("/product-sales")
+    @Operation(summary = "Get product sales aggregated by beef/pork categories per customer")
+    public ResponseEntity<ApiResponse<List<ProductSalesDto>>> getProductSales(
+            @RequestParam String startDate,
+            @RequestParam String endDate) {
+        log.info("HTTP GET /api/waybills/product-sales startDate={} endDate={}", startDate, endDate);
+        List<ProductSalesDto> result = productSalesService.getProductSales(startDate, endDate);
+        return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     @GetMapping("/vat")

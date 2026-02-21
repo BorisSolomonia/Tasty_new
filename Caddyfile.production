@@ -1,7 +1,21 @@
 # Tasty ERP Production Caddyfile
-# HTTP only (IP-based access)
-# To enable HTTPS with domain, replace :80 with your domain name
 
+# Portfolio site - borissolomonia.com (separate app, port 8090 on host)
+borissolomonia.com {
+    log {
+        output file /var/log/caddy/portfolio.log {
+            roll_size 10mb
+            roll_keep 3
+        }
+        format json
+    }
+    reverse_proxy host.docker.internal:8090 {
+        lb_try_duration 10s
+        lb_try_interval 1s
+    }
+}
+
+# Tasty ERP - all other traffic
 :80 {
     # Access logging
     log {
