@@ -137,6 +137,21 @@ public class PaymentController {
         return ResponseEntity.ok(ApiResponse.success(statusMap));
     }
 
+    // ==================== MANUAL SYNC ====================
+
+    @PostMapping("/sync")
+    @Operation(summary = "Manually trigger customer debt re-aggregation",
+            description = "Fetches fresh waybills from RS.ge and recalculates customer debt summaries. " +
+                         "Use this to fix stale debt data without uploading an Excel file. " +
+                         "Returns a job ID to poll for status.")
+    public ResponseEntity<ApiResponse<Map<String, String>>> triggerManualSync() {
+        String jobId = asyncAggregationService.triggerAggregation("manual_sync");
+        return ResponseEntity.ok(ApiResponse.success(
+                Map.of("jobId", jobId),
+                "Aggregation started. Poll /api/payments/aggregation/job/" + jobId + " for status."
+        ));
+    }
+
     // ==================== AGGREGATION JOB STATUS ====================
 
     @GetMapping("/aggregation/job/{jobId}")

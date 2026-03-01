@@ -262,6 +262,12 @@ export const paymentsApi = {
     return jsonData<import('@/types/domain').AggregationJob>(response)
   },
 
+  // Manual sync: re-aggregate customer debts from fresh RS.ge data
+  syncDebts: async () => {
+    const response = await fetchWithAuth('/payments/sync', { method: 'POST' })
+    return jsonData<{ jobId: string }>(response)
+  },
+
   // Delete all bank payments (TBC/BOG)
   deleteBankPayments: async () => {
     const response = await fetchWithAuth('/payments/bank', { method: 'DELETE' })

@@ -1,13 +1,12 @@
 import * as React from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { addDays } from 'date-fns'
-import { paymentsApi, waybillsApi, configApi, ApiError } from '@/lib/api-client'
+import { paymentsApi, ApiError } from '@/lib/api-client'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { formatCurrency, formatDateISO } from '@/lib/utils'
-import { useCachedQuery } from '@/lib/use-cached-query'
-import type { CustomerAnalysis, Waybill, Payment, InitialDebt, AggregationJob } from '@/types/domain'
+import type { CustomerAnalysis, Payment, AggregationJob } from '@/types/domain'
 
 function getApiErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
@@ -58,13 +57,13 @@ export function PaymentsPage() {
 
   const paymentWindowStart = formatDateISO(addDays(new Date(PAYMENT_CUTOFF_DATE), 1))
 
-  // Fetch all data needed for customer analysis
-  const waybillsQuery = useQuery({
-    queryKey: ['waybills', 'afterCutoff'],
-    queryFn: () => waybillsApi.getAll({ afterCutoffOnly: true, type: 'SALE' }),
-    staleTime: 1000 * 60 * 30, // Cache for 30 minutes - waybills change infrequently
-    gcTime: 1000 * 60 * 60, // Keep in cache for 1 hour
-    retry: 1, // Only retry once on failure
+  // Pre-aggregated customer debt data from Firebase (fast, no RS.ge call on page load)
+  const customerDebtQuery = useQuery({
+    queryKey: ['payments', 'analysis'],
+    queryFn: () => paymentsApi.getCustomerAnalysis(),
+    staleTime: 1000 * 60 * 5,
+    gcTime: 1000 * 60 * 30,
+    retry: 1,
   })
 
   const paymentsQuery = useQuery({
@@ -72,30 +71,6 @@ export function PaymentsPage() {
     queryFn: () => paymentsApi.getAll(paymentWindowStart),
     staleTime: 1000 * 60 * 15, // Cache for 15 minutes - payments update more frequently
     gcTime: 1000 * 60 * 30, // Keep in cache for 30 minutes
-    retry: 1,
-  })
-
-  const initialDebtsQuery = useCachedQuery({
-    queryKey: ['config', 'initialDebts'],
-    queryFn: async () => {
-      const result = await configApi.getInitialDebts()
-      // Convert Firebase response to InitialDebt array
-      if (Array.isArray(result)) return result as InitialDebt[]
-      if (typeof result === 'object' && result !== null) {
-        // Handle object format {customerId: {debt, name, date}}
-        return Object.entries(result).map(([customerId, data]: [string, any]) => ({
-          customerId,
-          customerName: data.name || data.customerName || customerId,
-          debt: Number(data.debt || data.amount || 0),
-          date: data.date || PAYMENT_CUTOFF_DATE
-        }))
-      }
-      return []
-    },
-    cacheKey: 'initial_debts',
-    cacheTTL: 7 * 24 * 60 * 60 * 1000, // Cache for 7 days in localStorage
-    staleTime: 1000 * 60 * 60 * 4, // Refetch after 4 hours if page is open
-    gcTime: 1000 * 60 * 60 * 24, // Keep in memory for 24 hours
     retry: 1,
   })
 
@@ -109,19 +84,7 @@ export function PaymentsPage() {
     enabled: true, // Always enabled
   })
 
-  const customersQuery = useQuery({
-    queryKey: ['config', 'customers'],
-    queryFn: () => configApi.getCustomers(),
-    staleTime: 1000 * 60 * 60 * 12, // Cache for 12 hours - customer list rarely changes
-    gcTime: 1000 * 60 * 60 * 24, // Keep in cache for 24 hours
-    retry: false, // Don't retry on quota errors
-    enabled: false, // Disabled for now due to Firebase quota limits - will enable when quota resets
-  })
-
-  const waybills = (waybillsQuery.data || []) as Waybill[]
   const payments = (paymentsQuery.data || []) as Payment[]
-  const initialDebts = (initialDebtsQuery.data || []) as InitialDebt[]
-  const firebaseCustomers = (customersQuery.data || []) as Array<{ identification: string; customerName: string; contactInfo?: string }>
   const paymentStatus = (paymentStatusQuery.data || {}) as Record<string, import('@/types/domain').PaymentStatus>
 
   // Debug logging
@@ -146,139 +109,53 @@ export function PaymentsPage() {
     })
   }
 
-  // Calculate customer analysis - EXACT logic from legacy project
-  const customerAnalysis = React.useMemo((): Record<string, CustomerAnalysis> => {
-    const analysis: Record<string, CustomerAnalysis> = {}
-    const customerSales = new Map<string, { totalSales: number; waybillCount: number; waybills: Waybill[]; buyerName: string }>()
-    const customerPayments = new Map<string, { totalPayments: number; paymentCount: number; payments: any[] }>()
-    // Resolve customer name from waybill - prioritize buyerName as it's the actual customer name
-    const resolveWaybillCustomerName = (waybill?: Waybill) =>
-      waybill?.buyerName || waybill?.customerName || waybill?.sellerName || ''
-
-    // Process sales (waybills after cutoff)
-    waybills.forEach(wb => {
-      if (!wb.customerId) return
-      const afterCutoff = wb.isAfterCutoff ?? (wb as { afterCutoff?: boolean }).afterCutoff
-      if (!afterCutoff) return // Only after April 29, 2025
-
-      if (!customerSales.has(wb.customerId)) {
-        customerSales.set(wb.customerId, {
-          totalSales: 0,
-          waybillCount: 0,
-          waybills: [],
-          buyerName: ''
-        })
-      }
-
-      const customer = customerSales.get(wb.customerId)!
-      customer.totalSales += Number(wb.amount) || 0
-      customer.waybillCount += 1
-      customer.waybills.push(wb)
-      // Save buyerName from waybill if not already set
-      if (!customer.buyerName) {
-        customer.buyerName = resolveWaybillCustomerName(wb)
-      }
-    })
-
-    // Process payments (after cutoff date)
+  // Build payment detail lists per customer (for expandable rows)
+  const customerPaymentLists = React.useMemo(() => {
+    const map = new Map<string, CustomerAnalysis['payments']>()
     payments.forEach(p => {
       if (!p.customerId) return
-
       const paymentDate = p.paymentDate || ''
-      // Only include payments after April 29, 2025 (>= April 30)
       if (paymentDate < paymentWindowStart) return
-
-      if (!customerPayments.has(p.customerId)) {
-        customerPayments.set(p.customerId, {
-          totalPayments: 0,
-          paymentCount: 0,
-          payments: []
-        })
-      }
-
-      const customer = customerPayments.get(p.customerId)!
-      const amount = Number(p.amount) || 0
-      customer.totalPayments += amount
-      customer.paymentCount += 1
-      customer.payments.push({
+      if (!map.has(p.customerId)) map.set(p.customerId, [])
+      map.get(p.customerId)!.push({
         customerId: p.customerId,
-        payment: amount,
+        payment: Number(p.amount) || 0,
         date: paymentDate,
         isAfterCutoff: true,
         source: p.source || 'unknown',
-        uniqueCode: p.uniqueCode,
+        uniqueCode: p.uniqueCode ?? undefined,
         paymentId: p.id,
-        description: p.description,
-        balance: Number(p.balance) || 0
+        description: p.description ?? undefined,
+        balance: Number(p.balance) || 0,
       })
     })
+    return map
+  }, [payments, paymentWindowStart])
 
-    // Create initial debts map
-    const startingDebtsMap = new Map<string, { amount: number; date: string; name: string }>()
-    initialDebts.forEach(debt => {
-      startingDebtsMap.set(debt.customerId, {
-        amount: debt.debt,
-        date: debt.date,
-        name: debt.customerName
-      })
-    })
+  // Customer analysis from pre-aggregated Firebase data (no RS.ge call needed)
+  const customerAnalysis = React.useMemo((): Record<string, CustomerAnalysis> => {
+    const debtData = customerDebtQuery.data || []
+    const analysis: Record<string, CustomerAnalysis> = {}
 
-    // Combine all customer IDs
-    const allIds = new Set([
-      ...customerSales.keys(),
-      ...customerPayments.keys(),
-      ...Array.from(startingDebtsMap.keys())
-    ])
+    debtData.forEach(item => {
+      const paymentList = customerPaymentLists.get(item.customerId) || []
+      const cashPayments = paymentList.filter(p => p.source === 'manual-cash' || p.source === 'cash')
 
-    // Build final analysis for each customer
-    allIds.forEach(customerId => {
-      const sales = customerSales.get(customerId) || { totalSales: 0, waybillCount: 0, waybills: [], buyerName: '' }
-      const pays = customerPayments.get(customerId) || { totalPayments: 0, paymentCount: 0, payments: [] }
-      const sd = startingDebtsMap.get(customerId) || { amount: 0, date: null, name: '' }
-
-      // Get customer name from multiple sources (priority: waybill buyerName > starting debt > firebase customers > ID)
-      let customerName = customerId
-      // First try the saved buyerName from waybills
-      if (sales.buyerName) {
-        customerName = sales.buyerName
-      } else if (sd.name) {
-        customerName = sd.name
-      } else {
-        // Try to find name in Firebase customers collection
-        const fbCustomer = firebaseCustomers.find(c => c.identification === customerId)
-        if (fbCustomer?.customerName) {
-          customerName = fbCustomer.customerName
-        }
-      }
-
-      // Calculate current debt: startingDebt + totalSales - totalPayments
-      const currentDebt = sd.amount + sales.totalSales - pays.totalPayments
-
-      // Separate cash payments
-      const cashPayments = pays.payments.filter(p =>
-        p.source === 'manual-cash' || p.source === 'cash'
-      )
-      const totalCashPayments = cashPayments.reduce((sum, p) => sum + p.payment, 0)
-
-      analysis[customerId] = {
-        customerId,
-        customerName,
-        totalSales: sales.totalSales,
-        totalPayments: pays.totalPayments,
-        totalCashPayments,
-        currentDebt,
-        startingDebt: sd.amount,
-        startingDebtDate: sd.date,
-        waybillCount: sales.waybillCount,
-        paymentCount: pays.paymentCount,
-        waybills: sales.waybills,
-        payments: pays.payments,
-        cashPayments
+      analysis[item.customerId] = {
+        ...item,
+        totalSales: Number(item.totalSales) || 0,
+        totalPayments: Number(item.totalPayments) || 0,
+        totalCashPayments: Number(item.totalCashPayments) || 0,
+        currentDebt: Number(item.currentDebt) || 0,
+        startingDebt: Number(item.startingDebt) || 0,
+        waybills: [],
+        payments: paymentList,
+        cashPayments,
       }
     })
 
     return analysis
-  }, [waybills, payments, initialDebts, firebaseCustomers, paymentWindowStart])
+  }, [customerDebtQuery.data, customerPaymentLists])
 
   const includedTotals = React.useMemo(() => {
     let totalSales = 0
@@ -461,6 +338,25 @@ export function PaymentsPage() {
     },
   })
 
+  const syncMutation = useMutation({
+    mutationFn: () => paymentsApi.syncDebts(),
+    onSuccess: (data) => {
+      setUploadStatus('⏳ ვალების სინქრ მიმდინარეობს...')
+      setAggregationJobId(data.jobId)
+      setIsPolling(true)
+      setAggregationJob({
+        jobId: data.jobId,
+        status: 'PENDING',
+        source: 'manual_sync',
+        createdAt: new Date().toISOString(),
+        progressPercent: 0,
+      })
+    },
+    onError: (err) => {
+      setUploadStatus(`❌ სინქ ვერ მოხერხდა: ${getApiErrorMessage(err)}`)
+    },
+  })
+
   const handleClearBankPayments = () => {
     const confirmed = window.confirm(
       'დარწმუნებული ხართ, რომ გსურთ ყველა ბანკის გადახდის წაშლა?\n\n' +
@@ -571,7 +467,7 @@ export function PaymentsPage() {
       {/* Outstanding Debt - Mobile Priority */}
       <Card className="p-5 md:p-6 text-center border-2">
         <div className="text-sm text-muted-foreground mb-2">ჯამური ვალი</div>
-        {waybillsQuery.isLoading || paymentsQuery.isLoading ? (
+        {customerDebtQuery.isLoading || paymentsQuery.isLoading ? (
           <Skeleton className="h-14 w-44 mx-auto" />
         ) : (
           <div className="text-3xl md:text-4xl font-bold">
@@ -581,7 +477,7 @@ export function PaymentsPage() {
           </div>
         )}
         <div className="mt-2 text-sm text-muted-foreground">
-          გაყიდვები: {waybillsQuery.isLoading ? '…' : formatCurrency(totalExpected)} |
+          გაყიდვები: {customerDebtQuery.isLoading ? '…' : formatCurrency(totalExpected)} |
           გადახდები: {paymentsQuery.isLoading ? '…' : formatCurrency(totalReceived)}
         </div>
       </Card>
@@ -896,7 +792,7 @@ export function PaymentsPage() {
         <Card className="p-3 md:p-4">
           <div className="text-xs text-muted-foreground">გაყიდვები</div>
           <div className="mt-1 text-lg font-semibold md:text-xl">
-            {waybillsQuery.isLoading ? <Skeleton className="h-6 w-24" /> : formatCurrency(totalExpected)}
+            {customerDebtQuery.isLoading ? <Skeleton className="h-6 w-24" /> : formatCurrency(totalExpected)}
           </div>
         </Card>
         <Card className="p-3 md:p-4">
@@ -998,6 +894,21 @@ export function PaymentsPage() {
             </div>
           )}
 
+          {/* Sync Debts Button */}
+          <div className="border-t pt-3 mt-3">
+            <Button
+              variant="outline"
+              onClick={() => syncMutation.mutate()}
+              disabled={syncMutation.isPending || isPolling}
+              className="w-full"
+            >
+              {syncMutation.isPending || isPolling ? '⏳ სინქ...' : '🔄 ვალების განახლება'}
+            </Button>
+            <div className="mt-1 text-xs text-muted-foreground text-center">
+              RS.ge-ს მონაცემებიდან ვალების გადათვლა
+            </div>
+          </div>
+
           {/* Clear Bank Payments Button */}
           <div className="border-t pt-3 mt-3">
             <Button
@@ -1047,11 +958,11 @@ export function PaymentsPage() {
         </div>
       </Card>
 
-      {(waybillsQuery.isError || paymentsQuery.isError) && (
+      {(customerDebtQuery.isError || paymentsQuery.isError) && (
         <Card className="border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive md:p-4">
           <div className="font-medium">მონაცემების ჩატვირთვა ვერ მოხერხდა</div>
           <div className="mt-1 text-xs">
-            {waybillsQuery.isError && <div>ზედნადებები: {getApiErrorMessage(waybillsQuery.error)}</div>}
+            {customerDebtQuery.isError && <div>ვალების მონაცემები: {getApiErrorMessage(customerDebtQuery.error)}</div>}
             {paymentsQuery.isError && <div>გადახდები: {getApiErrorMessage(paymentsQuery.error)}</div>}
           </div>
         </Card>

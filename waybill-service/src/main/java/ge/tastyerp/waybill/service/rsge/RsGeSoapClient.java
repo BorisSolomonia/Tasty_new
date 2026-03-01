@@ -69,8 +69,13 @@ public class RsGeSoapClient {
     @Value("${rsge.debug-response-snippet-length:0}")
     private int debugResponseSnippetLength;
 
+    // Force HTTP/1.1 to avoid RS.ge's SETTINGS_MAX_CONCURRENT_STREAMS limit.
+    // HTTP/2 multiplexes all parallel chunk requests as streams on ONE connection;
+    // RS.ge rejects them with "too many concurrent streams". HTTP/1.1 uses separate
+    // connections, bypassing the limit entirely.
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(30))
+            .version(HttpClient.Version.HTTP_1_1)
             .build();
 
     /** Thread pool for parallel per-waybill goods fetching (product-sales endpoint). */
