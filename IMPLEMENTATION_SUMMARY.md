@@ -7,7 +7,7 @@
 
 ---
 
-## 📋 IMPLEMENTATION SUMMARY.
+## 📋 IMPLEMENTATION SUMMARY
 
 ### Changes Overview
 
