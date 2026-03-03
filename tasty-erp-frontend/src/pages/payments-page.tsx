@@ -124,11 +124,13 @@ export function PaymentsPage() {
     })
   }
 
-  // Build payment detail lists per customer (bank + manual cash, filtered by cutoff)
+  // Build payment detail lists per customer (bank + manual cash, filtered by cutoff + source)
+  // Only include authorized sources: tbc, bog, manual-cash (same filter as waybills page)
   const customerPaymentLists = React.useMemo(() => {
     const map = new Map<string, CustomerAnalysis['payments']>()
     payments.forEach(p => {
       if (!p.customerId) return
+      if (p.source !== 'tbc' && p.source !== 'bog' && p.source !== 'manual-cash') return
       const paymentDate = p.paymentDate || ''
       if (paymentDate < paymentWindowStart) return
       if (!map.has(p.customerId)) map.set(p.customerId, [])
