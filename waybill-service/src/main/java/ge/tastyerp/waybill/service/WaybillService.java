@@ -1,5 +1,6 @@
 package ge.tastyerp.waybill.service;
 
+import ge.tastyerp.common.dto.waybill.CustomerSalesTotalsDto;
 import ge.tastyerp.common.dto.waybill.WaybillDto;
 import ge.tastyerp.common.dto.waybill.WaybillFetchRequest;
 import ge.tastyerp.common.dto.waybill.WaybillFetchResponse;
@@ -18,7 +19,9 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -156,6 +159,43 @@ public class WaybillService {
             log.error("Error fetching all sales waybills for aggregation: {}", e.getMessage(), e);
             throw new RuntimeException("Failed to fetch sales waybills from RS.ge", e);
         }
+    }
+
+    /**
+     * Get pre-aggregated sales totals per customer for debt aggregation.
+     * Fetches all sales from RS.ge (same as getAllSalesWaybills) then aggregates
+     * in memory to return ~50 small CustomerSalesTotalsDto objects instead of
+     * thousands of raw WaybillDto objects — avoids timeout in payment-service.
+     */
+    public List<CustomerSalesTotalsDto> getCustomerSalesTotals() {
+        log.info("Fetching and aggregating customer sales totals for debt aggregation");
+
+        List<WaybillDto> waybills = getAllSalesWaybills();
+
+        Map<String, CustomerSalesTotalsDto> byCustomer = new LinkedHashMap<>();
+        for (WaybillDto w : waybills) {
+            String tin = w.getBuyerTin() != null ? w.getBuyerTin() : w.getCustomerId();
+            if (tin == null) continue;
+
+            CustomerSalesTotalsDto dto = byCustomer.computeIfAbsent(tin, id ->
+                CustomerSalesTotalsDto.builder()
+                    .customerId(id)
+                    .customerName(w.getBuyerName() != null ? w.getBuyerName() : w.getCustomerName())
+                    .totalSales(BigDecimal.ZERO)
+                    .saleCount(0)
+                    .build()
+            );
+
+            dto.setTotalSales(dto.getTotalSales().add(w.getAmount() != null ? w.getAmount() : BigDecimal.ZERO));
+            dto.setSaleCount(dto.getSaleCount() + 1);
+            if (w.getDate() != null && (dto.getLastSaleDate() == null || w.getDate().isAfter(dto.getLastSaleDate()))) {
+                dto.setLastSaleDate(w.getDate());
+            }
+        }
+
+        List<CustomerSalesTotalsDto> result = new ArrayList<>(byCustomer.values());
+        log.info("Aggregated sales for {} customers from {} waybills", result.size(), waybills.size());
+        return result;
     }
 
     /**

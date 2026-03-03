@@ -1870,6 +1870,6 @@ This guide covered:
 - Add integration tests for APIs
 - Set up monitoring (Prometheus + Grafana)
 - Implement backup strategy for Firebase
-- Add feature flags for gradual rollouts
+- Add feature flags for gradual rollouts.
 
 Good luck building! 🚀

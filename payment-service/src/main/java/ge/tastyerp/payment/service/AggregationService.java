@@ -4,12 +4,14 @@ import ge.tastyerp.common.dto.aggregation.CustomerDebtSummaryDto;
 import ge.tastyerp.common.dto.config.InitialDebtDto;
 import ge.tastyerp.common.dto.payment.ManualCashPaymentDto;
 import ge.tastyerp.common.dto.payment.PaymentDto;
-import ge.tastyerp.common.dto.waybill.WaybillDto;
+import ge.tastyerp.common.dto.waybill.CustomerSalesTotalsDto;
 import ge.tastyerp.payment.repository.CustomerDebtSummaryRepository;
 import ge.tastyerp.payment.repository.ManualCashPaymentRepository;
 import ge.tastyerp.payment.repository.PaymentRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpMethod;
@@ -49,7 +51,10 @@ public class AggregationService {
     private final CustomerDebtSummaryRepository debtSummaryRepository;
     private final PaymentRepository paymentRepository;
     private final ManualCashPaymentRepository cashPaymentRepository;
-    private final RestTemplate restTemplate;
+
+    @Autowired
+    @Qualifier("internalRestTemplate")
+    private RestTemplate restTemplate;
 
     @Value("${waybill.service.url:http://waybill-service:8081}")
     private String waybillServiceUrl;
@@ -71,31 +76,29 @@ public class AggregationService {
         log.info("Starting customer debt aggregation. Source: {}", updateSource);
 
         try {
-            // 1. Fetch all data from sources
-            List<WaybillDto> waybills = fetchWaybillsFromRsGe();
+            // 1. Fetch pre-aggregated sales totals from waybill-service (avoids timeout)
+            Map<String, CustomerSalesTotalsDto> salesTotals = fetchCustomerSalesTotals();
             List<PaymentDto> payments = paymentRepository.findAll();
             // Get all manual cash payments (use early date to get all records)
             List<PaymentDto> cashPayments = cashPaymentRepository.findByDateAfter(LocalDate.of(2020, 1, 1));
             List<InitialDebtDto> initialDebts = fetchInitialDebts();
 
-            log.info("Fetched data - Waybills: {}, Payments: {}, Cash Payments: {}, Initial Debts: {}",
-                    waybills.size(), payments.size(), cashPayments.size(), initialDebts.size());
+            log.info("Fetched data - Customer sales groups: {}, Payments: {}, Cash Payments: {}, Initial Debts: {}",
+                    salesTotals.size(), payments.size(), cashPayments.size(), initialDebts.size());
 
-            // 2. Filter data by cutoff date
-            List<WaybillDto> filteredWaybills = filterWaybillsAfterCutoff(waybills);
+            // 2. Filter payments by cutoff date (waybills already filtered inside waybill-service)
             List<PaymentDto> filteredPayments = filterPaymentsAfterCutoff(payments);
             List<PaymentDto> filteredCashPayments = filterCashPaymentsAfterCutoff(cashPayments);
 
-            log.info("After cutoff filter - Waybills: {}, Payments: {}, Cash Payments: {}",
-                    filteredWaybills.size(), filteredPayments.size(), filteredCashPayments.size());
+            log.info("After cutoff filter - Payments: {}, Cash Payments: {}",
+                    filteredPayments.size(), filteredCashPayments.size());
 
             // 3. Build initial debts map
             Map<String, InitialDebtDto> initialDebtsMap = initialDebts.stream()
                     .collect(Collectors.toMap(InitialDebtDto::getCustomerId, debt -> debt, (a, b) -> a));
 
-            // 4. Get all unique customer IDs
-            Set<String> allCustomerIds = new HashSet<>();
-            filteredWaybills.forEach(w -> allCustomerIds.add(w.getBuyerTin()));
+            // 4. Get all unique customer IDs (union of all sources)
+            Set<String> allCustomerIds = new HashSet<>(salesTotals.keySet());
             filteredPayments.forEach(p -> allCustomerIds.add(p.getCustomerId()));
             filteredCashPayments.forEach(c -> allCustomerIds.add(c.getCustomerId()));
             initialDebtsMap.keySet().forEach(allCustomerIds::add);
@@ -106,7 +109,7 @@ public class AggregationService {
             List<CustomerDebtSummaryDto> newSummaries = allCustomerIds.stream()
                     .map(customerId -> aggregateForCustomer(
                             customerId,
-                            filteredWaybills,
+                            salesTotals.get(customerId),
                             filteredPayments,
                             filteredCashPayments,
                             initialDebtsMap.get(customerId),
@@ -133,16 +136,11 @@ public class AggregationService {
      */
     private CustomerDebtSummaryDto aggregateForCustomer(
             String customerId,
-            List<WaybillDto> allWaybills,
+            CustomerSalesTotalsDto salesTotals,
             List<PaymentDto> allPayments,
             List<PaymentDto> allCashPayments,
             InitialDebtDto initialDebt,
             String updateSource) {
-
-        // Filter data for this customer
-        List<WaybillDto> customerWaybills = allWaybills.stream()
-                .filter(w -> customerId.equals(w.getBuyerTin()))
-                .collect(Collectors.toList());
 
         List<PaymentDto> customerPayments = allPayments.stream()
                 .filter(p -> customerId.equals(p.getCustomerId()))
@@ -152,20 +150,13 @@ public class AggregationService {
                 .filter(c -> customerId.equals(c.getCustomerId()))
                 .collect(Collectors.toList());
 
-        // Get customer name (from waybills, payments, or initial debt)
-        String customerName = getCustomerName(customerWaybills, customerPayments, initialDebt);
+        // Get customer name (from pre-aggregated sales totals, payments, or initial debt)
+        String customerName = getCustomerName(salesTotals, customerPayments, initialDebt);
 
-        // Aggregate sales
-        BigDecimal totalSales = customerWaybills.stream()
-                .map(WaybillDto::getAmount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-        Integer saleCount = customerWaybills.size();
-
-        LocalDate lastSaleDate = customerWaybills.stream()
-                .map(WaybillDto::getDate)
-                .max(LocalDate::compareTo)
-                .orElse(null);
+        // Sales data comes pre-aggregated from waybill-service
+        BigDecimal totalSales = salesTotals != null ? salesTotals.getTotalSales() : BigDecimal.ZERO;
+        Integer saleCount = salesTotals != null ? salesTotals.getSaleCount() : 0;
+        LocalDate lastSaleDate = salesTotals != null ? salesTotals.getLastSaleDate() : null;
 
         // Aggregate payments
         BigDecimal totalPayments = customerPayments.stream()
@@ -276,26 +267,28 @@ public class AggregationService {
     }
 
     /**
-     * Fetch waybills from RS.ge via waybill-service.
-     * Always fresh data, never cached.
+     * Fetch pre-aggregated customer sales totals from waybill-service.
+     * Returns ~50 CustomerSalesTotalsDto objects instead of thousands of raw waybills,
+     * avoiding RestTemplate read timeout during the 1-3 minute RS.ge fetch.
      */
-    private List<WaybillDto> fetchWaybillsFromRsGe() {
+    private Map<String, CustomerSalesTotalsDto> fetchCustomerSalesTotals() {
         try {
-            // Call waybill-service to fetch from RS.ge
-            // This endpoint should return all sale waybills from RS.ge
-            String url = waybillServiceUrl + "/api/waybills/sales/all";
+            String url = waybillServiceUrl + "/api/waybills/sales/customer-totals";
+            log.info("Fetching customer sales totals from: {}", url);
 
-            ResponseEntity<List<WaybillDto>> response = restTemplate.exchange(
+            ResponseEntity<List<CustomerSalesTotalsDto>> response = restTemplate.exchange(
                     url,
                     HttpMethod.GET,
                     null,
-                    new ParameterizedTypeReference<List<WaybillDto>>() {}
+                    new ParameterizedTypeReference<List<CustomerSalesTotalsDto>>() {}
             );
 
-            return response.getBody() != null ? response.getBody() : Collections.emptyList();
+            List<CustomerSalesTotalsDto> list = response.getBody() != null ? response.getBody() : Collections.emptyList();
+            log.info("Received sales totals for {} customers", list.size());
+            return list.stream().collect(Collectors.toMap(CustomerSalesTotalsDto::getCustomerId, dto -> dto, (a, b) -> a));
         } catch (Exception e) {
-            log.error("Error fetching waybills from RS.ge: {}", e.getMessage(), e);
-            throw new RuntimeException("Failed to fetch waybills from RS.ge", e);
+            log.error("Error fetching customer sales totals: {}", e.getMessage(), e);
+            throw new RuntimeException("Failed to fetch customer sales totals from waybill-service", e);
         }
     }
 
@@ -318,17 +311,6 @@ public class AggregationService {
             log.error("Error fetching initial debts: {}", e.getMessage(), e);
             throw new RuntimeException("Failed to fetch initial debts", e);
         }
-    }
-
-    /**
-     * Filter waybills after cutoff date.
-     * Date comparison: waybillDate > cutoffDate
-     */
-    private List<WaybillDto> filterWaybillsAfterCutoff(List<WaybillDto> waybills) {
-        LocalDate cutoff = LocalDate.parse(cutoffDate);
-        return waybills.stream()
-                .filter(w -> w.getDate() != null && w.getDate().isAfter(cutoff))
-                .collect(Collectors.toList());
     }
 
     /**
@@ -355,10 +337,10 @@ public class AggregationService {
     /**
      * Get customer name from available data sources.
      */
-    private String getCustomerName(List<WaybillDto> waybills, List<PaymentDto> payments, InitialDebtDto initialDebt) {
-        // Try waybills first
-        if (!waybills.isEmpty()) {
-            return waybills.get(0).getBuyerName();
+    private String getCustomerName(CustomerSalesTotalsDto salesTotals, List<PaymentDto> payments, InitialDebtDto initialDebt) {
+        // Try pre-aggregated sales totals first
+        if (salesTotals != null && salesTotals.getCustomerName() != null) {
+            return salesTotals.getCustomerName();
         }
 
         // Try payments

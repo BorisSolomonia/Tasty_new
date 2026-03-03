@@ -1,6 +1,7 @@
 package ge.tastyerp.waybill.controller;
 
 import ge.tastyerp.common.dto.ApiResponse;
+import ge.tastyerp.common.dto.waybill.CustomerSalesTotalsDto;
 import ge.tastyerp.common.dto.waybill.ProductSalesDto;
 import ge.tastyerp.common.dto.waybill.WaybillDto;
 import ge.tastyerp.common.dto.waybill.WaybillFetchRequest;
@@ -63,6 +64,15 @@ public class WaybillController {
         List<WaybillDto> waybills = waybillService.getAllSalesWaybills();
         log.info("HTTP GET /api/waybills/sales/all -> {} records", waybills.size());
         return ResponseEntity.ok(waybills);
+    }
+
+    @GetMapping("/sales/customer-totals")
+    @Operation(summary = "Get aggregated sales totals per customer (for debt aggregation)")
+    public ResponseEntity<List<CustomerSalesTotalsDto>> getCustomerSalesTotals() {
+        log.info("HTTP GET /api/waybills/sales/customer-totals");
+        List<CustomerSalesTotalsDto> totals = waybillService.getCustomerSalesTotals();
+        log.info("HTTP GET /api/waybills/sales/customer-totals -> {} customers", totals.size());
+        return ResponseEntity.ok(totals);
     }
 
     @GetMapping
