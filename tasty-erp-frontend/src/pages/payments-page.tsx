@@ -1,12 +1,13 @@
 import * as React from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { addDays } from 'date-fns'
-import { paymentsApi, ApiError } from '@/lib/api-client'
+import { paymentsApi, waybillsApi, configApi, ApiError } from '@/lib/api-client'
+import { useCachedQuery } from '@/lib/use-cached-query'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { formatCurrency, formatDateISO } from '@/lib/utils'
-import type { CustomerAnalysis, Payment, AggregationJob } from '@/types/domain'
+import type { CustomerAnalysis, Payment, InitialDebt } from '@/types/domain'
 
 function getApiErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
@@ -37,7 +38,7 @@ export function PaymentsPage() {
   const [sortOrder, setSortOrder] = React.useState<'asc' | 'desc'>('desc')
   const [expandedCustomers, setExpandedCustomers] = React.useState<Set<string>>(new Set())
   const [currentPage, setCurrentPage] = React.useState(1)
-  const itemsPerPage = 50 // Show 50 customers per page
+  const itemsPerPage = 50
   const [excludedCustomers, setExcludedCustomers] = React.useState<Set<string>>(() => {
     if (typeof window === 'undefined') return new Set()
     const raw = window.localStorage.getItem('tasty-erp-excluded-customers')
@@ -50,49 +51,63 @@ export function PaymentsPage() {
     }
   })
 
-  // NEW: Aggregation job tracking
-  const [aggregationJobId, setAggregationJobId] = React.useState<string | null>(null)
-  const [aggregationJob, setAggregationJob] = React.useState<AggregationJob | null>(null)
-  const [isPolling, setIsPolling] = React.useState(false)
-
   const paymentWindowStart = formatDateISO(addDays(new Date(PAYMENT_CUTOFF_DATE), 1))
 
-  // Pre-aggregated customer debt data from Firebase (fast, no RS.ge call on page load)
-  const customerDebtQuery = useQuery({
-    queryKey: ['payments', 'analysis'],
-    queryFn: () => paymentsApi.getCustomerAnalysis(),
-    staleTime: 1000 * 60 * 5,
+  // Pre-aggregated customer sales totals from RS.ge via waybill-service
+  // ~50 objects (one per customer), takes 1-3 min on first load, cached 30 min
+  const salesTotalsQuery = useQuery({
+    queryKey: ['waybills', 'salesTotals'],
+    queryFn: () => waybillsApi.getCustomerSalesTotals(),
+    staleTime: 1000 * 60 * 30, // Cache for 30 minutes
+    gcTime: 1000 * 60 * 60,   // Keep in memory for 1 hour
+    retry: 1,
+  })
+
+  // Bank + manual cash payments from Firebase
+  const paymentsQuery = useQuery({
+    queryKey: ['payments', 'afterCutoff', paymentWindowStart],
+    queryFn: () => paymentsApi.getAll(paymentWindowStart),
+    staleTime: 1000 * 60 * 15,
     gcTime: 1000 * 60 * 30,
     retry: 1,
   })
 
-  const paymentsQuery = useQuery({
-    queryKey: ['payments', 'afterCutoff', paymentWindowStart],
-    queryFn: () => paymentsApi.getAll(paymentWindowStart),
-    staleTime: 1000 * 60 * 15, // Cache for 15 minutes - payments update more frequently
-    gcTime: 1000 * 60 * 30, // Keep in cache for 30 minutes
+  // Initial debts (starting balances) from config-service — shared cache with waybills page
+  const initialDebtsQuery = useCachedQuery({
+    queryKey: ['config', 'initialDebts'],
+    queryFn: async () => {
+      const result = await configApi.getInitialDebts()
+      if (Array.isArray(result)) return result as InitialDebt[]
+      if (typeof result === 'object' && result !== null) {
+        return Object.entries(result).map(([customerId, data]: [string, any]) => ({
+          customerId,
+          customerName: data.name || data.customerName || customerId,
+          debt: Number(data.debt || data.amount || 0),
+          date: data.date || PAYMENT_CUTOFF_DATE,
+        }))
+      }
+      return [] as InitialDebt[]
+    },
+    cacheKey: 'initial_debts',
+    cacheTTL: 7 * 24 * 60 * 60 * 1000, // Cache for 7 days
+    staleTime: 1000 * 60 * 60 * 4,     // Refetch after 4 hours
+    gcTime: 1000 * 60 * 60 * 24,       // Keep in memory for 24 hours
     retry: 1,
   })
 
-  // Fetch payment status indicators (color warnings)
+  // Payment status color indicators (days since last payment)
   const paymentStatusQuery = useQuery({
     queryKey: ['payments', 'status'],
     queryFn: () => paymentsApi.getStatus(),
-    staleTime: 1000 * 60 * 10, // Cache for 10 minutes
-    gcTime: 1000 * 60 * 20, // Keep in cache for 20 minutes
+    staleTime: 1000 * 60 * 10,
+    gcTime: 1000 * 60 * 20,
     retry: 1,
-    enabled: true, // Always enabled
   })
 
   const payments = (paymentsQuery.data || []) as Payment[]
+  const salesTotals = salesTotalsQuery.data ?? []
+  const initialDebts = initialDebtsQuery.data ?? []
   const paymentStatus = (paymentStatusQuery.data || {}) as Record<string, import('@/types/domain').PaymentStatus>
-
-  // Debug logging
-  React.useEffect(() => {
-    if (paymentStatusQuery.error) {
-      console.error('Payment status query error:', paymentStatusQuery.error)
-    }
-  }, [paymentStatusQuery.error])
 
   const handleToggleExcluded = (customerId: string) => {
     setExcludedCustomers(prev => {
@@ -109,7 +124,7 @@ export function PaymentsPage() {
     })
   }
 
-  // Build payment detail lists per customer (for expandable rows)
+  // Build payment detail lists per customer (bank + manual cash, filtered by cutoff)
   const customerPaymentLists = React.useMemo(() => {
     const map = new Map<string, CustomerAnalysis['payments']>()
     payments.forEach(p => {
@@ -132,30 +147,80 @@ export function PaymentsPage() {
     return map
   }, [payments, paymentWindowStart])
 
-  // Customer analysis from pre-aggregated Firebase data (no RS.ge call needed)
+  // Build customer analysis from RS.ge sales totals + Firebase payments + initial debts
+  // Formula: currentDebt = startingDebt + totalSales - totalPayments (bank + cash)
   const customerAnalysis = React.useMemo((): Record<string, CustomerAnalysis> => {
-    const debtData = customerDebtQuery.data || []
+    // Sales map from pre-aggregated RS.ge data
+    const salesMap = new Map<string, { name: string; total: number; count: number }>()
+    salesTotals.forEach(s => {
+      salesMap.set(s.customerId, {
+        name: s.customerName,
+        total: Number(s.totalSales) || 0,
+        count: s.saleCount || 0,
+      })
+    })
+
+    // Initial debts map
+    const debtsMap = new Map<string, InitialDebt>()
+    initialDebts.forEach(d => debtsMap.set(d.customerId, d))
+
+    // Customer names from payments (for customers without sales)
+    const paymentNames = new Map<string, string>()
+    payments.forEach(p => {
+      if (p.customerId && p.customerName && !paymentNames.has(p.customerId)) {
+        paymentNames.set(p.customerId, typeof p.customerName === 'string' ? p.customerName : '')
+      }
+    })
+
+    // Union of all customer IDs across all data sources
+    const allIds = new Set<string>([
+      ...salesMap.keys(),
+      ...customerPaymentLists.keys(),
+      ...debtsMap.keys(),
+    ])
+
     const analysis: Record<string, CustomerAnalysis> = {}
 
-    debtData.forEach(item => {
-      const paymentList = customerPaymentLists.get(item.customerId) || []
-      const cashPayments = paymentList.filter(p => p.source === 'manual-cash' || p.source === 'cash')
+    allIds.forEach(customerId => {
+      const salesData = salesMap.get(customerId)
+      const paymentList = customerPaymentLists.get(customerId) || []
+      const cashPaymentList = paymentList.filter(p => p.source === 'manual-cash' || p.source === 'cash')
+      const debtEntry = debtsMap.get(customerId)
 
-      analysis[item.customerId] = {
-        ...item,
-        totalSales: Number(item.totalSales) || 0,
-        totalPayments: Number(item.totalPayments) || 0,
-        totalCashPayments: Number(item.totalCashPayments) || 0,
-        currentDebt: Number(item.currentDebt) || 0,
-        startingDebt: Number(item.startingDebt) || 0,
-        waybills: [],
+      const customerName = salesData?.name ||
+        paymentNames.get(customerId) ||
+        debtEntry?.customerName ||
+        'Unknown'
+
+      const totalSales = salesData?.total ?? 0
+      // totalPayments includes both bank and cash (all payment sources)
+      const totalPayments = paymentList.reduce((sum, p) => sum + p.payment, 0)
+      const totalCashPayments = cashPaymentList.reduce((sum, p) => sum + p.payment, 0)
+      const startingDebt = debtEntry?.debt ?? 0
+      const startingDebtDate = debtEntry?.date ?? null
+
+      // currentDebt = startingDebt + totalSales - totalPayments (bank + cash)
+      const currentDebt = startingDebt + totalSales - totalPayments
+
+      analysis[customerId] = {
+        customerId,
+        customerName,
+        totalSales,
+        totalPayments,
+        totalCashPayments,
+        currentDebt,
+        startingDebt,
+        startingDebtDate,
+        waybillCount: salesData?.count ?? 0,
+        paymentCount: paymentList.length,
+        waybills: [], // Individual waybill data not loaded (using pre-aggregated totals)
         payments: paymentList,
-        cashPayments,
+        cashPayments: cashPaymentList,
       }
     })
 
     return analysis
-  }, [customerDebtQuery.data, customerPaymentLists])
+  }, [salesTotals, initialDebts, customerPaymentLists, payments])
 
   const includedTotals = React.useMemo(() => {
     let totalSales = 0
@@ -171,7 +236,7 @@ export function PaymentsPage() {
       totalStartingDebts += customer.startingDebt
     })
 
-    // FIXED: Include starting debts in total calculation (same formula as individual customer debt)
+    // totalPayments already includes bank + cash, so this correctly subtracts all payments
     const totalOutstanding = totalStartingDebts + totalSales - totalPayments
 
     return {
@@ -186,7 +251,6 @@ export function PaymentsPage() {
   const sortedCustomers = React.useMemo(() => {
     let customers = Object.values(customerAnalysis)
 
-    // Search filter
     if (searchTerm) {
       customers = customers.filter(c =>
         c.customerId.includes(searchTerm) ||
@@ -194,7 +258,6 @@ export function PaymentsPage() {
       )
     }
 
-    // Sort
     customers.sort((a, b) => {
       const aVal = a[sortBy]
       const bVal = b[sortBy]
@@ -215,55 +278,19 @@ export function PaymentsPage() {
   const totalPages = Math.ceil(sortedCustomers.length / itemsPerPage)
   const paginatedCustomers = React.useMemo(() => {
     const startIndex = (currentPage - 1) * itemsPerPage
-    const endIndex = startIndex + itemsPerPage
-    return sortedCustomers.slice(startIndex, endIndex)
+    return sortedCustomers.slice(startIndex, startIndex + itemsPerPage)
   }, [sortedCustomers, currentPage, itemsPerPage])
 
-  // Reset to page 1 when search term changes
   React.useEffect(() => {
     setCurrentPage(1)
   }, [searchTerm, sortBy, sortOrder])
 
-  // Summary calculations
   const totalExpected = includedTotals.totalSales
   const totalReceived = includedTotals.totalPayments
   const totalCashReceived = includedTotals.totalCashPayments
   const totalOutstanding = includedTotals.totalOutstanding
 
-  // NEW: Poll aggregation job status
-  React.useEffect(() => {
-    if (!aggregationJobId || !isPolling) return
-
-    const pollInterval = setInterval(async () => {
-      try {
-        const job = await paymentsApi.getAggregationJobStatus(aggregationJobId)
-        setAggregationJob(job)
-
-        // Stop polling if job completed or failed
-        if (job.status === 'COMPLETED' || job.status === 'FAILED') {
-          setIsPolling(false)
-
-          if (job.status === 'COMPLETED') {
-            setUploadStatus(prev =>
-              `${prev} ✅ აგრეგაცია დასრულდა: ${job.result?.updatedCount || 0} განახლებული მომხმარებელი`
-            )
-            // Refresh data after aggregation completes
-            void queryClient.invalidateQueries({ queryKey: ['payments'] })
-            void queryClient.invalidateQueries({ queryKey: ['waybills'] })
-          } else if (job.status === 'FAILED') {
-            setUploadStatus(prev =>
-              `${prev} ⚠️ აგრეგაცია ვერ შესრულდა: ${job.errorMessage || 'უცნობი შეცდომა'}`
-            )
-          }
-        }
-      } catch (error) {
-        console.error('Failed to poll aggregation job:', error)
-        // Don't stop polling on network errors, retry
-      }
-    }, 2000) // Poll every 2 seconds
-
-    return () => clearInterval(pollInterval)
-  }, [aggregationJobId, isPolling, queryClient])
+  const isDataLoading = salesTotalsQuery.isLoading || paymentsQuery.isLoading || initialDebtsQuery.isLoading
 
   const uploadMutation = useMutation({
     mutationFn: ({ file, bank }: { file: File; bank: 'tbc' | 'bog' }) =>
@@ -271,30 +298,14 @@ export function PaymentsPage() {
     onSuccess: (data: any) => {
       const addedCount = data.addedCount || data.newCount || 0
       const duplicateCount = data.duplicateCount || 0
-
-      setUploadStatus(`✅ ${addedCount} ახალი გადახდა, ${duplicateCount} დუბლიკატი. ⏳ აგრეგაცია მიმდინარეობს...`)
+      setUploadStatus(`✅ ${addedCount} ახალი გადახდა, ${duplicateCount} დუბლიკატი`)
       void queryClient.invalidateQueries({ queryKey: ['payments'] })
-
-      // Start polling for aggregation job if jobId is present
-      if (data.aggregationJobId) {
-        setAggregationJobId(data.aggregationJobId)
-        setIsPolling(true)
-        setAggregationJob({
-          jobId: data.aggregationJobId,
-          status: 'PENDING',
-          source: 'excel_upload',
-          createdAt: new Date().toISOString(),
-          progressPercent: 0
-        })
-      }
-
       if (fileInputRef.current) {
         fileInputRef.current.value = ''
       }
     },
     onError: (err) => {
       setUploadStatus(`❌ შეცდომა: ${getApiErrorMessage(err)}`)
-      setIsPolling(false)
     },
   })
 
@@ -312,48 +323,14 @@ export function PaymentsPage() {
     },
   })
 
-  // Clear bank payments mutation
   const clearBankPaymentsMutation = useMutation({
     mutationFn: () => paymentsApi.deleteBankPayments(),
     onSuccess: (data) => {
       setUploadStatus(`✅ წაიშალა ${data.deleted} ბანკის გადახდა`)
       void queryClient.invalidateQueries({ queryKey: ['payments'] })
-      void queryClient.invalidateQueries({ queryKey: ['waybills'] })
-
-      // Start polling for aggregation if job was triggered
-      if (data.aggregationJobId) {
-        setAggregationJobId(data.aggregationJobId)
-        setIsPolling(true)
-        setAggregationJob({
-          jobId: data.aggregationJobId,
-          status: 'PENDING',
-          source: 'bank_purge',
-          createdAt: new Date().toISOString(),
-          progressPercent: 0
-        })
-      }
     },
     onError: (err) => {
       setUploadStatus(`❌ წაშლა ვერ მოხერხდა: ${getApiErrorMessage(err)}`)
-    },
-  })
-
-  const syncMutation = useMutation({
-    mutationFn: () => paymentsApi.syncDebts(),
-    onSuccess: (data) => {
-      setUploadStatus('⏳ ვალების სინქრ მიმდინარეობს...')
-      setAggregationJobId(data.jobId)
-      setIsPolling(true)
-      setAggregationJob({
-        jobId: data.jobId,
-        status: 'PENDING',
-        source: 'manual_sync',
-        createdAt: new Date().toISOString(),
-        progressPercent: 0,
-      })
-    },
-    onError: (err) => {
-      setUploadStatus(`❌ სინქ ვერ მოხერხდა: ${getApiErrorMessage(err)}`)
     },
   })
 
@@ -364,7 +341,6 @@ export function PaymentsPage() {
       'ეს მოქმედება შეუქცევადია!'
     )
     if (!confirmed) return
-
     setUploadStatus('⏳ იშლება ბანკის გადახდები...')
     clearBankPaymentsMutation.mutate()
   }
@@ -372,12 +348,10 @@ export function PaymentsPage() {
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-
     if (file.size > 10 * 1024 * 1024) {
       setUploadStatus('❌ ფაილის ზომა ძალიან დიდია (მაქს. 10MB)')
       return
     }
-
     setUploadStatus('⏳ იტვირთება...')
     uploadMutation.mutate({ file, bank: selectedBank })
   }
@@ -385,12 +359,10 @@ export function PaymentsPage() {
   const handleManualFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-
     if (file.size > 10 * 1024 * 1024) {
       setManualUploadStatus('Error: file exceeds 10MB')
       return
     }
-
     setManualUploadStatus('Uploading...')
     manualUploadMutation.mutate(file)
   }
@@ -464,10 +436,17 @@ export function PaymentsPage() {
         </p>
       </div>
 
-      {/* Outstanding Debt - Mobile Priority */}
+      {/* RS.ge loading indicator (first load takes 1-3 minutes) */}
+      {salesTotalsQuery.isLoading && (
+        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 rounded-lg p-3 text-sm text-blue-800 dark:text-blue-200">
+          🔄 RS.ge-დან გაყიდვების მონაცემები იტვირთება... (შეიძლება 1-3 წუთი გაგრძელდეს)
+        </div>
+      )}
+
+      {/* Outstanding Debt */}
       <Card className="p-5 md:p-6 text-center border-2">
         <div className="text-sm text-muted-foreground mb-2">ჯამური ვალი</div>
-        {customerDebtQuery.isLoading || paymentsQuery.isLoading ? (
+        {isDataLoading ? (
           <Skeleton className="h-14 w-44 mx-auto" />
         ) : (
           <div className="text-3xl md:text-4xl font-bold">
@@ -477,12 +456,12 @@ export function PaymentsPage() {
           </div>
         )}
         <div className="mt-2 text-sm text-muted-foreground">
-          გაყიდვები: {customerDebtQuery.isLoading ? '…' : formatCurrency(totalExpected)} |
+          გაყიდვები: {salesTotalsQuery.isLoading ? '…' : formatCurrency(totalExpected)} |
           გადახდები: {paymentsQuery.isLoading ? '…' : formatCurrency(totalReceived)}
         </div>
       </Card>
 
-      {/* Search Bar - Standalone at top */}
+      {/* Search Bar */}
       <Card className="p-4">
         <div className="flex flex-col md:flex-row items-start md:items-center gap-4">
           <input
@@ -506,18 +485,14 @@ export function PaymentsPage() {
           <table className="min-w-full divide-y">
             <thead className="bg-muted">
               <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase">
-                  სახელი
-                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase">სახელი</th>
                 <th
                   onClick={() => handleSort('currentDebt')}
                   className="px-4 py-3 text-left text-xs font-medium uppercase cursor-pointer hover:bg-accent"
                 >
                   ვალი {sortBy === 'currentDebt' && (sortOrder === 'desc' ? '↓' : '↑')}
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase">
-                  ხელით
-                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase">ხელით</th>
                 <th
                   onClick={() => handleSort('totalPayments')}
                   className="px-4 py-3 text-left text-xs font-medium uppercase cursor-pointer hover:bg-accent"
@@ -542,17 +517,19 @@ export function PaymentsPage() {
                 >
                   ID {sortBy === 'customerId' && (sortOrder === 'desc' ? '↓' : '↑')}
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase">
-                  ჩართვა
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase">
-                  დეტალები
-                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase">ჩართვა</th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase">დეტალები</th>
               </tr>
             </thead>
             <tbody className="divide-y">
-              {paginatedCustomers.map((customer) => {
-                // Get payment status color (only for customers with debt > 0)
+              {isDataLoading ? (
+                <tr>
+                  <td colSpan={9} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                    <Skeleton className="h-4 w-48 mx-auto mb-2" />
+                    <Skeleton className="h-4 w-32 mx-auto" />
+                  </td>
+                </tr>
+              ) : paginatedCustomers.map((customer) => {
                 const status = paymentStatus[customer.customerId]
                 const statusColor = customer.currentDebt > 0 && status?.statusColor !== 'none'
                   ? status?.statusColor
@@ -564,192 +541,160 @@ export function PaymentsPage() {
                   : 'hover:bg-accent/50'
 
                 return (
-                <React.Fragment key={customer.customerId}>
-                  <tr className={rowBgClass}>
-                    <td className="px-4 py-3 text-sm">{customer.customerName}</td>
-                    <td className={`px-4 py-3 text-sm font-medium ${
-                      customer.currentDebt > 0 ? 'text-red-600 dark:text-red-500' :
-                      customer.currentDebt < 0 ? 'text-green-600 dark:text-green-500' :
-                      ''
-                    }`}>
-                      {formatCurrency(customer.currentDebt)}
-                    </td>
-                    <td className="px-4 py-3 text-sm">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleManualPaymentAdd(customer)}
-                      >
-                        დამატება
-                      </Button>
-                    </td>
-                    <td className="px-4 py-3 text-sm">{formatCurrency(customer.totalPayments)}</td>
-                    <td className="px-4 py-3 text-sm">{formatCurrency(customer.totalSales)}</td>
-                    <td className="px-4 py-3 text-sm">{formatCurrency(customer.startingDebt)}</td>
-                    <td className="px-4 py-3 text-sm font-medium">{customer.customerId}</td>
-                    <td className="px-4 py-3 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={!excludedCustomers.has(customer.customerId)}
-                        onChange={() => handleToggleExcluded(customer.customerId)}
-                      />
-                    </td>
-                    <td className="px-4 py-3 text-sm">
-                      <Button
-                        size="sm"
-                        variant={expandedCustomers.has(customer.customerId) ? 'default' : 'outline'}
-                        onClick={() => toggleCustomerDetails(customer.customerId)}
-                      >
-                        {expandedCustomers.has(customer.customerId) ? 'დამალვა' : 'ნახვა'}
-                      </Button>
-                    </td>
-                  </tr>
-
-                  {expandedCustomers.has(customer.customerId) && (
-                    <tr className="bg-muted/50">
-                      <td colSpan={9} className="px-4 py-4">
-                        <div className="max-h-[600px] overflow-y-auto space-y-6">
-                          {/* Waybills Section */}
-                          <div>
-                            <h4 className="text-sm font-semibold mb-3">
-                              {customer.customerName} - გაყიდვები/შესყიდვები ({customer.waybillCount})
-                            </h4>
-
-                            {customer.waybills && customer.waybills.length > 0 ? (
-                              <div className="space-y-3">
-                                {customer.waybills
-                                  .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-                                  .map((waybill, idx) => (
-                                    <div key={idx} className="rounded-lg p-4 border-2 bg-blue-50 dark:bg-blue-900/20 border-blue-200">
-                                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                                        <div>
-                                          <span className="font-medium text-muted-foreground">თარიღი:</span>
-                                          <div className="font-medium">{waybill.date}</div>
-                                        </div>
-                                        <div>
-                                          <span className="font-medium text-muted-foreground">თანხა:</span>
-                                          <div className="text-red-600 dark:text-red-500 font-bold">
-                                            {formatCurrency(Number(waybill.amount) || 0)}
-                                          </div>
-                                        </div>
-                                        <div>
-                                          <span className="font-medium text-muted-foreground">ზედნადები:</span>
-                                          <div className="font-mono text-xs">{waybill.waybillId || waybill.id}</div>
-                                        </div>
-                                        <div>
-                                          <span className="font-medium text-muted-foreground">ტიპი:</span>
-                                          <div>{waybill.type === 'SALE' ? 'გაყიდვა' : 'შესყიდვა'}</div>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  ))}
-
-                                <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded border">
-                                  <div className="flex justify-between items-center text-sm">
-                                    <span className="font-medium">სულ გაყიდვები:</span>
-                                    <span className="font-bold">{formatCurrency(customer.totalSales)}</span>
-                                  </div>
-                                  <div className="flex justify-between items-center text-sm mt-1">
-                                    <span className="font-medium">რაოდენობა:</span>
-                                    <span>{customer.waybillCount}</span>
-                                  </div>
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="text-muted-foreground text-center py-4">
-                                გაყიდვები არ არის ნაპოვნი
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Payments Section */}
-                          <div>
-                            <h4 className="text-sm font-semibold mb-3">
-                              {customer.customerName} - გადახდების დეტალები ({customer.paymentCount})
-                            </h4>
-
-                          {customer.payments && customer.payments.length > 0 ? (
-                            <div className="space-y-3">
-                              {customer.payments
-                                .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                                .map((payment, idx) => {
-                                  const isAfterCutoff = payment.date >= paymentWindowStart
-                                  const isManual = (payment.source || '').toLowerCase() === 'manual-cash'
-
-                                  return (
-                                    <div key={idx} className={`rounded-lg p-4 border-2 ${
-                                      isAfterCutoff
-                                        ? 'bg-green-50 dark:bg-green-900/20 border-green-200'
-                                        : 'bg-orange-50 dark:bg-orange-900/20 border-orange-200'
-                                    }`}>
-                                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                                        <div>
-                                          <span className="font-medium text-muted-foreground">თარიღი:</span>
-                                          <div className="font-medium">{payment.date}</div>
-                                        </div>
-                                        <div>
-                                          <span className="font-medium text-muted-foreground">თანხა:</span>
-                                          <div className="text-green-600 dark:text-green-500 font-bold">
-                                            {formatCurrency(payment.payment)}
-                                          </div>
-                                        </div>
-                                        <div>
-                                          <span className="font-medium text-muted-foreground">წყარო:</span>
-                                          <div>{payment.source || 'Firebase'}</div>
-                                        </div>
-                                        <div>
-                                          <span className="font-medium text-muted-foreground">კოდი:</span>
-                                          <div className="text-xs font-mono truncate">
-                                            {payment.uniqueCode || 'N/A'}
-                                          </div>
-                                        </div>
-                                        {isManual && (
-                                          <div>
-                                            <span className="font-medium text-muted-foreground">Delete:</span>
-                                            <div className="mt-1">
-                                              <Button
-                                                size="sm"
-                                                variant="outline"
-                                                onClick={() => handleManualPaymentDelete(payment.paymentId)}
-                                              >
-                                                Delete
-                                              </Button>
-                                            </div>
-                                          </div>
-                                        )}
-                                        {payment.description && (
-                                          <div className="col-span-2 md:col-span-4">
-                                            <span className="font-medium text-muted-foreground">აღწერა:</span>
-                                            <div className="mt-1">{payment.description}</div>
-                                          </div>
-                                        )}
-                                      </div>
-                                    </div>
-                                  )
-                                })}
-
-                              <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded border">
-                                <div className="flex justify-between items-center text-sm">
-                                  <span className="font-medium">სულ გადახდები:</span>
-                                  <span className="font-bold">{formatCurrency(customer.totalPayments)}</span>
-                                </div>
-                                <div className="flex justify-between items-center text-sm mt-1">
-                                  <span className="font-medium">რაოდენობა:</span>
-                                  <span>{customer.paymentCount}</span>
-                                </div>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="text-muted-foreground text-center py-4">
-                              გადახდები არ არის ნაპოვნი
-                            </div>
-                          )}
-                          </div>
-                        </div>
+                  <React.Fragment key={customer.customerId}>
+                    <tr className={rowBgClass}>
+                      <td className="px-4 py-3 text-sm">{customer.customerName}</td>
+                      <td className={`px-4 py-3 text-sm font-medium ${
+                        customer.currentDebt > 0 ? 'text-red-600 dark:text-red-500' :
+                        customer.currentDebt < 0 ? 'text-green-600 dark:text-green-500' :
+                        ''
+                      }`}>
+                        {formatCurrency(customer.currentDebt)}
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleManualPaymentAdd(customer)}
+                        >
+                          დამატება
+                        </Button>
+                      </td>
+                      <td className="px-4 py-3 text-sm">{formatCurrency(customer.totalPayments)}</td>
+                      <td className="px-4 py-3 text-sm">{formatCurrency(customer.totalSales)}</td>
+                      <td className="px-4 py-3 text-sm">{formatCurrency(customer.startingDebt)}</td>
+                      <td className="px-4 py-3 text-sm font-medium">{customer.customerId}</td>
+                      <td className="px-4 py-3 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={!excludedCustomers.has(customer.customerId)}
+                          onChange={() => handleToggleExcluded(customer.customerId)}
+                        />
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        <Button
+                          size="sm"
+                          variant={expandedCustomers.has(customer.customerId) ? 'default' : 'outline'}
+                          onClick={() => toggleCustomerDetails(customer.customerId)}
+                        >
+                          {expandedCustomers.has(customer.customerId) ? 'დამალვა' : 'ნახვა'}
+                        </Button>
                       </td>
                     </tr>
-                  )}
-                </React.Fragment>
+
+                    {expandedCustomers.has(customer.customerId) && (
+                      <tr className="bg-muted/50">
+                        <td colSpan={9} className="px-4 py-4">
+                          <div className="max-h-[600px] overflow-y-auto space-y-6">
+                            {/* Sales Summary Section */}
+                            <div>
+                              <h4 className="text-sm font-semibold mb-3">
+                                {customer.customerName} - გაყიდვები ({customer.waybillCount} ზედნადები)
+                              </h4>
+                              <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded border">
+                                <div className="flex justify-between items-center text-sm">
+                                  <span className="font-medium">სულ გაყიდვები:</span>
+                                  <span className="font-bold">{formatCurrency(customer.totalSales)}</span>
+                                </div>
+                                <div className="flex justify-between items-center text-sm mt-1">
+                                  <span className="font-medium">ზედნადების რაოდენობა:</span>
+                                  <span>{customer.waybillCount}</span>
+                                </div>
+                                <div className="flex justify-between items-center text-sm mt-1">
+                                  <span className="font-medium">საწყისი ვალი:</span>
+                                  <span>{formatCurrency(customer.startingDebt)}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Payments Section */}
+                            <div>
+                              <h4 className="text-sm font-semibold mb-3">
+                                {customer.customerName} - გადახდების დეტალები ({customer.paymentCount})
+                              </h4>
+
+                              {customer.payments && customer.payments.length > 0 ? (
+                                <div className="space-y-3">
+                                  {customer.payments
+                                    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                                    .map((payment, idx) => {
+                                      const isAfterCutoff = payment.date >= paymentWindowStart
+                                      const isManual = (payment.source || '').toLowerCase() === 'manual-cash'
+
+                                      return (
+                                        <div key={idx} className={`rounded-lg p-4 border-2 ${
+                                          isAfterCutoff
+                                            ? 'bg-green-50 dark:bg-green-900/20 border-green-200'
+                                            : 'bg-orange-50 dark:bg-orange-900/20 border-orange-200'
+                                        }`}>
+                                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                                            <div>
+                                              <span className="font-medium text-muted-foreground">თარიღი:</span>
+                                              <div className="font-medium">{payment.date}</div>
+                                            </div>
+                                            <div>
+                                              <span className="font-medium text-muted-foreground">თანხა:</span>
+                                              <div className="text-green-600 dark:text-green-500 font-bold">
+                                                {formatCurrency(payment.payment)}
+                                              </div>
+                                            </div>
+                                            <div>
+                                              <span className="font-medium text-muted-foreground">წყარო:</span>
+                                              <div>{payment.source || 'Firebase'}</div>
+                                            </div>
+                                            <div>
+                                              <span className="font-medium text-muted-foreground">კოდი:</span>
+                                              <div className="text-xs font-mono truncate">
+                                                {payment.uniqueCode || 'N/A'}
+                                              </div>
+                                            </div>
+                                            {isManual && (
+                                              <div>
+                                                <span className="font-medium text-muted-foreground">Delete:</span>
+                                                <div className="mt-1">
+                                                  <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    onClick={() => handleManualPaymentDelete(payment.paymentId)}
+                                                  >
+                                                    Delete
+                                                  </Button>
+                                                </div>
+                                              </div>
+                                            )}
+                                            {payment.description && (
+                                              <div className="col-span-2 md:col-span-4">
+                                                <span className="font-medium text-muted-foreground">აღწერა:</span>
+                                                <div className="mt-1">{payment.description}</div>
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      )
+                                    })}
+
+                                  <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded border">
+                                    <div className="flex justify-between items-center text-sm">
+                                      <span className="font-medium">სულ გადახდები:</span>
+                                      <span className="font-bold">{formatCurrency(customer.totalPayments)}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-sm mt-1">
+                                      <span className="font-medium">რაოდენობა:</span>
+                                      <span>{customer.paymentCount}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="text-muted-foreground text-center py-4">
+                                  გადახდები არ არის ნაპოვნი
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 )
               })}
             </tbody>
@@ -792,7 +737,7 @@ export function PaymentsPage() {
         <Card className="p-3 md:p-4">
           <div className="text-xs text-muted-foreground">გაყიდვები</div>
           <div className="mt-1 text-lg font-semibold md:text-xl">
-            {customerDebtQuery.isLoading ? <Skeleton className="h-6 w-24" /> : formatCurrency(totalExpected)}
+            {salesTotalsQuery.isLoading ? <Skeleton className="h-6 w-24" /> : formatCurrency(totalExpected)}
           </div>
         </Card>
         <Card className="p-3 md:p-4">
@@ -865,50 +810,6 @@ export function PaymentsPage() {
             </div>
           )}
 
-          {/* Aggregation Progress Indicator */}
-          {aggregationJob && isPolling && (
-            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-2">
-                <div className="font-medium text-blue-900 dark:text-blue-100">
-                  🔄 აგრეგაცია მიმდინარეობს...
-                </div>
-                <div className="text-sm text-blue-700 dark:text-blue-300">
-                  {aggregationJob.progressPercent || 0}%
-                </div>
-              </div>
-
-              {/* Progress bar */}
-              <div className="w-full bg-blue-200 dark:bg-blue-800 rounded-full h-2 mb-2">
-                <div
-                  className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                  style={{ width: `${aggregationJob.progressPercent || 0}%` }}
-                />
-              </div>
-
-              {/* Current step */}
-              {aggregationJob.currentStep && (
-                <div className="text-xs text-blue-600 dark:text-blue-400">
-                  {aggregationJob.currentStep}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Sync Debts Button */}
-          <div className="border-t pt-3 mt-3">
-            <Button
-              variant="outline"
-              onClick={() => syncMutation.mutate()}
-              disabled={syncMutation.isPending || isPolling}
-              className="w-full"
-            >
-              {syncMutation.isPending || isPolling ? '⏳ სინქ...' : '🔄 ვალების განახლება'}
-            </Button>
-            <div className="mt-1 text-xs text-muted-foreground text-center">
-              RS.ge-ს მონაცემებიდან ვალების გადათვლა
-            </div>
-          </div>
-
           {/* Clear Bank Payments Button */}
           <div className="border-t pt-3 mt-3">
             <Button
@@ -958,12 +859,13 @@ export function PaymentsPage() {
         </div>
       </Card>
 
-      {(customerDebtQuery.isError || paymentsQuery.isError) && (
+      {(salesTotalsQuery.isError || paymentsQuery.isError || initialDebtsQuery.isError) && (
         <Card className="border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive md:p-4">
           <div className="font-medium">მონაცემების ჩატვირთვა ვერ მოხერხდა</div>
           <div className="mt-1 text-xs">
-            {customerDebtQuery.isError && <div>ვალების მონაცემები: {getApiErrorMessage(customerDebtQuery.error)}</div>}
+            {salesTotalsQuery.isError && <div>გაყიდვები (RS.ge): {getApiErrorMessage(salesTotalsQuery.error)}</div>}
             {paymentsQuery.isError && <div>გადახდები: {getApiErrorMessage(paymentsQuery.error)}</div>}
+            {initialDebtsQuery.isError && <div>საწყისი ვალები: {getApiErrorMessage(initialDebtsQuery.error)}</div>}
           </div>
         </Card>
       )}

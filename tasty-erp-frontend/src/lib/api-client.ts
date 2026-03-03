@@ -1,4 +1,4 @@
-import type { Payment, ProductSales, Waybill, WaybillVatSummary } from '@/types/domain'
+import type { Payment, ProductSales, Waybill, WaybillVatSummary, CustomerSalesTotals } from '@/types/domain'
 
 const API_URL = import.meta.env.VITE_API_URL || '/api'
 
@@ -130,6 +130,12 @@ export const waybillsApi = {
   getVatSummary: async (params: { startDate: string; endDate: string; afterCutoffOnly?: boolean }) => {
     const response = await fetchWithAuth('/waybills/vat', { params })
     return jsonData<WaybillVatSummary>(response)
+  },
+
+  // Pre-aggregated customer sales totals from RS.ge (one object per customer, no raw waybills)
+  getCustomerSalesTotals: async () => {
+    const response = await fetchWithAuth('/waybills/sales/customer-totals')
+    return jsonData<CustomerSalesTotals[]>(response)
   },
 }
 

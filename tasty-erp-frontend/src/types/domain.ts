@@ -106,6 +106,14 @@ export type CustomerEntry = {
   name: string
 }
 
+export type CustomerSalesTotals = {
+  customerId: string
+  customerName: string
+  totalSales: number
+  saleCount: number
+  lastSaleDate: string | null
+}
+
 export type AggregationJob = {
   jobId: string
   status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED'
