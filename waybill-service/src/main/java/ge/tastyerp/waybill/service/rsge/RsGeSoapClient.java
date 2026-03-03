@@ -73,10 +73,25 @@ public class RsGeSoapClient {
     // HTTP/2 multiplexes all parallel chunk requests as streams on ONE connection;
     // RS.ge rejects them with "too many concurrent streams". HTTP/1.1 uses separate
     // connections, bypassing the limit entirely.
+    // Connect timeout raised to 60s: when too many chunks fired in parallel,
+    // RS.ge's connection queue can take >30s to accept a new connection.
     private final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(30))
+            .connectTimeout(Duration.ofSeconds(60))
             .version(HttpClient.Version.HTTP_1_1)
             .build();
+
+    /**
+     * Bounded thread pool for parallel date-range chunk fetching.
+     * 8 threads = at most 8 simultaneous RS.ge connections.
+     * Without this, all ~113 chunks fire at once via ForkJoinPool,
+     * overwhelming RS.ge and causing HttpConnectTimeoutException.
+     */
+    private final ExecutorService chunkExecutor = Executors.newFixedThreadPool(8,
+            r -> {
+                Thread t = new Thread(r, "rsge-chunk");
+                t.setDaemon(true);
+                return t;
+            });
 
     /** Thread pool for parallel per-waybill goods fetching (product-sales endpoint). */
     private final ExecutorService goodsFetchExecutor = Executors.newFixedThreadPool(10,
@@ -277,7 +292,11 @@ public class RsGeSoapClient {
     }
 
     /**
-     * Fetch waybills in 72-hour chunks in parallel.
+     * Fetch waybills in 72-hour chunks with bounded concurrency and per-chunk retry.
+     *
+     * Uses chunkExecutor (8 threads) instead of ForkJoinPool.commonPool() to cap
+     * simultaneous RS.ge connections. Without this, all ~113 chunks fire at once
+     * and RS.ge's connection queue causes HttpConnectTimeoutException on many chunks.
      */
     private List<Map<String, Object>> fetchInChunks(String operation, Map<String, String> originalParams) {
         LocalDate startInclusive = LocalDate.parse(originalParams.get("create_date_s").substring(0, 10));
@@ -301,31 +320,27 @@ public class RsGeSoapClient {
             final LocalDate s = chunkStart;
             final LocalDate e = chunkEndInclusive;
 
+            // Use chunkExecutor (bounded 8 threads) to cap RS.ge connection concurrency
             futures.add(CompletableFuture.supplyAsync(() -> {
                 try {
-                    Map<String, String> chunkParams = new HashMap<>(originalParams);
-                    chunkParams.put("create_date_s", s.atStartOfDay().format(DATE_FORMAT));
-                    // RS.ge uses an exclusive end timestamp (legacy behavior used endDate+1).
-                    chunkParams.put("create_date_e", e.plusDays(1).atStartOfDay().format(DATE_FORMAT));
-
-                    log.debug("Fetching chunk: {} to {}", s, e);
-
-                    String response = sendSoapRequest(operation, chunkParams);
-                    Map<String, Object> result = parseSoapResponse(response, operation);
-                    int statusCode = getStatusCode(result);
-                    if (statusCode != 0 && statusCode != 1) {
-                        log.warn("RS.ge SOAP operation={} chunk {}..{} status={}", operation, s, e, statusCode);
-                    }
-                    List<Map<String, Object>> extracted = extractWaybillsDeep(result);
-                    if (debugEnabled) {
-                        logDebugSamples(operation, extracted);
-                    }
-                    return extracted;
+                    return fetchChunk(operation, originalParams, s, e);
                 } catch (Exception ex) {
-                    log.error("Error fetching chunk {} to {}: {}", s, e, ex.getMessage());
-                    throw new RuntimeException(ex);
+                    // Retry once after a brief pause (connect timeout or transient RS.ge error)
+                    log.warn("Chunk {} to {} failed ({}), retrying in 3s...", s, e, ex.getMessage());
+                    try {
+                        Thread.sleep(3000);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new RuntimeException(ie);
+                    }
+                    try {
+                        return fetchChunk(operation, originalParams, s, e);
+                    } catch (Exception ex2) {
+                        log.error("Chunk {} to {} failed after retry: {}", s, e, ex2.getMessage());
+                        throw new RuntimeException("Chunk failed: " + s + " to " + e, ex2);
+                    }
                 }
-            }));
+            }, chunkExecutor));
 
             chunkStart = chunkEndInclusive.plusDays(1);
         }
@@ -335,6 +350,31 @@ public class RsGeSoapClient {
                 .map(CompletableFuture::join)
                 .flatMap(List::stream)
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * Fetch a single date-range chunk from RS.ge.
+     */
+    private List<Map<String, Object>> fetchChunk(String operation, Map<String, String> originalParams,
+                                                  LocalDate s, LocalDate e) throws Exception {
+        Map<String, String> chunkParams = new HashMap<>(originalParams);
+        chunkParams.put("create_date_s", s.atStartOfDay().format(DATE_FORMAT));
+        // RS.ge uses an exclusive end timestamp (legacy behavior used endDate+1).
+        chunkParams.put("create_date_e", e.plusDays(1).atStartOfDay().format(DATE_FORMAT));
+
+        log.debug("Fetching chunk: {} to {}", s, e);
+
+        String response = sendSoapRequest(operation, chunkParams);
+        Map<String, Object> result = parseSoapResponse(response, operation);
+        int statusCode = getStatusCode(result);
+        if (statusCode != 0 && statusCode != 1) {
+            log.warn("RS.ge SOAP operation={} chunk {}..{} status={}", operation, s, e, statusCode);
+        }
+        List<Map<String, Object>> extracted = extractWaybillsDeep(result);
+        if (debugEnabled) {
+            logDebugSamples(operation, extracted);
+        }
+        return extracted;
     }
 
     /**
