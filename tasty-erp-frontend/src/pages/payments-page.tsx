@@ -7,7 +7,7 @@ import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { formatCurrency, formatDateISO } from '@/lib/utils'
-import type { CustomerAnalysis, Payment, InitialDebt } from '@/types/domain'
+import type { CustomerAnalysis, Waybill, Payment, InitialDebt } from '@/types/domain'
 
 function getApiErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
@@ -53,13 +53,12 @@ export function PaymentsPage() {
 
   const paymentWindowStart = formatDateISO(addDays(new Date(PAYMENT_CUTOFF_DATE), 1))
 
-  // Pre-aggregated customer sales totals from RS.ge via waybill-service
-  // ~50 objects (one per customer), takes 1-3 min on first load, cached 30 min
-  const salesTotalsQuery = useQuery({
-    queryKey: ['waybills', 'salesTotals'],
-    queryFn: () => waybillsApi.getCustomerSalesTotals(),
-    staleTime: 1000 * 60 * 30, // Cache for 30 minutes
-    gcTime: 1000 * 60 * 60,   // Keep in memory for 1 hour
+  // Sales waybills after cutoff — SHARED cache key with waybills page (no double RS.ge call)
+  const waybillsQuery = useQuery({
+    queryKey: ['waybills', 'afterCutoff'],
+    queryFn: () => waybillsApi.getAll({ afterCutoffOnly: true, type: 'SALE' }),
+    staleTime: 1000 * 60 * 30,
+    gcTime: 1000 * 60 * 60,
     retry: 1,
   })
 
@@ -72,7 +71,7 @@ export function PaymentsPage() {
     retry: 1,
   })
 
-  // Initial debts (starting balances) from config-service — shared cache with waybills page
+  // Initial debts (starting balances) — shared cache with waybills page
   const initialDebtsQuery = useCachedQuery({
     queryKey: ['config', 'initialDebts'],
     queryFn: async () => {
@@ -89,9 +88,9 @@ export function PaymentsPage() {
       return [] as InitialDebt[]
     },
     cacheKey: 'initial_debts',
-    cacheTTL: 7 * 24 * 60 * 60 * 1000, // Cache for 7 days
-    staleTime: 1000 * 60 * 60 * 4,     // Refetch after 4 hours
-    gcTime: 1000 * 60 * 60 * 24,       // Keep in memory for 24 hours
+    cacheTTL: 7 * 24 * 60 * 60 * 1000,
+    staleTime: 1000 * 60 * 60 * 4,
+    gcTime: 1000 * 60 * 60 * 24,
     retry: 1,
   })
 
@@ -104,9 +103,9 @@ export function PaymentsPage() {
     retry: 1,
   })
 
+  const waybills = (waybillsQuery.data || []) as Waybill[]
   const payments = (paymentsQuery.data || []) as Payment[]
-  const salesTotals = salesTotalsQuery.data ?? []
-  const initialDebts = initialDebtsQuery.data ?? []
+  const initialDebts = (initialDebtsQuery.data || []) as InitialDebt[]
   const paymentStatus = (paymentStatusQuery.data || {}) as Record<string, import('@/types/domain').PaymentStatus>
 
   const handleToggleExcluded = (customerId: string) => {
@@ -124,105 +123,107 @@ export function PaymentsPage() {
     })
   }
 
-  // Build payment detail lists per customer (bank + manual cash, filtered by cutoff + source)
-  // Only include authorized sources: tbc, bog, manual-cash (same filter as waybills page)
-  const customerPaymentLists = React.useMemo(() => {
-    const map = new Map<string, CustomerAnalysis['payments']>()
+  // Build customer analysis — exact logic from the correct reference version
+  const customerAnalysis = React.useMemo((): Record<string, CustomerAnalysis> => {
+    const analysis: Record<string, CustomerAnalysis> = {}
+    const customerSales = new Map<string, { totalSales: number; waybillCount: number; waybills: Waybill[]; buyerName: string }>()
+    const customerPayments = new Map<string, { totalPayments: number; paymentCount: number; payments: any[] }>()
+
+    const resolveWaybillCustomerName = (waybill?: Waybill) =>
+      waybill?.buyerName || waybill?.customerName || waybill?.sellerName || ''
+
+    // Process sales: only waybills where isAfterCutoff = true
+    waybills.forEach(wb => {
+      if (!wb.customerId) return
+      const afterCutoff = wb.isAfterCutoff ?? (wb as { afterCutoff?: boolean }).afterCutoff
+      if (!afterCutoff) return
+
+      if (!customerSales.has(wb.customerId)) {
+        customerSales.set(wb.customerId, { totalSales: 0, waybillCount: 0, waybills: [], buyerName: '' })
+      }
+      const customer = customerSales.get(wb.customerId)!
+      customer.totalSales += Number(wb.amount) || 0
+      customer.waybillCount += 1
+      customer.waybills.push(wb)
+      if (!customer.buyerName) {
+        customer.buyerName = resolveWaybillCustomerName(wb)
+      }
+    })
+
+    // Process payments: date filter only, ALL sources included (no source filter)
     payments.forEach(p => {
       if (!p.customerId) return
-      if (p.source !== 'tbc' && p.source !== 'bog' && p.source !== 'manual-cash') return
       const paymentDate = p.paymentDate || ''
       if (paymentDate < paymentWindowStart) return
-      if (!map.has(p.customerId)) map.set(p.customerId, [])
-      map.get(p.customerId)!.push({
+
+      if (!customerPayments.has(p.customerId)) {
+        customerPayments.set(p.customerId, { totalPayments: 0, paymentCount: 0, payments: [] })
+      }
+      const customer = customerPayments.get(p.customerId)!
+      const amount = Number(p.amount) || 0
+      customer.totalPayments += amount
+      customer.paymentCount += 1
+      customer.payments.push({
         customerId: p.customerId,
-        payment: Number(p.amount) || 0,
+        payment: amount,
         date: paymentDate,
         isAfterCutoff: true,
         source: p.source || 'unknown',
-        uniqueCode: p.uniqueCode ?? undefined,
+        uniqueCode: p.uniqueCode,
         paymentId: p.id,
-        description: p.description ?? undefined,
+        description: p.description,
         balance: Number(p.balance) || 0,
-      })
-    })
-    return map
-  }, [payments, paymentWindowStart])
-
-  // Build customer analysis from RS.ge sales totals + Firebase payments + initial debts
-  // Formula: currentDebt = startingDebt + totalSales - totalPayments (bank + cash)
-  const customerAnalysis = React.useMemo((): Record<string, CustomerAnalysis> => {
-    // Sales map from pre-aggregated RS.ge data
-    const salesMap = new Map<string, { name: string; total: number; count: number }>()
-    salesTotals.forEach(s => {
-      salesMap.set(s.customerId, {
-        name: s.customerName,
-        total: Number(s.totalSales) || 0,
-        count: s.saleCount || 0,
       })
     })
 
     // Initial debts map
-    const debtsMap = new Map<string, InitialDebt>()
-    initialDebts.forEach(d => debtsMap.set(d.customerId, d))
-
-    // Customer names from payments (for customers without sales)
-    const paymentNames = new Map<string, string>()
-    payments.forEach(p => {
-      if (p.customerId && p.customerName && !paymentNames.has(p.customerId)) {
-        paymentNames.set(p.customerId, typeof p.customerName === 'string' ? p.customerName : '')
-      }
+    const startingDebtsMap = new Map<string, { amount: number; date: string; name: string }>()
+    initialDebts.forEach(debt => {
+      startingDebtsMap.set(debt.customerId, { amount: debt.debt, date: debt.date, name: debt.customerName })
     })
 
-    // Union of all customer IDs across all data sources
-    const allIds = new Set<string>([
-      ...salesMap.keys(),
-      ...customerPaymentLists.keys(),
-      ...debtsMap.keys(),
+    // Union of all customer IDs
+    const allIds = new Set([
+      ...customerSales.keys(),
+      ...customerPayments.keys(),
+      ...startingDebtsMap.keys(),
     ])
 
-    const analysis: Record<string, CustomerAnalysis> = {}
-
     allIds.forEach(customerId => {
-      const salesData = salesMap.get(customerId)
-      const paymentList = customerPaymentLists.get(customerId) || []
-      const cashPaymentList = paymentList.filter(p => p.source === 'manual-cash' || p.source === 'cash')
-      const debtEntry = debtsMap.get(customerId)
+      const sales = customerSales.get(customerId) || { totalSales: 0, waybillCount: 0, waybills: [], buyerName: '' }
+      const pays = customerPayments.get(customerId) || { totalPayments: 0, paymentCount: 0, payments: [] }
+      const sd = startingDebtsMap.get(customerId) || { amount: 0, date: '', name: '' }
 
-      const customerName = salesData?.name ||
-        paymentNames.get(customerId) ||
-        debtEntry?.customerName ||
-        'Unknown'
+      let customerName = customerId
+      if (sales.buyerName) customerName = sales.buyerName
+      else if (sd.name) customerName = sd.name
 
-      const totalSales = salesData?.total ?? 0
-      // totalPayments includes both bank and cash (all payment sources)
-      const totalPayments = paymentList.reduce((sum, p) => sum + p.payment, 0)
-      const totalCashPayments = cashPaymentList.reduce((sum, p) => sum + p.payment, 0)
-      const startingDebt = debtEntry?.debt ?? 0
-      const startingDebtDate = debtEntry?.date ?? null
+      // Formula: currentDebt = startingDebt + totalSales - totalPayments
+      // totalPayments includes all sources (bank + cash)
+      const currentDebt = sd.amount + sales.totalSales - pays.totalPayments
 
-      // currentDebt = startingDebt + totalSales - totalPayments (bank + cash)
-      const currentDebt = startingDebt + totalSales - totalPayments
+      const cashPayments = pays.payments.filter(p => p.source === 'manual-cash' || p.source === 'cash')
+      const totalCashPayments = cashPayments.reduce((sum: number, p: any) => sum + p.payment, 0)
 
       analysis[customerId] = {
         customerId,
         customerName,
-        totalSales,
-        totalPayments,
+        totalSales: sales.totalSales,
+        totalPayments: pays.totalPayments,
         totalCashPayments,
         currentDebt,
-        startingDebt,
-        startingDebtDate,
-        waybillCount: salesData?.count ?? 0,
-        paymentCount: paymentList.length,
-        waybills: [], // Individual waybill data not loaded (using pre-aggregated totals)
-        payments: paymentList,
-        cashPayments: cashPaymentList,
+        startingDebt: sd.amount,
+        startingDebtDate: sd.date || null,
+        waybillCount: sales.waybillCount,
+        paymentCount: pays.paymentCount,
+        waybills: sales.waybills,
+        payments: pays.payments,
+        cashPayments,
       }
     })
 
     return analysis
-  }, [salesTotals, initialDebts, customerPaymentLists, payments])
+  }, [waybills, payments, initialDebts, paymentWindowStart])
 
   const includedTotals = React.useMemo(() => {
     let totalSales = 0
@@ -238,15 +239,9 @@ export function PaymentsPage() {
       totalStartingDebts += customer.startingDebt
     })
 
-    // totalPayments already includes bank + cash, so this correctly subtracts all payments
     const totalOutstanding = totalStartingDebts + totalSales - totalPayments
 
-    return {
-      totalSales,
-      totalPayments,
-      totalCashPayments,
-      totalOutstanding,
-    }
+    return { totalSales, totalPayments, totalCashPayments, totalOutstanding }
   }, [customerAnalysis, excludedCustomers])
 
   // Filter and sort customers
@@ -263,11 +258,9 @@ export function PaymentsPage() {
     customers.sort((a, b) => {
       const aVal = a[sortBy]
       const bVal = b[sortBy]
-
       if (typeof aVal === 'string' && typeof bVal === 'string') {
         return sortOrder === 'desc' ? bVal.localeCompare(aVal) : aVal.localeCompare(bVal)
       }
-
       const aNum = Number(aVal) || 0
       const bNum = Number(bVal) || 0
       return sortOrder === 'desc' ? bNum - aNum : aNum - bNum
@@ -276,7 +269,6 @@ export function PaymentsPage() {
     return customers
   }, [customerAnalysis, searchTerm, sortBy, sortOrder])
 
-  // Pagination
   const totalPages = Math.ceil(sortedCustomers.length / itemsPerPage)
   const paginatedCustomers = React.useMemo(() => {
     const startIndex = (currentPage - 1) * itemsPerPage
@@ -292,7 +284,7 @@ export function PaymentsPage() {
   const totalCashReceived = includedTotals.totalCashPayments
   const totalOutstanding = includedTotals.totalOutstanding
 
-  const isDataLoading = salesTotalsQuery.isLoading || paymentsQuery.isLoading || initialDebtsQuery.isLoading
+  const isDataLoading = waybillsQuery.isLoading || paymentsQuery.isLoading
 
   const uploadMutation = useMutation({
     mutationFn: ({ file, bank }: { file: File; bank: 'tbc' | 'bog' }) =>
@@ -302,9 +294,7 @@ export function PaymentsPage() {
       const duplicateCount = data.duplicateCount || 0
       setUploadStatus(`✅ ${addedCount} ახალი გადახდა, ${duplicateCount} დუბლიკატი`)
       void queryClient.invalidateQueries({ queryKey: ['payments'] })
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
-      }
+      if (fileInputRef.current) fileInputRef.current.value = ''
     },
     onError: (err) => {
       setUploadStatus(`❌ შეცდომა: ${getApiErrorMessage(err)}`)
@@ -316,9 +306,7 @@ export function PaymentsPage() {
     onSuccess: () => {
       setManualUploadStatus('OK - Manual cash payments uploaded')
       void queryClient.invalidateQueries({ queryKey: ['payments'] })
-      if (manualFileInputRef.current) {
-        manualFileInputRef.current.value = ''
-      }
+      if (manualFileInputRef.current) manualFileInputRef.current.value = ''
     },
     onError: (err) => {
       setManualUploadStatus(`Error: ${getApiErrorMessage(err)}`)
@@ -381,11 +369,8 @@ export function PaymentsPage() {
   const toggleCustomerDetails = (customerId: string) => {
     setExpandedCustomers(prev => {
       const newSet = new Set(prev)
-      if (newSet.has(customerId)) {
-        newSet.delete(customerId)
-      } else {
-        newSet.add(customerId)
-      }
+      if (newSet.has(customerId)) newSet.delete(customerId)
+      else newSet.add(customerId)
       return newSet
     })
   }
@@ -438,13 +423,6 @@ export function PaymentsPage() {
         </p>
       </div>
 
-      {/* RS.ge loading indicator (first load takes 1-3 minutes) */}
-      {salesTotalsQuery.isLoading && (
-        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 rounded-lg p-3 text-sm text-blue-800 dark:text-blue-200">
-          🔄 RS.ge-დან გაყიდვების მონაცემები იტვირთება... (შეიძლება 1-3 წუთი გაგრძელდეს)
-        </div>
-      )}
-
       {/* Outstanding Debt */}
       <Card className="p-5 md:p-6 text-center border-2">
         <div className="text-sm text-muted-foreground mb-2">ჯამური ვალი</div>
@@ -458,7 +436,7 @@ export function PaymentsPage() {
           </div>
         )}
         <div className="mt-2 text-sm text-muted-foreground">
-          გაყიდვები: {salesTotalsQuery.isLoading ? '…' : formatCurrency(totalExpected)} |
+          გაყიდვები: {waybillsQuery.isLoading ? '…' : formatCurrency(totalExpected)} |
           გადახდები: {paymentsQuery.isLoading ? '…' : formatCurrency(totalReceived)}
         </div>
       </Card>
@@ -554,11 +532,7 @@ export function PaymentsPage() {
                         {formatCurrency(customer.currentDebt)}
                       </td>
                       <td className="px-4 py-3 text-sm">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleManualPaymentAdd(customer)}
-                        >
+                        <Button size="sm" variant="outline" onClick={() => handleManualPaymentAdd(customer)}>
                           დამატება
                         </Button>
                       </td>
@@ -588,25 +562,57 @@ export function PaymentsPage() {
                       <tr className="bg-muted/50">
                         <td colSpan={9} className="px-4 py-4">
                           <div className="max-h-[600px] overflow-y-auto space-y-6">
-                            {/* Sales Summary Section */}
+                            {/* Waybills Section */}
                             <div>
                               <h4 className="text-sm font-semibold mb-3">
                                 {customer.customerName} - გაყიდვები ({customer.waybillCount} ზედნადები)
                               </h4>
-                              <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded border">
-                                <div className="flex justify-between items-center text-sm">
-                                  <span className="font-medium">სულ გაყიდვები:</span>
-                                  <span className="font-bold">{formatCurrency(customer.totalSales)}</span>
+
+                              {customer.waybills && customer.waybills.length > 0 ? (
+                                <div className="space-y-3">
+                                  {customer.waybills
+                                    .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+                                    .map((waybill, idx) => (
+                                      <div key={idx} className="rounded-lg p-4 border-2 bg-blue-50 dark:bg-blue-900/20 border-blue-200">
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                                          <div>
+                                            <span className="font-medium text-muted-foreground">თარიღი:</span>
+                                            <div className="font-medium">{waybill.date}</div>
+                                          </div>
+                                          <div>
+                                            <span className="font-medium text-muted-foreground">თანხა:</span>
+                                            <div className="text-red-600 dark:text-red-500 font-bold">
+                                              {formatCurrency(Number(waybill.amount) || 0)}
+                                            </div>
+                                          </div>
+                                          <div>
+                                            <span className="font-medium text-muted-foreground">ზედნადები:</span>
+                                            <div className="font-mono text-xs">{waybill.waybillId || waybill.id}</div>
+                                          </div>
+                                          <div>
+                                            <span className="font-medium text-muted-foreground">ტიპი:</span>
+                                            <div>{waybill.type === 'SALE' ? 'გაყიდვა' : 'შესყიდვა'}</div>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ))}
+
+                                  <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded border">
+                                    <div className="flex justify-between items-center text-sm">
+                                      <span className="font-medium">სულ გაყიდვები:</span>
+                                      <span className="font-bold">{formatCurrency(customer.totalSales)}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-sm mt-1">
+                                      <span className="font-medium">საწყისი ვალი:</span>
+                                      <span>{formatCurrency(customer.startingDebt)}</span>
+                                    </div>
+                                  </div>
                                 </div>
-                                <div className="flex justify-between items-center text-sm mt-1">
-                                  <span className="font-medium">ზედნადების რაოდენობა:</span>
-                                  <span>{customer.waybillCount}</span>
+                              ) : (
+                                <div className="text-muted-foreground text-center py-4">
+                                  გაყიდვები არ არის ნაპოვნი
                                 </div>
-                                <div className="flex justify-between items-center text-sm mt-1">
-                                  <span className="font-medium">საწყისი ვალი:</span>
-                                  <span>{formatCurrency(customer.startingDebt)}</span>
-                                </div>
-                              </div>
+                              )}
                             </div>
 
                             {/* Payments Section */}
@@ -739,7 +745,7 @@ export function PaymentsPage() {
         <Card className="p-3 md:p-4">
           <div className="text-xs text-muted-foreground">გაყიდვები</div>
           <div className="mt-1 text-lg font-semibold md:text-xl">
-            {salesTotalsQuery.isLoading ? <Skeleton className="h-6 w-24" /> : formatCurrency(totalExpected)}
+            {waybillsQuery.isLoading ? <Skeleton className="h-6 w-24" /> : formatCurrency(totalExpected)}
           </div>
         </Card>
         <Card className="p-3 md:p-4">
@@ -861,13 +867,12 @@ export function PaymentsPage() {
         </div>
       </Card>
 
-      {(salesTotalsQuery.isError || paymentsQuery.isError || initialDebtsQuery.isError) && (
+      {(waybillsQuery.isError || paymentsQuery.isError) && (
         <Card className="border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive md:p-4">
           <div className="font-medium">მონაცემების ჩატვირთვა ვერ მოხერხდა</div>
           <div className="mt-1 text-xs">
-            {salesTotalsQuery.isError && <div>გაყიდვები (RS.ge): {getApiErrorMessage(salesTotalsQuery.error)}</div>}
+            {waybillsQuery.isError && <div>ზედნადებები (RS.ge): {getApiErrorMessage(waybillsQuery.error)}</div>}
             {paymentsQuery.isError && <div>გადახდები: {getApiErrorMessage(paymentsQuery.error)}</div>}
-            {initialDebtsQuery.isError && <div>საწყისი ვალები: {getApiErrorMessage(initialDebtsQuery.error)}</div>}
           </div>
         </Card>
       )}
