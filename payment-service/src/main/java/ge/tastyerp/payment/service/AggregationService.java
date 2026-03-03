@@ -1,5 +1,6 @@
 package ge.tastyerp.payment.service;
 
+import ge.tastyerp.common.dto.ApiResponse;
 import ge.tastyerp.common.dto.aggregation.CustomerDebtSummaryDto;
 import ge.tastyerp.common.dto.config.InitialDebtDto;
 import ge.tastyerp.common.dto.payment.ManualCashPaymentDto;
@@ -294,19 +295,22 @@ public class AggregationService {
 
     /**
      * Fetch initial debts from config-service.
+     * Config-service wraps the response in ApiResponse<List<InitialDebtDto>>,
+     * so we must unwrap the envelope to extract the data array.
      */
     private List<InitialDebtDto> fetchInitialDebts() {
         try {
             String url = configServiceUrl + "/api/config/debts";
 
-            ResponseEntity<List<InitialDebtDto>> response = restTemplate.exchange(
+            ResponseEntity<ApiResponse<List<InitialDebtDto>>> response = restTemplate.exchange(
                     url,
                     HttpMethod.GET,
                     null,
-                    new ParameterizedTypeReference<List<InitialDebtDto>>() {}
+                    new ParameterizedTypeReference<ApiResponse<List<InitialDebtDto>>>() {}
             );
 
-            return response.getBody() != null ? response.getBody() : Collections.emptyList();
+            ApiResponse<List<InitialDebtDto>> body = response.getBody();
+            return (body != null && body.getData() != null) ? body.getData() : Collections.emptyList();
         } catch (Exception e) {
             log.error("Error fetching initial debts: {}", e.getMessage(), e);
             throw new RuntimeException("Failed to fetch initial debts", e);
