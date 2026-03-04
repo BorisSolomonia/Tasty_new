@@ -1,14 +1,14 @@
 import * as React from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { startOfMonth } from 'date-fns'
-import { productSalesApi } from '@/lib/api-client'
+import { productSalesApi, configApi } from '@/lib/api-client'
 import { formatDateISO } from '@/lib/utils'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { CustomerEntry, ProductSales } from '@/types/domain'
 
-// ─── Default customers (from starting_customers.txt) ─────────────────────────
+// ─── Default customers ────────────────────────────────────────────────────────
 
 const DEFAULT_CUSTOMERS: CustomerEntry[] = [
   { id: '01008057492', name: '(01008057492-დღგ) ნინო მუშკუდიანი' },
@@ -45,6 +45,18 @@ const LS_KEY = 'product_sales_customers'
 type CustomerState = CustomerEntry & { visible: boolean }
 type SortField = 'name' | 'beef' | 'pork' | 'total'
 
+// ─── TIN normalization ────────────────────────────────────────────────────────
+// RS.ge may return individual TINs as numeric (stripping leading zeros).
+// e.g. "01008057492" from RS.ge becomes "1008057492".
+// We normalize both sides before comparing so IDs always match.
+
+function normId(id: string): string {
+  if (!id) return ''
+  const digits = id.replace(/\D/g, '')
+  // Strip leading zeros but keep at least one digit
+  return digits.replace(/^0+(\d)/, '$1')
+}
+
 // ─── LocalStorage helpers ─────────────────────────────────────────────────────
 
 function loadCustomers(): CustomerState[] {
@@ -71,11 +83,6 @@ function formatKg(val: number | undefined | null): string {
   }).format(val)
 }
 
-function extractTin(input: string): string {
-  const match = input.match(/\((\d{9,11})(?:-[^)]+)?\)/)
-  return match ? match[1] : input.trim()
-}
-
 function SortIcon({ field, current, dir }: { field: SortField; current: SortField; dir: 'asc' | 'desc' }) {
   if (field !== current) return <span className="ml-1 text-muted-foreground opacity-40">↕</span>
   return <span className="ml-1">{dir === 'asc' ? '↑' : '↓'}</span>
@@ -92,6 +99,19 @@ export function ProductSalesPage() {
   const [sortDir, setSortDir] = React.useState<'asc' | 'desc'>('asc')
   const [showAddInput, setShowAddInput] = React.useState(false)
   const [newCustomerInput, setNewCustomerInput] = React.useState('')
+  const [dropdownOpen, setDropdownOpen] = React.useState(false)
+  const addInputRef = React.useRef<HTMLInputElement>(null)
+  const dropdownRef = React.useRef<HTMLDivElement>(null)
+
+  // Fetch the full customer list for autocomplete (lazy — only when add panel is open)
+  const customersListQuery = useQuery({
+    queryKey: ['config', 'customers'],
+    queryFn: () => configApi.getCustomers(),
+    enabled: showAddInput,
+    staleTime: 1000 * 60 * 30,
+    gcTime: 1000 * 60 * 60,
+    retry: 1,
+  })
 
   const query = useQuery({
     queryKey: ['product-sales', startDate, endDate, fetchTrigger],
@@ -100,6 +120,55 @@ export function ProductSalesPage() {
     staleTime: 5 * 60 * 1000,
     retry: 1,
   })
+
+  // Build the full autocomplete source: config customers + any customers already returned by the API
+  const allKnownCustomers = React.useMemo(() => {
+    const map = new Map<string, string>() // normId → display name
+    // Add from config customers
+    const cfgList = (customersListQuery.data ?? []) as Array<{ identification: string; customerName: string }>
+    cfgList.forEach(c => {
+      if (c.identification) map.set(normId(c.identification), `(${c.identification}) ${c.customerName}`)
+    })
+    // Add from product-sales API results (already fetched)
+    const apiData = (query.data ?? []) as ProductSales[]
+    apiData.forEach(r => {
+      if (r.customerId && !map.has(normId(r.customerId))) {
+        map.set(normId(r.customerId), `(${r.customerId}) ${r.customerName}`)
+      }
+    })
+    // Always include DEFAULT_CUSTOMERS as fallback
+    DEFAULT_CUSTOMERS.forEach(c => {
+      if (!map.has(normId(c.id))) map.set(normId(c.id), c.name)
+    })
+
+    return Array.from(map.entries()).map(([nid, name]) => ({ nid, name }))
+  }, [customersListQuery.data, query.data])
+
+  // Filtered autocomplete options
+  const autocompleteOptions = React.useMemo(() => {
+    const term = newCustomerInput.trim().toLowerCase()
+    if (!term) return allKnownCustomers.slice(0, 15)
+    return allKnownCustomers
+      .filter(opt =>
+        opt.name.toLowerCase().includes(term) ||
+        opt.nid.includes(term)
+      )
+      .slice(0, 15)
+  }, [allKnownCustomers, newCustomerInput])
+
+  // Close dropdown when clicking outside
+  React.useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (
+        dropdownRef.current && !dropdownRef.current.contains(e.target as Node) &&
+        addInputRef.current && !addInputRef.current.contains(e.target as Node)
+      ) {
+        setDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   const handleFetch = () => {
     setFetchTrigger((k) => (k === null ? 1 : k + 1))
@@ -118,17 +187,46 @@ export function ProductSalesPage() {
     updateCustomers(customers.filter((c) => c.id !== id))
   }
 
-  const handleAddCustomer = () => {
+  const addCustomerFromOption = (option: { nid: string; name: string }) => {
+    // Check if already in list (by normalized ID)
+    if (customers.some(c => normId(c.id) === option.nid)) {
+      setNewCustomerInput('')
+      setDropdownOpen(false)
+      setShowAddInput(false)
+      return
+    }
+    // Extract raw id from the name string
+    const match = option.name.match(/\((\d{9,11})\)/)
+    const rawId = match ? match[1] : option.nid
+    updateCustomers([...customers, { id: rawId, name: option.name, visible: true }])
+    setNewCustomerInput('')
+    setDropdownOpen(false)
+    setShowAddInput(false)
+  }
+
+  const handleAddManual = () => {
     const trimmed = newCustomerInput.trim()
     if (!trimmed) return
-    const id = extractTin(trimmed)
-    if (customers.some((c) => c.id === id)) {
+    // Check if it matches an autocomplete option exactly
+    const match = autocompleteOptions.find(
+      o => o.name.toLowerCase() === trimmed.toLowerCase() || o.nid === normId(trimmed)
+    )
+    if (match) {
+      addCustomerFromOption(match)
+      return
+    }
+    // Free-text add: extract TIN from format "(TIN) Name" or just use as-is
+    const tinMatch = trimmed.match(/\((\d{9,11})\)/)
+    const id = tinMatch ? tinMatch[1] : trimmed
+    if (customers.some(c => normId(c.id) === normId(id))) {
       setNewCustomerInput('')
+      setDropdownOpen(false)
       setShowAddInput(false)
       return
     }
     updateCustomers([...customers, { id, name: trimmed, visible: true }])
     setNewCustomerInput('')
+    setDropdownOpen(false)
     setShowAddInput(false)
   }
 
@@ -141,14 +239,19 @@ export function ProductSalesPage() {
     }
   }
 
-  const visibleIds = React.useMemo(
-    () => new Set(customers.filter((c) => c.visible).map((c) => c.id)),
+  // Build a normalized set of visible customer IDs for matching
+  // Uses normId() so "01008057492" and "1008057492" both resolve to the same key
+  const visibleNormIds = React.useMemo(
+    () => new Set(customers.filter((c) => c.visible).map((c) => normId(c.id))),
     [customers]
   )
 
   const sortedRows = React.useMemo(() => {
     if (!query.data) return []
-    const filtered = query.data.filter((row: ProductSales) => visibleIds.has(row.customerId))
+    // Match by normalized ID — fixes leading-zero mismatches from RS.ge
+    const filtered = (query.data as ProductSales[]).filter(
+      (row) => visibleNormIds.has(normId(row.customerId))
+    )
     return [...filtered].sort((a, b) => {
       let cmp = 0
       if (sortField === 'name') cmp = a.customerName.localeCompare(b.customerName, 'ka')
@@ -157,7 +260,7 @@ export function ProductSalesPage() {
       else if (sortField === 'total') cmp = (a.totalKg ?? 0) - (b.totalKg ?? 0)
       return sortDir === 'asc' ? cmp : -cmp
     })
-  }, [query.data, visibleIds, sortField, sortDir])
+  }, [query.data, visibleNormIds, sortField, sortDir])
 
   const totals = React.useMemo(
     () => ({
@@ -167,6 +270,8 @@ export function ProductSalesPage() {
     }),
     [sortedRows]
   )
+
+  const visibleCount = customers.filter(c => c.visible).length
 
   return (
     <div className="space-y-4">
@@ -206,24 +311,81 @@ export function ProductSalesPage() {
       {/* Customer Panel */}
       <Card className="p-3 md:p-4">
         <div className="mb-2 flex items-center justify-between gap-2">
-          <span className="text-sm font-medium">მომხმარებლები ({customers.length})</span>
-          <Button size="sm" variant="outline" onClick={() => setShowAddInput((v) => !v)}>
+          <span className="text-sm font-medium">
+            მომხმარებლები ({customers.length} სულ, {visibleCount} მონიშნული)
+          </span>
+          <Button size="sm" variant="outline" onClick={() => {
+            setShowAddInput((v) => !v)
+            setNewCustomerInput('')
+            setDropdownOpen(false)
+          }}>
             {showAddInput ? 'გაუქმება' : '+ დამატება'}
           </Button>
         </div>
 
         {showAddInput && (
-          <div className="mb-3 flex gap-2">
-            <input
-              type="text"
-              placeholder="TIN ან სახელი (მაგ: (123456789) სახელი)"
-              value={newCustomerInput}
-              onChange={(e) => setNewCustomerInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleAddCustomer()}
-              className="flex-1 rounded-md border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              autoFocus
-            />
-            <Button size="sm" onClick={handleAddCustomer}>დამატება</Button>
+          <div className="mb-3 relative">
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <input
+                  ref={addInputRef}
+                  type="text"
+                  placeholder="სახელი ან TIN-ის ჩაწერა..."
+                  value={newCustomerInput}
+                  onChange={(e) => {
+                    setNewCustomerInput(e.target.value)
+                    setDropdownOpen(true)
+                  }}
+                  onFocus={() => setDropdownOpen(true)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleAddManual()
+                    if (e.key === 'Escape') { setDropdownOpen(false); setShowAddInput(false) }
+                  }}
+                  className="w-full rounded-md border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  autoFocus
+                />
+
+                {/* Dropdown */}
+                {dropdownOpen && autocompleteOptions.length > 0 && (
+                  <div
+                    ref={dropdownRef}
+                    className="absolute left-0 right-0 top-full z-50 mt-1 max-h-60 overflow-y-auto rounded-md border bg-background shadow-lg"
+                  >
+                    {customersListQuery.isLoading && (
+                      <div className="px-3 py-2 text-xs text-muted-foreground">იტვირთება...</div>
+                    )}
+                    {autocompleteOptions.map((opt) => {
+                      const alreadyAdded = customers.some(c => normId(c.id) === opt.nid)
+                      return (
+                        <button
+                          key={opt.nid}
+                          type="button"
+                          disabled={alreadyAdded}
+                          onMouseDown={(e) => {
+                            e.preventDefault() // prevent input blur
+                            if (!alreadyAdded) addCustomerFromOption(opt)
+                          }}
+                          className={`w-full px-3 py-2 text-left text-sm hover:bg-muted/60 flex items-center justify-between gap-2 ${
+                            alreadyAdded ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'
+                          }`}
+                        >
+                          <span className="truncate">{opt.name}</span>
+                          {alreadyAdded && (
+                            <span className="shrink-0 text-xs text-muted-foreground">✓ არის</span>
+                          )}
+                        </button>
+                      )
+                    })}
+                    {autocompleteOptions.length === 0 && !customersListQuery.isLoading && (
+                      <div className="px-3 py-2 text-xs text-muted-foreground">
+                        შედეგი არ მოიძებნა — Enter-ით ხელით დამატება
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <Button size="sm" onClick={handleAddManual}>დამატება</Button>
+            </div>
           </div>
         )}
 
@@ -314,7 +476,9 @@ export function ProductSalesPage() {
                 {!query.isFetching && sortedRows.length > 0 && (
                   <tr className="border-t-2 bg-muted/30 font-semibold">
                     <td className="px-3 py-2" />
-                    <td className="px-3 py-2 text-xs uppercase tracking-wide text-muted-foreground">სულ</td>
+                    <td className="px-3 py-2 text-xs uppercase tracking-wide text-muted-foreground">
+                      სულ ({sortedRows.length} მომხმარებელი)
+                    </td>
                     <td className="px-3 py-2 text-right text-amber-600 dark:text-amber-400">{formatKg(totals.beef)}</td>
                     <td className="px-3 py-2 text-right text-rose-600 dark:text-rose-400">{formatKg(totals.pork)}</td>
                     <td className="px-3 py-2 text-right">{formatKg(totals.total)}</td>
