@@ -2,7 +2,6 @@ import * as React from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { startOfMonth } from 'date-fns'
 import { productSalesApi, configApi } from '@/lib/api-client'
-import { useCachedQuery } from '@/lib/use-cached-query'
 import { formatDateISO } from '@/lib/utils'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -98,15 +97,19 @@ export function ProductSalesPage() {
   const [fetchTrigger, setFetchTrigger] = React.useState<number | null>(null)
 
   // Load customers: Firebase (source of truth) → localStorage (fast cache) → defaults
-  const customersQuery = useCachedQuery<CustomerState[]>({
+  const customersQuery = useQuery<CustomerState[]>({
     queryKey: ['config', 'product-sales-customers'],
     queryFn: async () => {
       const data = await configApi.getProductSalesCustomers()
-      if (data && data.length > 0) return data
+      if (data && data.length > 0) {
+        // Sync Firebase data to localStorage for fast next-load
+        saveCustomersToLocalStorage(data)
+        return data
+      }
       // Firebase empty → fall back to localStorage or defaults
       return loadCustomersFromLocalStorage() ?? DEFAULT_CUSTOMERS.map((c) => ({ ...c, visible: true }))
     },
-    cacheKey: LS_KEY,
+    initialData: () => loadCustomersFromLocalStorage() ?? DEFAULT_CUSTOMERS.map((c) => ({ ...c, visible: true })),
     staleTime: 1000 * 60 * 5,
   })
 
