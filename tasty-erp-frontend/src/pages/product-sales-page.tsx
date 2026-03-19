@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { startOfMonth } from 'date-fns'
-import { productSalesApi, configApi } from '@/lib/api-client'
+import { productSalesApi, configApi, waybillsApi } from '@/lib/api-client'
 import { formatDateISO } from '@/lib/utils'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -97,27 +97,33 @@ export function ProductSalesPage() {
   const [fetchTrigger, setFetchTrigger] = React.useState<number | null>(null)
 
   // Load customers: Firebase (source of truth) → localStorage (fast cache) → defaults
+  // Read localStorage once at mount to use as initialData
+  const [localCustomers] = React.useState(() => loadCustomersFromLocalStorage())
+
   const customersQuery = useQuery<CustomerState[]>({
     queryKey: ['config', 'product-sales-customers'],
     queryFn: async () => {
       const data = await configApi.getProductSalesCustomers()
-      if (data && data.length > 0) {
-        // Sync Firebase data to localStorage for fast next-load
-        saveCustomersToLocalStorage(data)
-        return data
-      }
+      if (data && data.length > 0) return data
       // Firebase empty → fall back to localStorage or defaults
       return loadCustomersFromLocalStorage() ?? DEFAULT_CUSTOMERS.map((c) => ({ ...c, visible: true }))
     },
-    initialData: () => loadCustomersFromLocalStorage() ?? DEFAULT_CUSTOMERS.map((c) => ({ ...c, visible: true })),
+    initialData: localCustomers ?? DEFAULT_CUSTOMERS.map((c) => ({ ...c, visible: true })),
+    // When localStorage has data, treat it as fresh so staleTime applies (no instant refetch).
+    // When no localStorage (new browser), treat as stale so queryFn fetches from Firebase immediately.
+    initialDataUpdatedAt: localCustomers ? Date.now() : 0,
     staleTime: 1000 * 60 * 5,
   })
 
-  const customers: CustomerState[] = customersQuery.data ?? loadCustomersFromLocalStorage() ?? DEFAULT_CUSTOMERS.map((c) => ({ ...c, visible: true }))
+  const customers: CustomerState[] = customersQuery.data ?? DEFAULT_CUSTOMERS.map((c) => ({ ...c, visible: true }))
 
-  // Fire-and-forget mutation to persist to Firebase
+  // Persist to Firebase; on success sync localStorage and refresh query cache
   const saveMutation = useMutation({
     mutationFn: (list: CustomerState[]) => configApi.saveProductSalesCustomers(list),
+    onSuccess: (_data, savedList) => {
+      // Firebase confirmed save → sync localStorage so next reload matches
+      saveCustomersToLocalStorage(savedList)
+    },
   })
   const [sortField, setSortField] = React.useState<SortField>('name')
   const [sortDir, setSortDir] = React.useState<'asc' | 'desc'>('asc')
@@ -137,6 +143,16 @@ export function ProductSalesPage() {
     retry: 1,
   })
 
+  // All customers with sales from RS.ge (covers customers not in Firebase 'customers' collection)
+  const salesTotalsQuery = useQuery({
+    queryKey: ['waybills', 'customer-totals'],
+    queryFn: () => waybillsApi.getCustomerSalesTotals(),
+    enabled: showAddInput,
+    staleTime: 1000 * 60 * 30,
+    gcTime: 1000 * 60 * 60,
+    retry: 1,
+  })
+
   const query = useQuery({
     queryKey: ['product-sales', startDate, endDate, fetchTrigger],
     queryFn: () => productSalesApi.getProductSales({ startDate, endDate }),
@@ -145,13 +161,20 @@ export function ProductSalesPage() {
     retry: 1,
   })
 
-  // Build the full autocomplete source: config customers + any customers already returned by the API
+  // Build the full autocomplete source: config customers + waybill customers + API results + defaults
   const allKnownCustomers = React.useMemo(() => {
     const map = new Map<string, string>() // normId → display name
     // Add from config customers
     const cfgList = (customersListQuery.data ?? []) as Array<{ identification: string; customerName: string }>
     cfgList.forEach(c => {
       if (c.identification) map.set(normId(c.identification), `(${c.identification}) ${c.customerName}`)
+    })
+    // Add from RS.ge waybill customer totals (all customers with sales)
+    const salesTotals = (salesTotalsQuery.data ?? []) as import('@/types/domain').CustomerSalesTotals[]
+    salesTotals.forEach(c => {
+      if (c.customerId && !map.has(normId(c.customerId))) {
+        map.set(normId(c.customerId), `(${c.customerId}) ${c.customerName}`)
+      }
     })
     // Add from product-sales API results (already fetched)
     const apiData = (query.data ?? []) as ProductSales[]
@@ -166,7 +189,7 @@ export function ProductSalesPage() {
     })
 
     return Array.from(map.entries()).map(([nid, name]) => ({ nid, name }))
-  }, [customersListQuery.data, query.data])
+  }, [customersListQuery.data, salesTotalsQuery.data, query.data])
 
   // Filtered autocomplete options
   const autocompleteOptions = React.useMemo(() => {
