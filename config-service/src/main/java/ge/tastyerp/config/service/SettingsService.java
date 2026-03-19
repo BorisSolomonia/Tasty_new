@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -119,6 +120,22 @@ public class SettingsService {
     public int getBatchSize() {
         Integer batchSize = getAllSettings().getBatchSize();
         return batchSize != null ? batchSize : defaultBatchSize;
+    }
+
+    /**
+     * Get product sales customers list.
+     */
+    public List<Map<String, Object>> getProductSalesCustomers() {
+        log.debug("Fetching product sales customers");
+        return settingsRepository.getProductSalesCustomers();
+    }
+
+    /**
+     * Save product sales customers list.
+     */
+    public void saveProductSalesCustomers(List<Map<String, Object>> customers) {
+        log.info("Saving product sales customers ({} entries)", customers.size());
+        settingsRepository.saveProductSalesCustomers(customers);
     }
 
     // Private helper methods

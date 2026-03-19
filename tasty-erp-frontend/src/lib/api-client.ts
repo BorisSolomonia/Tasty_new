@@ -370,6 +370,20 @@ export const configApi = {
     return jsonData(response)
   },
 
+  // Product Sales Customers
+  getProductSalesCustomers: async () => {
+    const response = await fetchWithAuth('/config/product-sales-customers')
+    return jsonData<Array<{ id: string; name: string; visible: boolean }>>(response)
+  },
+
+  saveProductSalesCustomers: async (customers: Array<{ id: string; name: string; visible: boolean }>) => {
+    const response = await fetchWithAuth('/config/product-sales-customers', {
+      method: 'PUT',
+      body: JSON.stringify(customers),
+    })
+    return jsonData<void>(response)
+  },
+
   // Customers
   getCustomers: async () => {
     const response = await fetchWithAuth('/config/customers')

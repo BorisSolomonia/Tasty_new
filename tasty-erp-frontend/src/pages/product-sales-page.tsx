@@ -1,7 +1,8 @@
 import * as React from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { startOfMonth } from 'date-fns'
 import { productSalesApi, configApi } from '@/lib/api-client'
+import { useCachedQuery } from '@/lib/use-cached-query'
 import { formatDateISO } from '@/lib/utils'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -59,17 +60,17 @@ function normId(id: string): string {
 
 // ─── LocalStorage helpers ─────────────────────────────────────────────────────
 
-function loadCustomers(): CustomerState[] {
+function loadCustomersFromLocalStorage(): CustomerState[] | null {
   try {
     const saved = localStorage.getItem(LS_KEY)
     if (saved) return JSON.parse(saved) as CustomerState[]
   } catch {
     // ignore
   }
-  return DEFAULT_CUSTOMERS.map((c) => ({ ...c, visible: true }))
+  return null
 }
 
-function saveCustomers(list: CustomerState[]) {
+function saveCustomersToLocalStorage(list: CustomerState[]) {
   localStorage.setItem(LS_KEY, JSON.stringify(list))
 }
 
@@ -91,10 +92,30 @@ function SortIcon({ field, current, dir }: { field: SortField; current: SortFiel
 // ─── Page component ───────────────────────────────────────────────────────────
 
 export function ProductSalesPage() {
+  const queryClient = useQueryClient()
   const [startDate, setStartDate] = React.useState<string>(formatDateISO(startOfMonth(new Date())))
   const [endDate, setEndDate] = React.useState<string>(formatDateISO(new Date()))
   const [fetchTrigger, setFetchTrigger] = React.useState<number | null>(null)
-  const [customers, setCustomers] = React.useState<CustomerState[]>(loadCustomers)
+
+  // Load customers: Firebase (source of truth) → localStorage (fast cache) → defaults
+  const customersQuery = useCachedQuery<CustomerState[]>({
+    queryKey: ['config', 'product-sales-customers'],
+    queryFn: async () => {
+      const data = await configApi.getProductSalesCustomers()
+      if (data && data.length > 0) return data
+      // Firebase empty → fall back to localStorage or defaults
+      return loadCustomersFromLocalStorage() ?? DEFAULT_CUSTOMERS.map((c) => ({ ...c, visible: true }))
+    },
+    cacheKey: LS_KEY,
+    staleTime: 1000 * 60 * 5,
+  })
+
+  const customers: CustomerState[] = customersQuery.data ?? loadCustomersFromLocalStorage() ?? DEFAULT_CUSTOMERS.map((c) => ({ ...c, visible: true }))
+
+  // Fire-and-forget mutation to persist to Firebase
+  const saveMutation = useMutation({
+    mutationFn: (list: CustomerState[]) => configApi.saveProductSalesCustomers(list),
+  })
   const [sortField, setSortField] = React.useState<SortField>('name')
   const [sortDir, setSortDir] = React.useState<'asc' | 'desc'>('asc')
   const [showAddInput, setShowAddInput] = React.useState(false)
@@ -175,8 +196,9 @@ export function ProductSalesPage() {
   }
 
   const updateCustomers = (list: CustomerState[]) => {
-    saveCustomers(list)
-    setCustomers(list)
+    saveCustomersToLocalStorage(list)
+    queryClient.setQueryData(['config', 'product-sales-customers'], list)
+    saveMutation.mutate(list)
   }
 
   const toggleVisible = (id: string) => {
