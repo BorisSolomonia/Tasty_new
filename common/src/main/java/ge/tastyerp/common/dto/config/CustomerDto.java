@@ -35,4 +35,13 @@ public class CustomerDto {
      * Contact information (optional).
      */
     private String contactInfo;
+
+    /**
+     * Whether this is a real business partner (true) or an exception-only
+     * entity (false) used for documentation purposes (BOR-74).
+     *
+     * Null is treated as "real" by default so that existing customer records
+     * (which predate this flag) are not silently excluded from real totals.
+     */
+    private Boolean isRealEntity;
 }

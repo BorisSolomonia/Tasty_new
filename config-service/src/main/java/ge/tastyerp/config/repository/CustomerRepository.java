@@ -55,6 +55,38 @@ public class CustomerRepository {
     }
 
     /**
+     * Set (upsert) the is_real_entity flag for a customer (BOR-74).
+     *
+     * The customers collection is keyed by document id = identification, so we
+     * merge the field onto that document and create a stub if it is missing.
+     */
+    public CustomerDto setRealEntity(String identification, boolean isRealEntity) {
+        try {
+            var docRef = firestore.collection(COLLECTION).document(identification);
+            var snapshot = docRef.get().get();
+
+            var update = new java.util.HashMap<String, Object>();
+            update.put("Identification", identification);
+            update.put("isRealEntity", isRealEntity);
+            if (!snapshot.exists() || snapshot.getString("CustomerName") == null) {
+                update.put("CustomerName", identification);
+            }
+            docRef.set(update, com.google.cloud.firestore.SetOptions.merge()).get();
+
+            return findByIdentification(identification)
+                    .orElse(CustomerDto.builder()
+                            .identification(identification)
+                            .customerName(identification)
+                            .isRealEntity(isRealEntity)
+                            .build());
+        } catch (InterruptedException | ExecutionException e) {
+            log.error("Error setting isRealEntity for {}: {}", identification, e.getMessage());
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Failed to update isRealEntity", e);
+        }
+    }
+
+    /**
      * Find customer by identification number.
      */
     public Optional<CustomerDto> findByIdentification(String identification) {
@@ -83,6 +115,7 @@ public class CustomerRepository {
                 .identification(document.getString("Identification"))
                 .customerName(document.getString("CustomerName"))
                 .contactInfo(document.getString("ContactInfo"))
+                .isRealEntity(document.getBoolean("isRealEntity"))
                 .build();
     }
 }

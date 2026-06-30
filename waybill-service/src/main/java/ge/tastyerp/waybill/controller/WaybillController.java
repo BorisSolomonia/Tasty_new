@@ -1,6 +1,7 @@
 package ge.tastyerp.waybill.controller;
 
 import ge.tastyerp.common.dto.ApiResponse;
+import ge.tastyerp.common.dto.audit.ProductMovementDto;
 import ge.tastyerp.common.dto.waybill.CustomerSalesTotalsDto;
 import ge.tastyerp.common.dto.waybill.ProductSalesDto;
 import ge.tastyerp.common.dto.waybill.WaybillDto;
@@ -8,6 +9,7 @@ import ge.tastyerp.common.dto.waybill.WaybillFetchRequest;
 import ge.tastyerp.common.dto.waybill.WaybillFetchResponse;
 import ge.tastyerp.common.dto.waybill.WaybillType;
 import ge.tastyerp.common.dto.waybill.WaybillVatSummaryDto;
+import ge.tastyerp.waybill.service.InventoryMovementService;
 import ge.tastyerp.waybill.service.ProductSalesService;
 import ge.tastyerp.waybill.service.WaybillService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -36,6 +38,7 @@ public class WaybillController {
 
     private final WaybillService waybillService;
     private final ProductSalesService productSalesService;
+    private final InventoryMovementService inventoryMovementService;
 
     @PostMapping("/fetch")
     @Operation(summary = "Fetch waybills from RS.ge API")
@@ -106,6 +109,16 @@ public class WaybillController {
         log.info("HTTP GET /api/waybills/product-sales startDate={} endDate={}", startDate, endDate);
         List<ProductSalesDto> result = productSalesService.getProductSales(startDate, endDate);
         return ResponseEntity.ok(ApiResponse.success(result));
+    }
+
+    @GetMapping("/product-movements")
+    @Operation(summary = "Get per-line product movements (stock in/out) for inventory ledger (BOR-74)")
+    public ResponseEntity<ApiResponse<List<ProductMovementDto>>> getProductMovements(
+            @RequestParam String startDate,
+            @RequestParam String endDate) {
+        log.info("HTTP GET /api/waybills/product-movements startDate={} endDate={}", startDate, endDate);
+        List<ProductMovementDto> movements = inventoryMovementService.getProductMovements(startDate, endDate);
+        return ResponseEntity.ok(ApiResponse.success(movements));
     }
 
     @GetMapping("/vat")

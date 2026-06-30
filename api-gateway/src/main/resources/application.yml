@@ -20,6 +20,12 @@ spring:
           predicates:
             - Path=/api/payments/**
 
+        # Audit Control Routes (BOR-74) -> payment-service
+        - id: audit-control-service
+          uri: ${PAYMENT_SERVICE_URL:http://localhost:8082}
+          predicates:
+            - Path=/api/audit-control/**
+
         # Config Service Routes
         - id: config-service
           uri: ${CONFIG_SERVICE_URL:http://localhost:8888}

@@ -7,6 +7,7 @@ import { WaybillsPage } from '@/pages/waybills-page'
 import { PaymentsPage } from '@/pages/payments-page'
 import { SettingsPage } from '@/pages/settings-page'
 import { ProductSalesPage } from '@/pages/product-sales-page'
+import { AuditControlPage } from '@/pages/audit-control-page'
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -42,7 +43,13 @@ const productSalesRoute = createRoute({
   component: ProductSalesPage,
 })
 
-const routeTree = rootRoute.addChildren([indexRoute, waybillsRoute, paymentsRoute, settingsRoute, productSalesRoute])
+const auditControlRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'audit-control',
+  component: AuditControlPage,
+})
+
+const routeTree = rootRoute.addChildren([indexRoute, waybillsRoute, paymentsRoute, settingsRoute, productSalesRoute, auditControlRoute])
 
 export const router = createRouter({
   routeTree,

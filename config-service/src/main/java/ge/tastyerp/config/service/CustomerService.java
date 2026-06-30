@@ -39,4 +39,12 @@ public class CustomerService {
         return customerRepository.findByIdentification(identification)
                 .orElseThrow(() -> new ResourceNotFoundException("Customer", identification));
     }
+
+    /**
+     * Mark a customer as a real business partner or an exception-only entity (BOR-74).
+     */
+    public CustomerDto setRealEntity(String identification, boolean isRealEntity) {
+        log.info("Setting isRealEntity={} for customer {}", isRealEntity, identification);
+        return customerRepository.setRealEntity(identification, isRealEntity);
+    }
 }

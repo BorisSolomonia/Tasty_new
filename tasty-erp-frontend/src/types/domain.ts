@@ -114,6 +114,93 @@ export type CustomerSalesTotals = {
   lastSaleDate: string | null
 }
 
+// ==================== Audit Control (BOR-74) ====================
+
+export type DailyLedgerRow = {
+  date: string
+  startingInventoryKg: number
+  purchasedKg: number
+  soldKg: number
+  writeOffKg: number
+  endingInventoryKg: number
+  writeOffPercent: number
+  overage: boolean
+}
+
+export type InventoryLedger = {
+  parentCategory: string
+  childProducts: string[]
+  openingStockKg: number
+  totalPurchasedKg: number
+  totalSoldKg: number
+  totalWriteOffKg: number
+  endingInventoryKg: number
+  overageDays: number
+  dailyRows: DailyLedgerRow[]
+}
+
+export type RealTotals = {
+  realTotalSales: number
+  realTotalPurchases: number
+  excludedSales: number
+  excludedPurchases: number
+  realEntityCount: number
+  excludedEntityCount: number
+}
+
+export type ReconciliationRow = {
+  customerId: string
+  customerName: string
+  realEntity: boolean
+  totalSales: number
+  totalPayments: number
+  currentDebt: number
+  realDebt: number
+  exceptionDebt: number
+  manuallyMarkedPaid: boolean
+}
+
+export type TargetedExpense = {
+  targetId: string
+  totalExpense: number
+  matchCount: number
+  matches: Array<{
+    paymentId?: string
+    source?: string
+    amount: number
+    date?: string
+    description?: string
+    matchedOnDescription: boolean
+  }>
+}
+
+export type AuditException = {
+  id?: string
+  type: string
+  description?: string
+  referenceId?: string
+  customerId?: string
+  amount?: number
+  date?: string
+  status?: string
+  manual?: boolean
+  createdAt?: string
+  createdBy?: string
+}
+
+export type AuditDashboard = {
+  startDate: string
+  endDate: string
+  productFilter?: string | null
+  realTotals: RealTotals
+  inventoryLedgers: InventoryLedger[]
+  reconciliation: ReconciliationRow[]
+  realDebtTotal: number
+  exceptionDebtTotal: number
+  targetedExpense: TargetedExpense
+  exceptions: AuditException[]
+}
+
 export type AggregationJob = {
   jobId: string
   status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED'

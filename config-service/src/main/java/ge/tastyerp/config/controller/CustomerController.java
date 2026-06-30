@@ -38,4 +38,13 @@ public class CustomerController {
         CustomerDto customer = customerService.getCustomerByIdentification(identification);
         return ResponseEntity.ok(ApiResponse.success(customer));
     }
+
+    @PutMapping("/{identification}/real-entity")
+    @Operation(summary = "Mark a customer as a real entity or an exception-only entity (BOR-74)")
+    public ResponseEntity<ApiResponse<CustomerDto>> setRealEntity(
+            @PathVariable String identification,
+            @RequestParam boolean isRealEntity) {
+        CustomerDto customer = customerService.setRealEntity(identification, isRealEntity);
+        return ResponseEntity.ok(ApiResponse.success(customer, "Entity classification updated"));
+    }
 }

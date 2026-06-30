@@ -387,12 +387,21 @@ export const configApi = {
   // Customers
   getCustomers: async () => {
     const response = await fetchWithAuth('/config/customers')
-    return jsonData<Array<{ identification: string; customerName: string; contactInfo?: string }>>(response)
+    return jsonData<Array<{ identification: string; customerName: string; contactInfo?: string; isRealEntity?: boolean | null }>>(response)
   },
 
   getCustomer: async (identification: string) => {
     const response = await fetchWithAuth(`/config/customers/${identification}`)
-    return jsonData<{ identification: string; customerName: string; contactInfo?: string }>(response)
+    return jsonData<{ identification: string; customerName: string; contactInfo?: string; isRealEntity?: boolean | null }>(response)
+  },
+
+  // Mark a customer as a real business partner or an exception-only entity (BOR-74)
+  setRealEntity: async (identification: string, isRealEntity: boolean) => {
+    const response = await fetchWithAuth(`/config/customers/${identification}/real-entity`, {
+      method: 'PUT',
+      params: { isRealEntity },
+    })
+    return jsonData<{ identification: string; customerName: string; isRealEntity?: boolean | null }>(response)
   },
 }
 
@@ -401,6 +410,43 @@ export const productSalesApi = {
   getProductSales: async (params: { startDate: string; endDate: string }) => {
     const response = await fetchWithAuth('/waybills/product-sales', { params })
     return jsonData<ProductSales[]>(response)
+  },
+}
+
+// Audit Control API (BOR-74)
+export const auditApi = {
+  getDashboard: async (params: { startDate: string; endDate: string; product?: string }) => {
+    const response = await fetchWithAuth('/audit-control/dashboard', { params })
+    return jsonData<import('@/types/domain').AuditDashboard>(response)
+  },
+
+  getTargetedExpense: async (params: { startDate: string; endDate: string }) => {
+    const response = await fetchWithAuth('/audit-control/targeted-expense', { params })
+    return jsonData<import('@/types/domain').TargetedExpense>(response)
+  },
+
+  getExceptions: async () => {
+    const response = await fetchWithAuth('/audit-control/exceptions')
+    return jsonData<Array<import('@/types/domain').AuditException>>(response)
+  },
+
+  saveException: async (exception: import('@/types/domain').AuditException) => {
+    const response = await fetchWithAuth('/audit-control/exceptions', {
+      method: 'POST',
+      body: JSON.stringify(exception),
+    })
+    return jsonData<import('@/types/domain').AuditException>(response)
+  },
+
+  deleteException: async (id: string) => {
+    await fetchWithAuth(`/audit-control/exceptions/${id}`, { method: 'DELETE' })
+  },
+
+  setManualPaid: async (key: string, markedPaid: boolean, note?: string) => {
+    await fetchWithAuth(`/audit-control/reconciliation/${key}/paid`, {
+      method: 'PUT',
+      params: { markedPaid, note },
+    })
   },
 }
 
