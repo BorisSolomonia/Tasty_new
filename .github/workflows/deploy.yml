@@ -228,6 +228,14 @@ jobs:
             # Export tag for docker compose
             export TAG="$DEPLOY_TAG"
 
+            # Reclaim disk BEFORE pulling to avoid "no space left on device".
+            # Currently-running deployment images are referenced by live
+            # containers, so they are preserved; only stale ones are removed.
+            echo "Disk before cleanup:"; df -h / | tail -1
+            docker container prune -f || true
+            docker image prune -af || true
+            echo "Disk after cleanup:"; df -h / | tail -1
+
             # Pull new images
             echo "Pulling images with tag: $DEPLOY_TAG"
             docker compose -f compose.production.yml pull
@@ -268,7 +276,7 @@ jobs:
 
       - name: Cleanup old images
         uses: appleboy/ssh-action@v1.0.3
-        if: success()
+        if: always()
         with:
           host: ${{ secrets.VM_HOST }}
           username: ${{ secrets.VM_SSH_USER }}
