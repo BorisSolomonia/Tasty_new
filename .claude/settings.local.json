@@ -44,7 +44,13 @@
       "Bash(ls:*)",
       "Bash(grep:*)",
       "Bash(git checkout:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(printenv)",
+      "mcp__linear__list_comments",
+      "mcp__linear__get_issue",
+      "mcp__linear__list_issue_statuses",
+      "mcp__linear__save_issue",
+      "mcp__linear__save_comment"
     ]
   }
 }
