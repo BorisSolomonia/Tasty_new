@@ -81,6 +81,17 @@ borissolomonia.com {
         }
     }
 
+    # Audit Control (BOR-74) - served by payment-service
+    handle /api/audit-control* {
+        reverse_proxy payment-service:8082 {
+            lb_try_duration 30s
+            lb_try_interval 1s
+            health_uri /actuator/health
+            health_interval 30s
+            health_timeout 5s
+        }
+    }
+
     # Health endpoint for load balancer / deployment checks
     respond /health 200
 
