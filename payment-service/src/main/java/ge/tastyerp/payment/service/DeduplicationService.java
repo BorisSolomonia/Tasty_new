@@ -94,6 +94,7 @@ public class DeduplicationService {
             // Find duplicate groups (more than 1 payment per code)
             List<DuplicateGroup> duplicateDetails = new ArrayList<>();
             List<String> allDeletedIds = new ArrayList<>();
+            Map<String, String> uniqueCodeUpdates = new LinkedHashMap<>(); // keptId -> new code
             BigDecimal totalAmountRecovered = BigDecimal.ZERO;
             int paymentsUpdated = 0;
 
@@ -127,23 +128,17 @@ public class DeduplicationService {
                             deleteIds
                     ));
 
-                    if (!dryRun) {
-                        // Delete duplicates
-                        for (String id : deleteIds) {
-                            firestore.collection(COLLECTION_PAYMENTS).document(id).delete().get();
-                            log.info("🗑️ Deleted duplicate payment: {}", id);
-                        }
-
-                        // Update kept payment's uniqueCode to new format
-                        if (!entry.getKey().equals(keep.uniqueCode)) {
-                            firestore.collection(COLLECTION_PAYMENTS).document(keep.id)
-                                    .update("uniqueCode", entry.getKey()).get();
-                            paymentsUpdated++;
-                            log.info("✏️ Updated uniqueCode for payment {}: {} -> {}",
-                                    keep.id, keep.uniqueCode, entry.getKey());
-                        }
+                    if (!dryRun && !entry.getKey().equals(keep.uniqueCode)) {
+                        uniqueCodeUpdates.put(keep.id, entry.getKey());
                     }
                 }
+            }
+
+            if (!dryRun) {
+                // BOR-75: batch all writes instead of one blocking round-trip per
+                // document (N+1). Firestore WriteBatch caps at 500 ops; use 450.
+                applyWritesBatched(allDeletedIds, uniqueCodeUpdates);
+                paymentsUpdated = uniqueCodeUpdates.size();
             }
 
             // Log summary
@@ -168,6 +163,46 @@ public class DeduplicationService {
             Thread.currentThread().interrupt();
             throw new RuntimeException("Failed to deduplicate payments", e);
         }
+    }
+
+    /**
+     * Commit deletes and uniqueCode updates in WriteBatch chunks (max 450 ops
+     * per commit, under Firestore's 500 limit). Replaces the previous
+     * one-round-trip-per-document loop (BOR-75 N+1 elimination). The write set
+     * is identical to the old implementation — only the transport is batched.
+     */
+    private void applyWritesBatched(List<String> deleteIds, Map<String, String> uniqueCodeUpdates)
+            throws InterruptedException, ExecutionException {
+        final int chunkLimit = 450;
+        WriteBatch batch = firestore.batch();
+        int ops = 0;
+        int commits = 0;
+
+        for (String id : deleteIds) {
+            batch.delete(firestore.collection(COLLECTION_PAYMENTS).document(id));
+            if (++ops >= chunkLimit) {
+                batch.commit().get();
+                commits++;
+                batch = firestore.batch();
+                ops = 0;
+            }
+        }
+        for (Map.Entry<String, String> update : uniqueCodeUpdates.entrySet()) {
+            batch.update(firestore.collection(COLLECTION_PAYMENTS).document(update.getKey()),
+                    "uniqueCode", update.getValue());
+            if (++ops >= chunkLimit) {
+                batch.commit().get();
+                commits++;
+                batch = firestore.batch();
+                ops = 0;
+            }
+        }
+        if (ops > 0) {
+            batch.commit().get();
+            commits++;
+        }
+        log.info("🗑️ Batched {} deletes + {} uniqueCode updates in {} commit(s)",
+                deleteIds.size(), uniqueCodeUpdates.size(), commits);
     }
 
     /**

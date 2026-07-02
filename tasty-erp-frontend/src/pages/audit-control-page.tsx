@@ -46,6 +46,15 @@ export function AuditControlPage() {
 
   const data = dashboardQuery.data
 
+  // Stable callback so memoized children (ReconciliationSection) don't re-render
+  // on every parent render (BOR-75 memoization).
+  const handleTogglePaid = React.useCallback(
+    (key: string, markedPaid: boolean) => paidMutation.mutate({ key, markedPaid }),
+    // mutate is stable per TanStack Query docs
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  )
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-2">
@@ -87,7 +96,7 @@ export function AuditControlPage() {
           <InventorySection ledgers={data.inventoryLedgers} />
           <ReconciliationSection
             data={data}
-            onTogglePaid={(key, markedPaid) => paidMutation.mutate({ key, markedPaid })}
+            onTogglePaid={handleTogglePaid}
             togglingKey={paidMutation.isPending ? paidMutation.variables?.key : undefined}
           />
           <TargetedExpenseCard data={data} />
@@ -237,7 +246,9 @@ const CATEGORY_LABELS: Record<string, string> = {
   OTHER: 'Other',
 }
 
-function LedgerCard({ ledger }: { ledger: InventoryLedger }) {
+// Memoized (BOR-75): filter-input keystrokes re-render the page; ledger tables
+// with hundreds of daily rows must only re-render when their ledger changes.
+const LedgerCard = React.memo(function LedgerCard({ ledger }: { ledger: InventoryLedger }) {
   const [open, setOpen] = React.useState(false)
   const isTracked = ledger.parentCategory === 'BEEF' || ledger.parentCategory === 'PORK'
   const label = CATEGORY_LABELS[ledger.parentCategory] ?? ledger.parentCategory
@@ -319,7 +330,7 @@ function LedgerCard({ ledger }: { ledger: InventoryLedger }) {
       ) : null}
     </Card>
   )
-}
+})
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
@@ -332,7 +343,8 @@ function Metric({ label, value }: { label: string; value: string }) {
 
 // ==================== Reconciliation ====================
 
-function ReconciliationSection({
+// Memoized (BOR-75): up to 200 rows; only re-renders when data/toggling change.
+const ReconciliationSection = React.memo(function ReconciliationSection({
   data,
   onTogglePaid,
   togglingKey,
@@ -416,11 +428,12 @@ function ReconciliationSection({
       </CardContent>
     </Card>
   )
-}
+})
 
 // ==================== Targeted expense ====================
 
-function TargetedExpenseCard({ data }: { data: AuditDashboard }) {
+// Memoized (BOR-75): match table re-renders only when the dashboard data changes.
+const TargetedExpenseCard = React.memo(function TargetedExpenseCard({ data }: { data: AuditDashboard }) {
   const t = data.targetedExpense
   return (
     <Card>
@@ -460,7 +473,7 @@ function TargetedExpenseCard({ data }: { data: AuditDashboard }) {
       </CardContent>
     </Card>
   )
-}
+})
 
 // ==================== Exceptions ====================
 

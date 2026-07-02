@@ -60,29 +60,42 @@ public class AuditControlService {
 
     public AuditDashboardDto getDashboard(LocalDate startDate, LocalDate endDate, String productFilter) {
         log.info("Building audit dashboard {} to {} (filter={})", startDate, endDate, productFilter);
+        long t0 = System.currentTimeMillis();
 
         List<ProductMovementDto> movements = fetchProductMovements(startDate, endDate).stream()
                 .filter(m -> m.getDate() != null
                         && !m.getDate().isBefore(startDate) && !m.getDate().isAfter(endDate))
                 .collect(Collectors.toList());
+        long tMovements = System.currentTimeMillis();
 
         // Apply user category overrides (one category per product name); fall back
         // to the auto-classification already set by waybill-service.
+        // Deliberately fetched fresh on every request (BOR-75 integrity contract):
+        // user-editable state is never cached.
         Map<String, String> overrides = fetchCategoryOverrides();
         movements.forEach(m -> m.setParentCategory(resolveCategory(m.getProductName(), m.getParentCategory(), overrides)));
 
         Map<String, Boolean> realEntityMap = fetchRealEntityMap();
+        long tConfig = System.currentTimeMillis();
 
         List<InventoryLedgerDto> ledgers = buildLedgers(movements, productFilter);
         RealTotalsDto realTotals = computeRealTotals(movements, realEntityMap);
+        long tCompute = System.currentTimeMillis();
 
         List<ReconciliationRowDto> reconciliation = buildReconciliation(realEntityMap);
         BigDecimal realDebtTotal = reconciliation.stream()
                 .map(ReconciliationRowDto::getRealDebt).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal exceptionDebtTotal = reconciliation.stream()
                 .map(ReconciliationRowDto::getExceptionDebt).reduce(BigDecimal.ZERO, BigDecimal::add);
+        long tRecon = System.currentTimeMillis();
 
         TargetedExpenseDto targetedExpense = computeTargetedExpense(startDate, endDate);
+
+        // Micro-level pipeline profile (BOR-75): stage durations in ms.
+        log.info("Dashboard pipeline: movements={}ms config={}ms ledgers+totals={}ms reconciliation={}ms targeted={}ms total={}ms ({} movements)",
+                tMovements - t0, tConfig - tMovements, tCompute - tConfig,
+                tRecon - tCompute, System.currentTimeMillis() - tRecon,
+                System.currentTimeMillis() - t0, movements.size());
 
         return AuditDashboardDto.builder()
                 .startDate(startDate)

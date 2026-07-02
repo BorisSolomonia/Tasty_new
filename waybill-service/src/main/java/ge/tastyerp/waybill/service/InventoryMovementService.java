@@ -5,9 +5,11 @@ import ge.tastyerp.common.dto.audit.ProductMovementDto;
 import ge.tastyerp.common.dto.waybill.WaybillDto;
 import ge.tastyerp.common.dto.waybill.WaybillGoodDto;
 import ge.tastyerp.common.dto.waybill.WaybillType;
+import ge.tastyerp.common.util.SimpleTtlCache;
 import ge.tastyerp.waybill.service.rsge.RsGeSoapClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -16,6 +18,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 /**
@@ -26,6 +29,21 @@ import java.util.stream.Collectors;
  * goods line is classified into a parent product category via
  * {@link ProductHierarchy} so the consumer can aggregate child products into
  * parent nodes.
+ *
+ * <h3>Performance (BOR-75)</h3>
+ * This is the single most expensive call in the audit pipeline: two chunked
+ * RS.ge list fetches plus one get_waybill per waybill (network-bound, seconds
+ * for a month range). Two optimizations, both parity-safe:
+ * <ul>
+ *   <li>SALE and PURCHASE list fetches run in parallel (they are independent
+ *       RS.ge operations; each is already internally chunk-parallel).</li>
+ *   <li>Results are cached per exact date range for a short TTL. RS.ge waybill
+ *       history is immutable-in-practice within minutes, and the dashboard +
+ *       product-catalog pages request identical ranges back-to-back — the
+ *       second call is served from memory. User-editable data (category
+ *       overrides etc.) is NOT cached anywhere; it is applied downstream on
+ *       every request.</li>
+ * </ul>
  */
 @Slf4j
 @Service
@@ -36,12 +54,44 @@ public class InventoryMovementService {
     private final RsGeSoapClient rsGeSoapClient;
     private final WaybillProcessingService waybillProcessingService;
 
-    public List<ProductMovementDto> getProductMovements(String startDate, String endDate) {
-        log.info("Building product movements for {} to {}", startDate, endDate);
+    /** TTL for the per-range movements cache (ms). Default 3 minutes. */
+    @Value("${audit.movements-cache-ttl-ms:180000}")
+    private long cacheTtlMs;
 
-        List<WaybillDto> sales = waybillService.getWaybills(null, startDate, endDate, false, WaybillType.SALE);
-        List<WaybillDto> purchases = waybillService.getWaybills(null, startDate, endDate, false, WaybillType.PURCHASE);
-        log.info("Fetched {} sale and {} purchase waybills for inventory", sales.size(), purchases.size());
+    private volatile SimpleTtlCache<String, List<ProductMovementDto>> cache;
+
+    private SimpleTtlCache<String, List<ProductMovementDto>> cache() {
+        SimpleTtlCache<String, List<ProductMovementDto>> local = cache;
+        if (local == null) {
+            synchronized (this) {
+                if (cache == null) {
+                    cache = new SimpleTtlCache<>(cacheTtlMs, 16);
+                }
+                local = cache;
+            }
+        }
+        return local;
+    }
+
+    public List<ProductMovementDto> getProductMovements(String startDate, String endDate) {
+        String key = startDate + "|" + endDate;
+        return cache().getOrCompute(key, () -> fetchProductMovements(startDate, endDate));
+    }
+
+    private List<ProductMovementDto> fetchProductMovements(String startDate, String endDate) {
+        log.info("Building product movements for {} to {} (cache miss)", startDate, endDate);
+        long t0 = System.currentTimeMillis();
+
+        // SALE and PURCHASE lists are independent RS.ge calls — fetch in parallel.
+        CompletableFuture<List<WaybillDto>> salesF = CompletableFuture.supplyAsync(
+                () -> waybillService.getWaybills(null, startDate, endDate, false, WaybillType.SALE));
+        CompletableFuture<List<WaybillDto>> purchasesF = CompletableFuture.supplyAsync(
+                () -> waybillService.getWaybills(null, startDate, endDate, false, WaybillType.PURCHASE));
+        List<WaybillDto> sales = salesF.join();
+        List<WaybillDto> purchases = purchasesF.join();
+        long tLists = System.currentTimeMillis();
+        log.info("Fetched {} sale and {} purchase waybills in {} ms",
+                sales.size(), purchases.size(), tLists - t0);
 
         // One goods lookup for both lists (keyed by waybillId).
         List<String> waybillIds = new ArrayList<>();
@@ -58,12 +108,14 @@ public class InventoryMovementService {
                 goodsByWaybillId.put(entry.getKey(), goods);
             }
         }
+        long tGoods = System.currentTimeMillis();
 
         List<ProductMovementDto> movements = new ArrayList<>();
         movements.addAll(toMovements(sales, WaybillType.SALE, goodsByWaybillId));
         movements.addAll(toMovements(purchases, WaybillType.PURCHASE, goodsByWaybillId));
 
-        log.info("Produced {} product movements", movements.size());
+        log.info("Produced {} product movements (lists {} ms, goods {} ms, total {} ms)",
+                movements.size(), tLists - t0, tGoods - tLists, System.currentTimeMillis() - t0);
         return movements;
     }
 
