@@ -73,7 +73,7 @@ public final class UniqueCodeGenerator {
         }
         return String.valueOf(amount.multiply(BigDecimal.valueOf(100))
                 .setScale(0, java.math.RoundingMode.HALF_UP)
-                .intValue());
+                .longValue());
     }
 
     /**

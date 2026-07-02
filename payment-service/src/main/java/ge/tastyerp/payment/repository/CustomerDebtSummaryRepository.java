@@ -28,6 +28,9 @@ public class CustomerDebtSummaryRepository {
 
     private static final String COLLECTION = "customer_debt_summary";
 
+    /** Firestore hard limit on operations per WriteBatch. */
+    private static final int FIRESTORE_BATCH_LIMIT = 500;
+
     private final Firestore firestore;
 
     /**
@@ -62,9 +65,14 @@ public class CustomerDebtSummaryRepository {
                     .map(this::documentToDto)
                     .toList();
         } catch (InterruptedException | ExecutionException e) {
+            // This is the active debt read path (customer analysis / audit reconciliation).
+            // Surface the failure instead of returning empty — an outage must not be
+            // reported to the user as "every customer owes 0".
             log.error("Error fetching all debt summaries: {}", e.getMessage());
-            Thread.currentThread().interrupt();
-            return Collections.emptyList();
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new RuntimeException("Failed to fetch customer debt summaries", e);
         }
     }
 
@@ -92,13 +100,22 @@ public class CustomerDebtSummaryRepository {
     }
 
     /**
-     * Batch save multiple debt summaries.
+     * Batch save multiple debt summaries, chunked to Firestore's 500-operation batch limit.
      */
     public void saveAll(List<CustomerDebtSummaryDto> summaries) {
         if (summaries == null || summaries.isEmpty()) {
             return;
         }
 
+        for (int i = 0; i < summaries.size(); i += FIRESTORE_BATCH_LIMIT) {
+            List<CustomerDebtSummaryDto> chunk =
+                    summaries.subList(i, Math.min(i + FIRESTORE_BATCH_LIMIT, summaries.size()));
+            commitBatch(chunk);
+        }
+        log.info("Batch saved {} debt summaries", summaries.size());
+    }
+
+    private void commitBatch(List<CustomerDebtSummaryDto> summaries) {
         try {
             WriteBatch batch = firestore.batch();
             com.google.cloud.Timestamp now = com.google.cloud.Timestamp.now();
@@ -113,7 +130,6 @@ public class CustomerDebtSummaryRepository {
             }
 
             batch.commit().get();
-            log.info("Batch saved {} debt summaries", summaries.size());
         } catch (InterruptedException | ExecutionException e) {
             log.error("Error batch saving debt summaries: {}", e.getMessage());
             Thread.currentThread().interrupt();

@@ -174,12 +174,12 @@ public class DeduplicationService {
      * Build uniqueCode format (with balance).
      */
     private String buildUniqueCode(PaymentRecord record) {
-        int amountCents = record.amount.multiply(BigDecimal.valueOf(100))
+        long amountCents = record.amount.multiply(BigDecimal.valueOf(100))
                 .setScale(0, java.math.RoundingMode.HALF_UP)
-                .intValue();
-        int balanceCents = record.balance.multiply(BigDecimal.valueOf(100))
+                .longValue();
+        long balanceCents = record.balance.multiply(BigDecimal.valueOf(100))
                 .setScale(0, java.math.RoundingMode.HALF_UP)
-                .intValue();
+                .longValue();
         return String.format("%s|%d|%s|%d", record.date.toString(), amountCents, record.customerId.trim(), balanceCents);
     }
 

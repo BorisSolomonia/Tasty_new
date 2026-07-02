@@ -4,6 +4,7 @@ import ge.tastyerp.common.dto.audit.*;
 import ge.tastyerp.common.dto.payment.CustomerAnalysisDto;
 import ge.tastyerp.common.dto.payment.PaymentDto;
 import ge.tastyerp.common.dto.waybill.WaybillType;
+import ge.tastyerp.common.exception.ExternalServiceException;
 import ge.tastyerp.common.util.TinValidator;
 import ge.tastyerp.payment.repository.AuditExceptionRepository;
 import ge.tastyerp.payment.repository.PaymentOverrideRepository;
@@ -321,8 +322,7 @@ public class AuditControlService {
             List<Map<String, Object>> data = (List<Map<String, Object>>) response.get("data");
             return data.stream().map(this::toMovement).collect(Collectors.toList());
         } catch (Exception e) {
-            log.error("Error fetching product movements: {}", e.getMessage(), e);
-            return Collections.emptyList();
+            throw new ExternalServiceException("waybill-service", "fetch product movements", e);
         }
     }
 
@@ -356,7 +356,7 @@ public class AuditControlService {
                 }
             }
         } catch (Exception e) {
-            log.error("Error fetching customer entity classification: {}", e.getMessage());
+            throw new ExternalServiceException("config-service", "fetch customer entity classification", e);
         }
         return map;
     }

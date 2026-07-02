@@ -5,6 +5,7 @@ import ge.tastyerp.common.dto.payment.CustomerAnalysisDto;
 import ge.tastyerp.common.dto.payment.PaymentDto;
 import ge.tastyerp.common.dto.payment.PaymentSummaryDto;
 import ge.tastyerp.common.dto.payment.WaybillSummaryDto;
+import ge.tastyerp.common.exception.ExternalServiceException;
 import ge.tastyerp.payment.repository.CustomerDebtSummaryRepository;
 import ge.tastyerp.payment.repository.ManualCashPaymentRepository;
 import ge.tastyerp.payment.repository.PaymentRepository;
@@ -197,7 +198,7 @@ public class CustomerAnalysisService {
                         ));
             }
         } catch (Exception e) {
-            log.error("Error fetching initial debts: {}", e.getMessage(), e);
+            throw new ExternalServiceException("config-service", "fetch initial debts", e);
         }
         return Collections.emptyMap();
     }
@@ -264,7 +265,7 @@ public class CustomerAnalysisService {
                 return salesMap;
             }
         } catch (Exception e) {
-            log.error("Error fetching customer sales: {}", e.getMessage(), e);
+            throw new ExternalServiceException("waybill-service", "fetch customer sales", e);
         }
         return Collections.emptyMap();
     }

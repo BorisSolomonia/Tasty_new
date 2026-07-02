@@ -31,6 +31,9 @@ public class PaymentRepository {
     private static final String COLLECTION_PAYMENTS = "payments";
     private static final String COLLECTION_MANUAL = "manualCashPayments";
 
+    /** Firestore hard limit on operations per WriteBatch. */
+    private static final int FIRESTORE_BATCH_LIMIT = 500;
+
     private final Firestore firestore;
 
     // ==================== BANK PAYMENTS ====================
@@ -53,9 +56,7 @@ public class PaymentRepository {
                     .map(this::documentToPaymentDto)
                     .toList();
         } catch (InterruptedException | ExecutionException e) {
-            log.error("Error fetching all payments: {}", e.getMessage());
-            Thread.currentThread().interrupt();
-            return Collections.emptyList();
+            throw readFailure("fetch all payments", e);
         }
     }
 
@@ -70,9 +71,7 @@ public class PaymentRepository {
             }
             return Optional.of(documentToPaymentDto(doc));
         } catch (InterruptedException | ExecutionException e) {
-            log.error("Error fetching payment {}: {}", id, e.getMessage());
-            Thread.currentThread().interrupt();
-            return Optional.empty();
+            throw readFailure("fetch payment " + id, e);
         }
     }
 
@@ -88,9 +87,7 @@ public class PaymentRepository {
                     .map(this::documentToPaymentDto)
                     .toList();
         } catch (InterruptedException | ExecutionException e) {
-            log.error("Error fetching payments for customer {}: {}", customerId, e.getMessage());
-            Thread.currentThread().interrupt();
-            return Collections.emptyList();
+            throw readFailure("fetch payments for customer " + customerId, e);
         }
     }
 
@@ -109,9 +106,7 @@ public class PaymentRepository {
                     .map(this::documentToPaymentDto)
                     .toList();
         } catch (InterruptedException | ExecutionException e) {
-            log.error("Error fetching payments after {}: {}", date, e.getMessage());
-            Thread.currentThread().interrupt();
-            return Collections.emptyList();
+            throw readFailure("fetch payments after " + date, e);
         }
     }
 
@@ -131,9 +126,7 @@ public class PaymentRepository {
                     .map(this::documentToPaymentDto)
                     .toList();
         } catch (InterruptedException | ExecutionException e) {
-            log.error("Error fetching payments for customer {} after {}: {}", customerId, date, e.getMessage());
-            Thread.currentThread().interrupt();
-            return Collections.emptyList();
+            throw readFailure("fetch payments for customer " + customerId + " after " + date, e);
         }
     }
 
@@ -149,9 +142,7 @@ public class PaymentRepository {
                     .map(this::documentToPaymentDto)
                     .toList();
         } catch (InterruptedException | ExecutionException e) {
-            log.error("Error fetching manual payments for customer {}: {}", customerId, e.getMessage());
-            Thread.currentThread().interrupt();
-            return Collections.emptyList();
+            throw readFailure("fetch manual payments for customer " + customerId, e);
         }
     }
 
@@ -176,8 +167,7 @@ public class PaymentRepository {
                 }
             }
         } catch (InterruptedException | ExecutionException e) {
-            log.error("Error fetching unique codes: {}", e.getMessage());
-            Thread.currentThread().interrupt();
+            throw readFailure("fetch unique codes", e);
         }
         return codes;
     }
@@ -206,8 +196,7 @@ public class PaymentRepository {
                 }
             }
         } catch (InterruptedException | ExecutionException e) {
-            log.error("Error fetching unique codes (after cutoff): {}", e.getMessage());
-            Thread.currentThread().interrupt();
+            throw readFailure("fetch unique codes (after cutoff)", e);
         }
         return codes;
     }
@@ -228,9 +217,7 @@ public class PaymentRepository {
                     })
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
         } catch (InterruptedException | ExecutionException e) {
-            log.error("Error summing payments for source {}: {}", source, e.getMessage());
-            Thread.currentThread().interrupt();
-            return BigDecimal.ZERO;
+            throw readFailure("sum payments for source " + source, e);
         }
     }
 
@@ -257,17 +244,24 @@ public class PaymentRepository {
     }
 
     /**
-     * Save bank payments in a single Firestore batch.
+     * Save bank payments, chunked to Firestore's 500-operation batch limit.
      */
     public void saveAll(List<PaymentDto> payments) {
         if (payments == null || payments.isEmpty()) {
             return;
         }
 
+        for (int i = 0; i < payments.size(); i += FIRESTORE_BATCH_LIMIT) {
+            List<PaymentDto> chunk = payments.subList(i, Math.min(i + FIRESTORE_BATCH_LIMIT, payments.size()));
+            commitBatch(chunk);
+        }
+        log.debug("Batch saved {} payments", payments.size());
+    }
+
+    private void commitBatch(List<PaymentDto> payments) {
         try {
             WriteBatch batch = buildBatch(payments);
             batch.commit().get();
-            log.debug("Batch saved {} payments", payments.size());
         } catch (InterruptedException e) {
             String rootMessage = resolveRootCauseMessage(e);
             log.warn("Batch save interrupted (count={}): {}. Retrying once.", payments.size(), rootMessage);
@@ -342,9 +336,7 @@ public class PaymentRepository {
                     .map(this::documentToPaymentDto)
                     .toList();
         } catch (InterruptedException | ExecutionException e) {
-            log.error("Error fetching manual payments: {}", e.getMessage());
-            Thread.currentThread().interrupt();
-            return Collections.emptyList();
+            throw readFailure("fetch manual payments", e);
         }
     }
 
@@ -359,9 +351,7 @@ public class PaymentRepository {
             }
             return Optional.of(documentToPaymentDto(doc));
         } catch (InterruptedException | ExecutionException e) {
-            log.error("Error fetching manual payment {}: {}", id, e.getMessage());
-            Thread.currentThread().interrupt();
-            return Optional.empty();
+            throw readFailure("fetch manual payment " + id, e);
         }
     }
 
@@ -457,9 +447,7 @@ public class PaymentRepository {
                     .map(this::documentToPaymentDto)
                     .toList();
         } catch (InterruptedException | ExecutionException e) {
-            log.error("Error fetching payments from {}: {}", collection, e.getMessage());
-            Thread.currentThread().interrupt();
-            return Collections.emptyList();
+            throw readFailure("fetch payments from " + collection, e);
         }
     }
 
@@ -557,8 +545,8 @@ public class PaymentRepository {
                 return null;
             }
 
-            int amountCents = (int) Math.round(amount * 100);
-            int balanceCents = balance != null ? (int) Math.round(balance * 100) : 0;
+            long amountCents = Math.round(amount * 100);
+            long balanceCents = balance != null ? Math.round(balance * 100) : 0L;
             return String.format("%s|%d|%s|%d", dateStr, amountCents, customerId.trim(), balanceCents);
         } catch (Exception e) {
             log.debug("Could not reconstruct uniqueCode for doc {}: {}", doc.getId(), e.getMessage());
@@ -712,5 +700,18 @@ public class PaymentRepository {
         }
         String message = e.getMessage();
         return message != null ? message : e.getClass().getSimpleName();
+    }
+
+    /**
+     * Surface a Firestore read failure instead of masking it as "no data".
+     * A financial system must never report an outage as empty results, which
+     * would render (for example) as "this customer has paid nothing".
+     */
+    private RuntimeException readFailure(String context, Exception e) {
+        log.error("Error {}: {}", context, e.getMessage());
+        if (e instanceof InterruptedException) {
+            Thread.currentThread().interrupt();
+        }
+        return new RuntimeException("Failed to " + context, e);
     }
 }

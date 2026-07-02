@@ -57,9 +57,7 @@ public class ManualCashPaymentRepository {
             return payments;
 
         } catch (InterruptedException | ExecutionException e) {
-            log.error("Error fetching manual cash payments after {}: {}", date, e.getMessage());
-            Thread.currentThread().interrupt();
-            return Collections.emptyList();
+            throw readFailure("fetch manual cash payments after " + date, e);
         }
     }
 
@@ -85,9 +83,7 @@ public class ManualCashPaymentRepository {
             return payments;
 
         } catch (InterruptedException | ExecutionException e) {
-            log.error("Error fetching manual cash payments for customer {} after {}: {}", customerId, date, e.getMessage());
-            Thread.currentThread().interrupt();
-            return Collections.emptyList();
+            throw readFailure("fetch manual cash payments for customer " + customerId + " after " + date, e);
         }
     }
 
@@ -139,14 +135,28 @@ public class ManualCashPaymentRepository {
                 ? LocalDate.ofInstant(paymentDate.toDate().toInstant(), ZoneId.systemDefault())
                 : null;
 
+        Double amount = document.getDouble("amount");
+
         return PaymentDto.builder()
                 .id(document.getId())
                 .customerId(document.getString("customerId"))
                 .customerName(document.getString("customerName"))
-                .amount(BigDecimal.valueOf(document.getDouble("amount")))
+                .amount(amount != null ? BigDecimal.valueOf(amount) : BigDecimal.ZERO)
                 .paymentDate(date)
                 .description(document.getString("description"))
                 .source("manual-cash")
                 .build();
+    }
+
+    /**
+     * Surface a Firestore read failure instead of masking it as "no data".
+     * Cash payments feed customer debt totals; an outage must not read as zero.
+     */
+    private RuntimeException readFailure(String context, Exception e) {
+        log.error("Error {}: {}", context, e.getMessage());
+        if (e instanceof InterruptedException) {
+            Thread.currentThread().interrupt();
+        }
+        return new RuntimeException("Failed to " + context, e);
     }
 }

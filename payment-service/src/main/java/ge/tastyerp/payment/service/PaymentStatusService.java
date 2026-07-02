@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,9 +43,12 @@ public class PaymentStatusService {
     public Map<String, PaymentStatusDto> calculatePaymentStatus() {
         log.info("Calculating payment status for all customers");
 
-        // Fetch all payments after cutoff (bank + manual cash)
+        // Fetch all payments after cutoff (bank + manual cash).
+        // Manual cash lives in a separate collection; a cash-only customer must not
+        // be flagged red just because they have no bank payments.
         LocalDate cutoffDate = LocalDate.parse(paymentCutoffDate);
-        List<PaymentDto> allPayments = paymentRepository.findAll();
+        List<PaymentDto> allPayments = new ArrayList<>(paymentRepository.findAll());
+        allPayments.addAll(paymentRepository.findAllManualPayments());
 
         // Filter payments after cutoff
         List<PaymentDto> relevantPayments = allPayments.stream()

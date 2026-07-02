@@ -13,6 +13,7 @@ import ge.tastyerp.payment.service.PaymentStatusService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -27,6 +28,7 @@ import java.util.Map;
  * IMPORTANT: Controllers contain NO business logic.
  * All logic is delegated to PaymentService and ExcelProcessingService.
  */
+@Slf4j
 @RestController
 @RequestMapping("/api/payments")
 @RequiredArgsConstructor
@@ -191,7 +193,9 @@ public class PaymentController {
             try {
                 jobId = asyncAggregationService.triggerAggregation("deduplication");
             } catch (Exception e) {
-                // Don't fail if aggregation trigger fails
+                // Don't fail the dedup response if the aggregation trigger fails,
+                // but do record why so a stale debt summary can be explained.
+                log.warn("Aggregation trigger after deduplication failed: {}", e.getMessage(), e);
             }
         }
 

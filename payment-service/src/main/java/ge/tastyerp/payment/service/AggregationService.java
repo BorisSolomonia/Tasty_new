@@ -180,7 +180,7 @@ public class AggregationService {
 
         // Get starting debt
         BigDecimal startingDebt = initialDebt != null ? initialDebt.getDebt() : BigDecimal.ZERO;
-        LocalDate startingDebtDate = initialDebt != null ? LocalDate.parse(initialDebt.getDate()) : null;
+        LocalDate startingDebtDate = parseStartingDebtDate(customerId, initialDebt);
 
         // Calculate current debt
         // Formula: currentDebt = startingDebt + totalSales - totalPayments - totalCashPayments
@@ -336,6 +336,23 @@ public class AggregationService {
         return cashPayments.stream()
                 .filter(c -> c.getPaymentDate() != null && !c.getPaymentDate().isBefore(cutoff))
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * Parse the starting-debt date defensively.
+     * A single malformed date must not abort the whole aggregation job.
+     */
+    private LocalDate parseStartingDebtDate(String customerId, InitialDebtDto initialDebt) {
+        if (initialDebt == null || initialDebt.getDate() == null || initialDebt.getDate().isBlank()) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(initialDebt.getDate());
+        } catch (Exception e) {
+            log.warn("Invalid starting-debt date '{}' for customer {}; leaving startingDebtDate null",
+                    initialDebt.getDate(), customerId);
+            return null;
+        }
     }
 
     /**
