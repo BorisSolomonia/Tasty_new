@@ -1,7 +1,6 @@
 import * as React from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { startOfMonth, endOfMonth } from 'date-fns'
-import * as XLSX from 'xlsx'
 import { AlertTriangle, Download, RefreshCw, ShieldCheck } from 'lucide-react'
 import { auditApi } from '@/lib/api-client'
 import type { AuditDashboard, InventoryLedger } from '@/types/domain'
@@ -544,7 +543,10 @@ function LoadingState() {
 
 // ==================== Export ====================
 
-function exportLedgerWorkbook(data: AuditDashboard) {
+async function exportLedgerWorkbook(data: AuditDashboard) {
+  // xlsx (~130 KB gzipped) is loaded only when the user actually exports,
+  // keeping it out of the initial page chunk.
+  const XLSX = await import('xlsx')
   const rows: Array<Record<string, string | number>> = []
   for (const ledger of data.inventoryLedgers) {
     for (const r of ledger.dailyRows) {

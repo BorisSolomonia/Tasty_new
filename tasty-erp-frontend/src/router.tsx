@@ -1,52 +1,48 @@
-import { createRootRoute, createRoute, createRouter, Outlet } from '@tanstack/react-router'
+import { createRootRoute, createRoute, createRouter, lazyRouteComponent, Outlet } from '@tanstack/react-router'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClient } from '@/lib/query-client'
 import { AppShell } from '@/components/layout/app-shell'
-import { DashboardPage } from '@/pages/dashboard-page'
-import { WaybillsPage } from '@/pages/waybills-page'
-import { PaymentsPage } from '@/pages/payments-page'
-import { SettingsPage } from '@/pages/settings-page'
-import { ProductSalesPage } from '@/pages/product-sales-page'
-import { AuditControlPage } from '@/pages/audit-control-page'
 
 const rootRoute = createRootRoute({
   component: RootLayout,
 })
 
+// Each page is code-split into its own chunk, fetched on navigation
+// (or prefetched on link-hover via defaultPreload: 'intent').
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
-  component: DashboardPage,
+  component: lazyRouteComponent(() => import('@/pages/dashboard-page'), 'DashboardPage'),
 })
 
 const waybillsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'waybills',
-  component: WaybillsPage,
+  component: lazyRouteComponent(() => import('@/pages/waybills-page'), 'WaybillsPage'),
 })
 
 const paymentsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'payments',
-  component: PaymentsPage,
+  component: lazyRouteComponent(() => import('@/pages/payments-page'), 'PaymentsPage'),
 })
 
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'settings',
-  component: SettingsPage,
+  component: lazyRouteComponent(() => import('@/pages/settings-page'), 'SettingsPage'),
 })
 
 const productSalesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'product-sales',
-  component: ProductSalesPage,
+  component: lazyRouteComponent(() => import('@/pages/product-sales-page'), 'ProductSalesPage'),
 })
 
 const auditControlRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'audit-control',
-  component: AuditControlPage,
+  component: lazyRouteComponent(() => import('@/pages/audit-control-page'), 'AuditControlPage'),
 })
 
 const routeTree = rootRoute.addChildren([indexRoute, waybillsRoute, paymentsRoute, settingsRoute, productSalesRoute, auditControlRoute])

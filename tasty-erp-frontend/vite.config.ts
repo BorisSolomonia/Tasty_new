@@ -46,7 +46,7 @@ export default defineConfig(({ mode }) => {
     },
     build: {
       outDir: 'dist',
-      sourcemap: true,
+      sourcemap: false,
       rollupOptions: {
         output: {
           manualChunks: {
@@ -58,7 +58,6 @@ export default defineConfig(({ mode }) => {
               '@radix-ui/react-select',
               '@radix-ui/react-toast',
             ],
-            'charts': ['recharts'],
             'excel': ['xlsx'],
           },
         },
