@@ -117,21 +117,36 @@ public class AuditControlService {
     }
 
     private InventoryLedgerDto buildLedgerForCategory(String category, List<ProductMovementDto> movements) {
+        // OTHER / Unclassified carries inventory forward without a write-off ceiling.
+        boolean applyWriteOff = ProductHierarchy.appliesWriteOff(category);
+
         // Sum purchased/sold kg per active day.
         Map<LocalDate, BigDecimal> purchasedByDay = new HashMap<>();
         Map<LocalDate, BigDecimal> soldByDay = new HashMap<>();
         Set<String> childProducts = new LinkedHashSet<>();
+        int excludedNonKgLines = 0;
 
         for (ProductMovementDto m : movements) {
+            if (m.getProductName() != null) {
+                childProducts.add(m.getProductName());
+            }
+            // Inventory conservation is kg-based: skip lines measured in pieces /
+            // other units so they don't corrupt the running balance.
+            if (!isKilogram(m.getUnit())) {
+                excludedNonKgLines++;
+                continue;
+            }
             BigDecimal qty = m.getQuantityKg() != null ? m.getQuantityKg() : BigDecimal.ZERO;
             if (m.getType() == WaybillType.PURCHASE) {
                 purchasedByDay.merge(m.getDate(), qty, BigDecimal::add);
             } else {
                 soldByDay.merge(m.getDate(), qty, BigDecimal::add);
             }
-            if (m.getProductName() != null) {
-                childProducts.add(m.getProductName());
-            }
+        }
+
+        if (excludedNonKgLines > 0) {
+            log.info("Category {}: excluded {} non-kg line(s) from inventory conservation",
+                    category, excludedNonKgLines);
         }
 
         List<LocalDate> activeDays = new ArrayList<>(
@@ -148,7 +163,9 @@ public class AuditControlService {
             BigDecimal purchased = purchasedByDay.getOrDefault(day, BigDecimal.ZERO);
             BigDecimal sold = soldByDay.getOrDefault(day, BigDecimal.ZERO);
 
-            DailyLedgerRowDto row = writeOffCalculator.computeDay(day, running, purchased, sold);
+            DailyLedgerRowDto row = applyWriteOff
+                    ? writeOffCalculator.computeDay(day, running, purchased, sold)
+                    : writeOffCalculator.passthroughDay(day, running, purchased, sold);
             rows.add(row);
 
             running = row.getEndingInventoryKg();
@@ -333,6 +350,7 @@ public class AuditControlService {
                 .productName((String) m.get("productName"))
                 .parentCategory((String) m.get("parentCategory"))
                 .quantityKg(toBigDecimal(m.get("quantityKg")))
+                .unit((String) m.get("unit"))
                 .amount(toBigDecimal(m.get("amount")))
                 .waybillId((String) m.get("waybillId"))
                 .counterpartyId((String) m.get("counterpartyId"))
@@ -369,5 +387,34 @@ public class AuditControlService {
     private BigDecimal toBigDecimal(Object value) {
         if (value == null) return BigDecimal.ZERO;
         return new BigDecimal(String.valueOf(value));
+    }
+
+    /** Unit substrings (lowercased) that mark a line as NOT measured in kilograms. */
+    private static final List<String> NON_KG_UNITS = List.of(
+            "ცალ",      // ცალი – pieces
+            "piece", "pcs",
+            "ლიტრ", "liter", "litre",  // volume
+            "შეკვრ",    // bundle / pack
+            "კომპლ", "pack", "set",
+            "წყვილ",    // pair
+            "გრამ", "gram"             // grams – mass but not kg; excluded to avoid unit mismatch
+    );
+
+    /**
+     * Whether a goods line's unit is kilograms (the basis for inventory
+     * conservation). Blank/unknown units default to kg because meat lines are
+     * overwhelmingly kg and RS.ge's kg encoding is not guaranteed; only units
+     * explicitly recognised as pieces/volume/etc. are excluded.
+     */
+    private boolean isKilogram(String unit) {
+        if (unit == null || unit.isBlank()) return true;
+        String u = unit.trim().toLowerCase();
+        if (u.contains("კგ") || u.contains("kg") || u.contains("კილ") || u.contains("kilo")) {
+            return true;
+        }
+        for (String nonKg : NON_KG_UNITS) {
+            if (u.contains(nonKg)) return false;
+        }
+        return true;
     }
 }

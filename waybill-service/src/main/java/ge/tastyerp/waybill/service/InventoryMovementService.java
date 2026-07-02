@@ -98,6 +98,7 @@ public class InventoryMovementService {
                         .productName(good.getName())
                         .parentCategory(ProductHierarchy.classify(good.getName()))
                         .quantityKg(qty)
+                        .unit(good.getUnit())
                         .amount(good.getTotalPrice() != null ? good.getTotalPrice() : BigDecimal.ZERO)
                         .waybillId(waybill.getWaybillId())
                         .counterpartyId(counterpartyId)

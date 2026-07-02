@@ -1,5 +1,6 @@
 package ge.tastyerp.waybill.service;
 
+import ge.tastyerp.common.dto.audit.ProductHierarchy;
 import ge.tastyerp.common.dto.waybill.ProductSalesDto;
 import ge.tastyerp.common.dto.waybill.WaybillDto;
 import ge.tastyerp.common.dto.waybill.WaybillGoodDto;
@@ -15,21 +16,15 @@ import java.util.stream.Collectors;
 
 /**
  * Aggregates waybill goods data into beef/pork kg totals per customer.
+ *
+ * Categorization is delegated to {@link ProductHierarchy}, the single source of
+ * truth shared with the Audit Control inventory engine, so both pages split
+ * products by type identically.
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class ProductSalesService {
-
-    private static final Set<String> BEEF_PRODUCTS = Set.of(
-            "საქონლის ხორცი (ძვლიანი)", "საქონლის ხორცი (რბილი)",
-            "საქონლის ხორცი (სუკი)", "ხბოს ხორცი"
-    );
-
-    private static final Set<String> PORK_PRODUCTS = Set.of(
-            "ღორის ხორცი (რბილი)", "ღორის ხორცი",
-            "ღორის ხორცი (კისერი)", "ღორის ხორცი (ფერდი)"
-    );
 
     private final WaybillService waybillService;
     private final RsGeSoapClient rsGeSoapClient;
@@ -99,10 +94,11 @@ public class ProductSalesService {
                     BigDecimal qty = good.getQuantity();
                     if (name == null || qty == null) continue;
 
-                    if (isBeef(name)) {
+                    String category = ProductHierarchy.classify(name);
+                    if (ProductHierarchy.BEEF.equals(category)) {
                         beefKg = beefKg.add(qty);
                         beefProductsFound.add(name);
-                    } else if (isPork(name)) {
+                    } else if (ProductHierarchy.PORK.equals(category)) {
                         porkKg = porkKg.add(qty);
                         porkProductsFound.add(name);
                     }
@@ -123,21 +119,5 @@ public class ProductSalesService {
         result.sort(Comparator.comparing(ProductSalesDto::getCustomerName));
         log.info("Product sales analysis complete: {} customers", result.size());
         return result;
-    }
-
-    private boolean isBeef(String name) {
-        if (BEEF_PRODUCTS.contains(name)) return true;
-        for (String beefProduct : BEEF_PRODUCTS) {
-            if (name.contains(beefProduct)) return true;
-        }
-        return false;
-    }
-
-    private boolean isPork(String name) {
-        if (PORK_PRODUCTS.contains(name)) return true;
-        for (String porkProduct : PORK_PRODUCTS) {
-            if (name.contains(porkProduct)) return true;
-        }
-        return false;
     }
 }

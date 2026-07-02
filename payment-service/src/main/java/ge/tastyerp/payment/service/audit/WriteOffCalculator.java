@@ -92,6 +92,33 @@ public class WriteOffCalculator {
                 .build();
     }
 
+    /**
+     * Compute one ledger day for a passthrough (non-write-off) category such as
+     * OTHER / Unclassified. Inventory simply carries forward:
+     * {@code ending = starting + purchased - sold}, with no write-off ceiling and
+     * no overage flag — these products must never affect the Beef/Pork math.
+     */
+    public DailyLedgerRowDto passthroughDay(LocalDate date,
+                                            BigDecimal starting,
+                                            BigDecimal purchased,
+                                            BigDecimal sold) {
+        BigDecimal start = nz(starting);
+        BigDecimal buy = nz(purchased);
+        BigDecimal sell = nz(sold);
+        BigDecimal ending = start.add(buy).subtract(sell);
+
+        return DailyLedgerRowDto.builder()
+                .date(date)
+                .startingInventoryKg(scale(start))
+                .purchasedKg(scale(buy))
+                .soldKg(scale(sell))
+                .writeOffKg(scale(BigDecimal.ZERO))
+                .endingInventoryKg(scale(ending))
+                .writeOffPercent(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP))
+                .overage(false)
+                .build();
+    }
+
     private static BigDecimal nz(BigDecimal v) {
         return v != null ? v : BigDecimal.ZERO;
     }

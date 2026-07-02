@@ -230,17 +230,32 @@ function InventorySection({ ledgers }: { ledgers: InventoryLedger[] }) {
   )
 }
 
+const CATEGORY_LABELS: Record<string, string> = {
+  BEEF: '🐄 Beef',
+  PORK: '🐷 Pork',
+  OTHER: 'Unclassified',
+}
+
 function LedgerCard({ ledger }: { ledger: InventoryLedger }) {
   const [open, setOpen] = React.useState(false)
+  const isTracked = ledger.parentCategory === 'BEEF' || ledger.parentCategory === 'PORK'
+  const label = CATEGORY_LABELS[ledger.parentCategory] ?? ledger.parentCategory
   return (
     <Card>
       <CardHeader className="p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <CardTitle className="text-base">{ledger.parentCategory}</CardTitle>
+            <CardTitle className="text-base">
+              {label}
+              {!isTracked ? (
+                <span className="ml-2 rounded bg-muted px-2 py-0.5 align-middle text-xs font-normal text-muted-foreground">
+                  passthrough · no write-off
+                </span>
+              ) : null}
+            </CardTitle>
             <CardDescription>
               {ledger.childProducts.length} child product(s) aggregated
-              {ledger.overageDays > 0 ? (
+              {isTracked && ledger.overageDays > 0 ? (
                 <span className="ml-2 inline-flex items-center gap-1 text-destructive">
                   <AlertTriangle className="h-3 w-3" /> {ledger.overageDays} overage day(s)
                 </span>

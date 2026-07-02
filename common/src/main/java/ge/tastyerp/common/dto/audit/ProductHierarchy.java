@@ -6,20 +6,30 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Product parent/child hierarchy for the Audit Control module (BOR-74, Phase 1).
+ * Single source of truth for meat product categorization, shared by the
+ * product-sales report (waybill-service {@code ProductSalesService}) and the
+ * Audit Control inventory engine (BOR-74).
  *
- * The legacy system only knew flat Georgian product names (see
- * {@code ProductSalesService}). This class introduces an explicit
- * Parent -> Child relationship so that child products (e.g. "Beef front",
- * "Beef back") aggregate into a single parent node ("Beef") for unified
- * inventory counting.
+ * <h3>Matching model (the "benchmark" borrowed from product-sales)</h3>
+ * Classification is deterministic and auditable: a raw RS.ge goods name is
+ * assigned to a parent category if it <b>contains</b> (case-insensitive) any of
+ * that category's keyword roots. There is no heuristic / fuzzy matching.
  *
- * It is intentionally code-driven (not a DB collection) because the meat
- * product taxonomy is small, stable and shared by multiple services. Adding a
- * new child only requires extending the keyword list below.
+ * <h3>Root-substring keywords</h3>
+ * Every beef cut RS.ge emits ("საქონლის ხორცი (ძვლიანი)", "(რბილი)", "(სუკი)" …)
+ * is prefixed by the root <b>"საქონლის ხორცი"</b>. Matching on the root therefore
+ * catches all cuts <i>and</i> the plain / carcass names that appear on PURCHASE
+ * (stock-in) waybills — which the old per-cut list silently dropped into OTHER,
+ * corrupting the inventory conservation math. Pork works the same way via the
+ * "ღორის ხორცი" root. Veal ("ხბოს ხორცი") is a separate beef root.
  *
- * NOTE: Origin tracking (Georgian vs Imported) is deliberately NOT modelled
- * here — that concept was removed from scope per BOR-74.
+ * <h3>Categories</h3>
+ * Only {@link #BEEF} and {@link #PORK} are tracked product categories. Everything
+ * else is {@link #OTHER} ("Unclassified") — surfaced for visibility but never
+ * subjected to the write-off algorithm (see {@link #appliesWriteOff}).
+ *
+ * Intentionally code-driven: the taxonomy is small, stable, and shared. Adding a
+ * new root only means extending a list below.
  */
 public final class ProductHierarchy {
 
@@ -29,38 +39,33 @@ public final class ProductHierarchy {
     public static final String OTHER = "OTHER";
 
     /**
-     * Parent category -> list of known child product names (canonical Georgian
-     * names). Matching is done by case-insensitive "contains", so partial /
-     * suffixed variants returned by RS.ge still classify correctly.
+     * Tracked parent category -> keyword roots (canonical Georgian substrings).
+     * Matching is case-insensitive "contains", so cuts, plain names and carcass
+     * variants all classify to the same parent.
      */
-    private static final Map<String, List<String>> CHILDREN = new LinkedHashMap<>();
+    private static final Map<String, List<String>> ROOTS = new LinkedHashMap<>();
 
     static {
-        CHILDREN.put(BEEF, List.of(
-                "საქონლის ხორცი (ძვლიანი)",
-                "საქონლის ხორცი (რბილი)",
-                "საქონლის ხორცი (სუკი)",
-                "ხბოს ხორცი"
+        ROOTS.put(BEEF, List.of(
+                "საქონლის ხორცი",   // root: plain beef + all cuts (ძვლიანი/რბილი/სუკი) + carcass variants
+                "ხბოს ხორცი"         // veal
         ));
-        CHILDREN.put(PORK, List.of(
-                "ღორის ხორცი (რბილი)",
-                "ღორის ხორცი (კისერი)",
-                "ღორის ხორცი (ფერდი)",
-                "ღორის ხორცი"
+        ROOTS.put(PORK, List.of(
+                "ღორის ხორცი"        // root: plain pork + all cuts (რბილი/კისერი/ფერდი)
         ));
     }
 
     private ProductHierarchy() {
     }
 
-    /** All parent category codes (excluding the OTHER bucket). */
+    /** All tracked parent category codes (excludes the OTHER / Unclassified bucket). */
     public static List<String> parents() {
-        return new ArrayList<>(CHILDREN.keySet());
+        return new ArrayList<>(ROOTS.keySet());
     }
 
-    /** Known child product names for a parent, or empty list. */
+    /** Keyword roots for a parent, or empty list. */
     public static List<String> childrenOf(String parent) {
-        return new ArrayList<>(CHILDREN.getOrDefault(parent, List.of()));
+        return new ArrayList<>(ROOTS.getOrDefault(parent, List.of()));
     }
 
     /**
@@ -73,14 +78,30 @@ public final class ProductHierarchy {
         if (productName == null || productName.isBlank()) {
             return OTHER;
         }
-        String normalized = productName.trim();
-        for (Map.Entry<String, List<String>> entry : CHILDREN.entrySet()) {
-            for (String child : entry.getValue()) {
-                if (normalized.equals(child) || normalized.contains(child)) {
+        String normalized = productName.trim().toLowerCase();
+        for (Map.Entry<String, List<String>> entry : ROOTS.entrySet()) {
+            for (String root : entry.getValue()) {
+                if (normalized.contains(root.toLowerCase())) {
                     return entry.getKey();
                 }
             }
         }
         return OTHER;
+    }
+
+    /**
+     * Whether a category participates in the daily write-off / overage algorithm.
+     * Only real tracked meat categories do; OTHER (Unclassified) is a passthrough
+     * inventory with no write-off ceiling.
+     */
+    public static boolean appliesWriteOff(String category) {
+        return ROOTS.containsKey(category);
+    }
+
+    /** Human-facing category label (OTHER surfaces as "Unclassified"). */
+    public static String displayName(String category) {
+        if (BEEF.equals(category)) return "Beef";
+        if (PORK.equals(category)) return "Pork";
+        return "Unclassified";
     }
 }

@@ -31,6 +31,7 @@ public class ProductMovementDto {
     private String parentCategory;   // BEEF / PORK / OTHER (see ProductHierarchy)
 
     private BigDecimal quantityKg;
+    private String unit;              // raw RS.ge unit of measure (e.g. კგ, ცალი); used to guard kg-only inventory math
     private BigDecimal amount;        // line total price (GEL)
 
     private String waybillId;
