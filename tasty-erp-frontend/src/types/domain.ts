@@ -201,6 +201,24 @@ export type AuditDashboard = {
   exceptions: AuditException[]
 }
 
+export type ProductCategoryCode = 'BEEF' | 'PORK' | 'FAT' | 'OTHER'
+
+export type ProductCategory = {
+  name: string
+  category: ProductCategoryCode
+}
+
+export type ProductCatalogRow = {
+  name: string
+  category: ProductCategoryCode
+  overridden: boolean
+}
+
+export type ProductCatalog = {
+  purchased: ProductCatalogRow[]
+  sold: ProductCatalogRow[]
+}
+
 export type AggregationJob = {
   jobId: string
   status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED'

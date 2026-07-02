@@ -233,7 +233,8 @@ function InventorySection({ ledgers }: { ledgers: InventoryLedger[] }) {
 const CATEGORY_LABELS: Record<string, string> = {
   BEEF: '🐄 Beef',
   PORK: '🐷 Pork',
-  OTHER: 'Unclassified',
+  FAT: 'Fat',
+  OTHER: 'Other',
 }
 
 function LedgerCard({ ledger }: { ledger: InventoryLedger }) {

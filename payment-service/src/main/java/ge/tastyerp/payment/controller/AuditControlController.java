@@ -3,6 +3,7 @@ package ge.tastyerp.payment.controller;
 import ge.tastyerp.common.dto.ApiResponse;
 import ge.tastyerp.common.dto.audit.AuditDashboardDto;
 import ge.tastyerp.common.dto.audit.AuditExceptionDto;
+import ge.tastyerp.common.dto.audit.ProductCatalogDto;
 import ge.tastyerp.common.dto.audit.TargetedExpenseDto;
 import ge.tastyerp.payment.service.audit.AuditControlService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -37,6 +38,15 @@ public class AuditControlController {
             @RequestParam(required = false) String product) {
         AuditDashboardDto dashboard = auditControlService.getDashboard(startDate, endDate, product);
         return ResponseEntity.ok(ApiResponse.success(dashboard));
+    }
+
+    @GetMapping("/product-catalog")
+    @Operation(summary = "List unique purchased/sold product names with their resolved category")
+    public ResponseEntity<ApiResponse<ProductCatalogDto>> getProductCatalog(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
+        ProductCatalogDto catalog = auditControlService.getProductCatalog(startDate, endDate);
+        return ResponseEntity.ok(ApiResponse.success(catalog));
     }
 
     @GetMapping("/targeted-expense")

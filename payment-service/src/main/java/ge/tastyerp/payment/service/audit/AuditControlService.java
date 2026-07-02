@@ -66,6 +66,11 @@ public class AuditControlService {
                         && !m.getDate().isBefore(startDate) && !m.getDate().isAfter(endDate))
                 .collect(Collectors.toList());
 
+        // Apply user category overrides (one category per product name); fall back
+        // to the auto-classification already set by waybill-service.
+        Map<String, String> overrides = fetchCategoryOverrides();
+        movements.forEach(m -> m.setParentCategory(resolveCategory(m.getProductName(), m.getParentCategory(), overrides)));
+
         Map<String, Boolean> realEntityMap = fetchRealEntityMap();
 
         List<InventoryLedgerDto> ledgers = buildLedgers(movements, productFilter);
@@ -91,6 +96,59 @@ public class AuditControlService {
                 .targetedExpense(targetedExpense)
                 .exceptions(exceptionRepository.findAll())
                 .build();
+    }
+
+    // ==================== PRODUCT CATALOG ====================
+
+    /**
+     * Distinct product names seen on waybills in the range, split into purchased
+     * and sold lists, each with its resolved category (override else auto). Powers
+     * the Product Categories management page.
+     */
+    public ProductCatalogDto getProductCatalog(LocalDate startDate, LocalDate endDate) {
+        List<ProductMovementDto> movements = fetchProductMovements(startDate, endDate).stream()
+                .filter(m -> m.getDate() != null
+                        && !m.getDate().isBefore(startDate) && !m.getDate().isAfter(endDate))
+                .collect(Collectors.toList());
+
+        Map<String, String> overrides = fetchCategoryOverrides();
+
+        return ProductCatalogDto.builder()
+                .purchased(distinctRows(movements, WaybillType.PURCHASE, overrides))
+                .sold(distinctRows(movements, WaybillType.SALE, overrides))
+                .build();
+    }
+
+    private List<ProductCatalogDto.Row> distinctRows(List<ProductMovementDto> movements,
+                                                     WaybillType type,
+                                                     Map<String, String> overrides) {
+        Map<String, ProductCatalogDto.Row> byName = new LinkedHashMap<>();
+        for (ProductMovementDto m : movements) {
+            if (m.getType() != type || m.getProductName() == null) continue;
+            String name = m.getProductName().trim();
+            if (name.isEmpty() || byName.containsKey(name)) continue;
+            String key = overrideKey(name);
+            boolean overridden = overrides.containsKey(key);
+            String category = overridden ? overrides.get(key) : m.getParentCategory();
+            byName.put(name, ProductCatalogDto.Row.builder()
+                    .name(name)
+                    .category(category)
+                    .overridden(overridden)
+                    .build());
+        }
+        List<ProductCatalogDto.Row> rows = new ArrayList<>(byName.values());
+        rows.sort(Comparator.comparing(ProductCatalogDto.Row::getName));
+        return rows;
+    }
+
+    private String resolveCategory(String productName, String autoCategory, Map<String, String> overrides) {
+        if (productName == null) return autoCategory;
+        return overrides.getOrDefault(overrideKey(productName), autoCategory);
+    }
+
+    /** Case-insensitive, trimmed key used to match a product name to its override. */
+    private String overrideKey(String name) {
+        return name == null ? "" : name.trim().toLowerCase();
     }
 
     // ==================== INVENTORY LEDGER ====================
@@ -375,6 +433,30 @@ public class AuditControlService {
             }
         } catch (Exception e) {
             throw new ExternalServiceException("config-service", "fetch customer entity classification", e);
+        }
+        return map;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, String> fetchCategoryOverrides() {
+        Map<String, String> map = new HashMap<>();
+        try {
+            String url = configServiceUrl + "/api/config/product-categories";
+            Map<String, Object> response = internalRestTemplate.getForObject(url, Map.class);
+            if (response != null && response.get("data") instanceof List) {
+                List<Map<String, Object>> items = (List<Map<String, Object>>) response.get("data");
+                for (Map<String, Object> c : items) {
+                    Object name = c.get("name");
+                    Object category = c.get("category");
+                    if (name != null && category != null) {
+                        map.put(overrideKey(String.valueOf(name)), String.valueOf(category));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // Overrides are optional refinement; if config is unreachable, fall back
+            // to auto-classification rather than failing the whole dashboard.
+            log.warn("Could not fetch product category overrides, using auto-classification: {}", e.getMessage());
         }
         return map;
     }

@@ -1,10 +1,10 @@
 import * as React from 'react'
 import { Link, useRouterState } from '@tanstack/react-router'
-import { LayoutDashboard, FileText, CreditCard, Settings, Package, ShieldCheck } from 'lucide-react'
+import { LayoutDashboard, FileText, CreditCard, Settings, Package, ShieldCheck, Tags } from 'lucide-react'
 import { cn } from '@/lib/cn'
 
 type NavItem = {
-  to: '/' | '/waybills' | '/payments' | '/settings' | '/product-sales' | '/audit-control'
+  to: '/' | '/waybills' | '/payments' | '/settings' | '/product-sales' | '/audit-control' | '/product-categories'
   label: string
   Icon: React.ComponentType<{ className?: string }>
 }
@@ -14,6 +14,7 @@ const navItems: NavItem[] = [
   { to: '/waybills', label: 'Waybills', Icon: FileText },
   { to: '/payments', label: 'Payments', Icon: CreditCard },
   { to: '/audit-control', label: 'Audit Control', Icon: ShieldCheck },
+  { to: '/product-categories', label: 'Categories', Icon: Tags },
   { to: '/settings', label: 'Settings', Icon: Settings },
   { to: '/product-sales', label: 'გაყიდვები', Icon: Package },
 ]
@@ -87,7 +88,7 @@ function MobileBottomNav() {
       )}
       aria-label="Primary"
     >
-      <div className="grid h-16 grid-cols-6">
+      <div className="grid h-16 grid-cols-7">
         {navItems.map((item) => (
           <BottomNavLink key={item.to} item={item} />
         ))}

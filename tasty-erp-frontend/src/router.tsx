@@ -45,7 +45,13 @@ const auditControlRoute = createRoute({
   component: lazyRouteComponent(() => import('@/pages/audit-control-page'), 'AuditControlPage'),
 })
 
-const routeTree = rootRoute.addChildren([indexRoute, waybillsRoute, paymentsRoute, settingsRoute, productSalesRoute, auditControlRoute])
+const productCategoriesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'product-categories',
+  component: lazyRouteComponent(() => import('@/pages/product-categories-page'), 'ProductCategoriesPage'),
+})
+
+const routeTree = rootRoute.addChildren([indexRoute, waybillsRoute, paymentsRoute, settingsRoute, productSalesRoute, auditControlRoute, productCategoriesRoute])
 
 export const router = createRouter({
   routeTree,

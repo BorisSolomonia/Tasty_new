@@ -403,6 +403,24 @@ export const configApi = {
     })
     return jsonData<{ identification: string; customerName: string; isRealEntity?: boolean | null }>(response)
   },
+
+  // Product category overrides (editable product -> category mapping for audit)
+  getProductCategories: async () => {
+    const response = await fetchWithAuth('/config/product-categories')
+    return jsonData<Array<import('@/types/domain').ProductCategory>>(response)
+  },
+
+  setProductCategory: async (entry: import('@/types/domain').ProductCategory) => {
+    const response = await fetchWithAuth('/config/product-categories', {
+      method: 'PUT',
+      body: JSON.stringify(entry),
+    })
+    return jsonData<import('@/types/domain').ProductCategory>(response)
+  },
+
+  deleteProductCategory: async (name: string) => {
+    await fetchWithAuth('/config/product-categories', { method: 'DELETE', params: { name } })
+  },
 }
 
 // Product Sales API
@@ -418,6 +436,11 @@ export const auditApi = {
   getDashboard: async (params: { startDate: string; endDate: string; product?: string }) => {
     const response = await fetchWithAuth('/audit-control/dashboard', { params })
     return jsonData<import('@/types/domain').AuditDashboard>(response)
+  },
+
+  getProductCatalog: async (params: { startDate: string; endDate: string }) => {
+    const response = await fetchWithAuth('/audit-control/product-catalog', { params })
+    return jsonData<import('@/types/domain').ProductCatalog>(response)
   },
 
   getTargetedExpense: async (params: { startDate: string; endDate: string }) => {

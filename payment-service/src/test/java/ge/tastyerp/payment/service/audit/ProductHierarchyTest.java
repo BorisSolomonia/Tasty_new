@@ -48,19 +48,30 @@ class ProductHierarchyTest {
     }
 
     @Test
+    @DisplayName("Fat (ქონი/ცხიმი) classifies as FAT, incl. beef/pork fat")
+    void fat() {
+        assertEquals(ProductHierarchy.FAT, ProductHierarchy.classify("ქონი"));
+        assertEquals(ProductHierarchy.FAT, ProductHierarchy.classify("ღორის ქონი"));
+        assertEquals(ProductHierarchy.FAT, ProductHierarchy.classify("საქონლის ქონი"));
+        assertEquals(ProductHierarchy.FAT, ProductHierarchy.classify("ცხიმი"));
+        // "საქონლის ხორცი" must NOT be caught by the fat root despite containing "ქონ"
+        assertEquals(ProductHierarchy.BEEF, ProductHierarchy.classify("საქონლის ხორცი"));
+    }
+
+    @Test
     @DisplayName("Non-meat and null classify as OTHER")
     void other() {
-        assertEquals(ProductHierarchy.OTHER, ProductHierarchy.classify("ქონი"));
         assertEquals(ProductHierarchy.OTHER, ProductHierarchy.classify("შესაფუთი მასალა"));
         assertEquals(ProductHierarchy.OTHER, ProductHierarchy.classify(null));
         assertEquals(ProductHierarchy.OTHER, ProductHierarchy.classify("   "));
     }
 
     @Test
-    @DisplayName("Only BEEF and PORK participate in write-off")
+    @DisplayName("Only BEEF and PORK participate in write-off; FAT and OTHER are passthrough")
     void writeOffApplicability() {
         assertTrue(ProductHierarchy.appliesWriteOff(ProductHierarchy.BEEF));
         assertTrue(ProductHierarchy.appliesWriteOff(ProductHierarchy.PORK));
+        assertFalse(ProductHierarchy.appliesWriteOff(ProductHierarchy.FAT));
         assertFalse(ProductHierarchy.appliesWriteOff(ProductHierarchy.OTHER));
     }
 }

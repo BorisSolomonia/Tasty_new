@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Single source of truth for meat product categorization, shared by the
@@ -36,12 +37,23 @@ public final class ProductHierarchy {
     /** Parent category codes. */
     public static final String BEEF = "BEEF";
     public static final String PORK = "PORK";
+    public static final String FAT = "FAT";
     public static final String OTHER = "OTHER";
 
     /**
-     * Tracked parent category -> keyword roots (canonical Georgian substrings).
-     * Matching is case-insensitive "contains", so cuts, plain names and carcass
-     * variants all classify to the same parent.
+     * Categories that participate in the daily posib write-off (28% of purchased).
+     * Only the primary meats — Fat and Other are passthrough (own ledger, no write-off).
+     */
+    private static final Set<String> WRITE_OFF_CATEGORIES = Set.of(BEEF, PORK);
+
+    /** Every selectable category, in display order (BEEF, PORK, FAT, OTHER). */
+    private static final List<String> ALL_CATEGORIES = List.of(BEEF, PORK, FAT, OTHER);
+
+    /**
+     * Auto-classification roots: category -> keyword roots (canonical Georgian
+     * substrings). Matching is case-insensitive "contains", so cuts, plain names
+     * and carcass variants all classify to the same parent. These seed the
+     * editable per-product overrides; a user may reassign any product afterwards.
      */
     private static final Map<String, List<String>> ROOTS = new LinkedHashMap<>();
 
@@ -53,14 +65,28 @@ public final class ProductHierarchy {
         ROOTS.put(PORK, List.of(
                 "ღორის ხორცი"        // root: plain pork + all cuts (რბილი/კისერი/ფერდი)
         ));
+        ROOTS.put(FAT, List.of(
+                "ქონი",              // tallow / fat (ღორის ქონი, საქონლის ქონი) — safe: not a substring of საქონლის
+                "ცხიმ"               // ცხიმი – fat
+        ));
     }
 
     private ProductHierarchy() {
     }
 
-    /** All tracked parent category codes (excludes the OTHER / Unclassified bucket). */
+    /** All tracked parent category codes with auto-classification roots. */
     public static List<String> parents() {
         return new ArrayList<>(ROOTS.keySet());
+    }
+
+    /** Every selectable category code (for validation / UI dropdowns). */
+    public static List<String> allCategories() {
+        return new ArrayList<>(ALL_CATEGORIES);
+    }
+
+    /** Whether a category code is one of the selectable categories. */
+    public static boolean isValidCategory(String category) {
+        return category != null && ALL_CATEGORIES.contains(category);
     }
 
     /** Keyword roots for a parent, or empty list. */
@@ -90,18 +116,19 @@ public final class ProductHierarchy {
     }
 
     /**
-     * Whether a category participates in the daily write-off / overage algorithm.
-     * Only real tracked meat categories do; OTHER (Unclassified) is a passthrough
-     * inventory with no write-off ceiling.
+     * Whether a category participates in the daily posib write-off (28% of
+     * purchased). Only BEEF and PORK do; FAT and OTHER are passthrough
+     * inventories with no write-off.
      */
     public static boolean appliesWriteOff(String category) {
-        return ROOTS.containsKey(category);
+        return WRITE_OFF_CATEGORIES.contains(category);
     }
 
-    /** Human-facing category label (OTHER surfaces as "Unclassified"). */
+    /** Human-facing category label. */
     public static String displayName(String category) {
         if (BEEF.equals(category)) return "Beef";
         if (PORK.equals(category)) return "Pork";
-        return "Unclassified";
+        if (FAT.equals(category)) return "Fat";
+        return "Other";
     }
 }
