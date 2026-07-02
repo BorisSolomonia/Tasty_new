@@ -11,37 +11,30 @@ import java.time.LocalDate;
  * Daily yield / write-off algorithm for the Audit Control inventory ledger
  * (BOR-74 Phase 2).
  *
- * <h3>Model</h3>
- * For a meat processor, bone/trim loss during processing is a legally allowed
- * write-off capped at 30% of the inventory processed that day. The algorithm
- * <b>maximizes</b> the compliant write-off (targets the 29%–30% band) and flags
- * days where the legal allowance cannot be fully absorbed — an "overage".
+ * <h3>Model — "possible write-off"</h3>
+ * For a meat processor, bone/trim loss during processing is expressed as a flat
+ * <b>28% of the stock received that day</b> ("posib Write-off" = possible
+ * write-off). This is the write-off that drives the running inventory.
  *
  * <pre>
- *   base               = startingInventory + purchased        (available before sales)
- *   ceiling            = base * 0.30                          (legal maximum)
- *   remainingAfterSale = base - sold
- *   writeOff           = clamp(ceiling, 0, max(0, remainingAfterSale))
- *   ending             = base - sold - writeOff
- *   overage            = sold > base  ||  ceiling > remainingAfterSale
+ *   base            = startingInventory + purchased          (available before sales)
+ *   posibWriteOff   = purchased * 0.28                        (possible write-off)
+ *   ending          = base - sold - posibWriteOff
+ *   overage         = sold > base  ||  ending < 0
  * </pre>
  *
  * <ul>
- *   <li>When there is room, the full 30% is taken (≥ 29% target satisfied).</li>
  *   <li>{@code sold > base} means more was sold than was physically available —
  *       a documentation inconsistency, flagged.</li>
- *   <li>{@code ceiling > remainingAfterSale} means the day's sales consumed so
- *       much stock that the full legal write-off could not be applied — the loss
- *       exceeds the compliant range, flagged.</li>
+ *   <li>{@code ending < 0} means sales plus the 28% possible write-off exceeded
+ *       the available stock — the day cannot absorb the loss, flagged.</li>
  * </ul>
  */
 @Component
 public class WriteOffCalculator {
 
-    /** Legal ceiling: write-off may not exceed 30% of the day's processing base. */
-    public static final BigDecimal CEILING_RATE = new BigDecimal("0.30");
-    /** Lower bound of the target band the algorithm tries to reach. */
-    public static final BigDecimal TARGET_RATE = new BigDecimal("0.29");
+    /** Possible write-off: 28% of the stock received (purchased) that day. */
+    public static final BigDecimal POSSIBLE_WRITE_OFF_RATE = new BigDecimal("0.28");
 
     private static final int SCALE = 3;
 
@@ -62,22 +55,15 @@ public class WriteOffCalculator {
         BigDecimal sell = nz(sold);
 
         BigDecimal base = start.add(buy);
-        BigDecimal ceiling = base.multiply(CEILING_RATE);
-        BigDecimal remainingAfterSale = base.subtract(sell);
+        BigDecimal posibWriteOff = buy.multiply(POSSIBLE_WRITE_OFF_RATE);
 
-        BigDecimal writeOff = ceiling;
-        BigDecimal room = remainingAfterSale.max(BigDecimal.ZERO);
-        if (writeOff.compareTo(room) > 0) {
-            writeOff = room;
-        }
+        BigDecimal ending = base.subtract(sell).subtract(posibWriteOff);
 
         boolean overage = sell.compareTo(base) > 0
-                || ceiling.compareTo(remainingAfterSale) > 0;
-
-        BigDecimal ending = base.subtract(sell).subtract(writeOff);
+                || ending.compareTo(BigDecimal.ZERO) < 0;
 
         BigDecimal writeOffPercent = base.compareTo(BigDecimal.ZERO) > 0
-                ? writeOff.divide(base, 6, RoundingMode.HALF_UP).multiply(new BigDecimal("100"))
+                ? posibWriteOff.divide(base, 6, RoundingMode.HALF_UP).multiply(new BigDecimal("100"))
                 : BigDecimal.ZERO;
 
         return DailyLedgerRowDto.builder()
@@ -85,7 +71,7 @@ public class WriteOffCalculator {
                 .startingInventoryKg(scale(start))
                 .purchasedKg(scale(buy))
                 .soldKg(scale(sell))
-                .writeOffKg(scale(writeOff))
+                .writeOffKg(scale(posibWriteOff))
                 .endingInventoryKg(scale(ending))
                 .writeOffPercent(writeOffPercent.setScale(2, RoundingMode.HALF_UP))
                 .overage(overage)

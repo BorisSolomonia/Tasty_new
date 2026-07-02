@@ -270,7 +270,7 @@ function LedgerCard({ ledger }: { ledger: InventoryLedger }) {
           <Metric label="Opening kg" value={formatNumber(ledger.openingStockKg)} />
           <Metric label="Purchased kg" value={formatNumber(ledger.totalPurchasedKg)} />
           <Metric label="Sold kg" value={formatNumber(ledger.totalSoldKg)} />
-          <Metric label="Write-off kg" value={formatNumber(ledger.totalWriteOffKg)} />
+          <Metric label="posib Write-off kg" value={formatNumber(ledger.totalWriteOffKg)} />
           <Metric label="On hand kg" value={formatNumber(ledger.endingInventoryKg)} />
         </div>
       </CardHeader>
@@ -284,7 +284,7 @@ function LedgerCard({ ledger }: { ledger: InventoryLedger }) {
                   <Th right>Start</Th>
                   <Th right>Purchased</Th>
                   <Th right>Sold</Th>
-                  <Th right>Write-off</Th>
+                  <Th right>posib Write-off</Th>
                   <Th right>%</Th>
                   <Th right>Ending</Th>
                   <Th>Flag</Th>
@@ -572,8 +572,8 @@ async function exportLedgerWorkbook(data: AuditDashboard) {
         'Purchased (kg)': r.purchasedKg,
         'Sold (kg)': r.soldKg,
         'Ending Inventory (kg)': r.endingInventoryKg,
-        'Write-off (kg)': r.writeOffKg,
-        'Write-off (%)': r.writeOffPercent,
+        'posib Write-off (kg)': r.writeOffKg,
+        'posib Write-off (%)': r.writeOffPercent,
         Overage: r.overage ? 'YES' : '',
       })
     }
