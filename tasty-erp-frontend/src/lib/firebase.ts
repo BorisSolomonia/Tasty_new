@@ -1,6 +1,5 @@
 import { initializeApp } from 'firebase/app'
 import { getAuth, connectAuthEmulator } from 'firebase/auth'
-import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -14,14 +13,15 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig)
 
-// Initialize services
+// Initialize services.
+// NOTE: only Auth is used client-side — all data access goes through the REST
+// API. The Firestore web SDK was removed from this bundle (~35 KB gz saved);
+// if client-side Firestore is ever needed, lazy-import 'firebase/firestore'.
 export const auth = getAuth(app)
-export const db = getFirestore(app)
 
 // Connect to emulators in development
 if (import.meta.env.DEV && import.meta.env.VITE_USE_EMULATORS === 'true') {
   connectAuthEmulator(auth, 'http://localhost:9099')
-  connectFirestoreEmulator(db, 'localhost', 8080)
 }
 
 export default app
