@@ -221,30 +221,39 @@ jobs:
             chmod 600 .env
             chmod 644 secrets/firebase-sa.json
 
-            # Ensure network and volumes exist
-            docker network create web 2>/dev/null || true
-            docker volume create caddy_data 2>/dev/null || true
-
             # Export tag for docker compose
             export TAG="$DEPLOY_TAG"
 
-            # Reclaim disk BEFORE pulling to avoid "no space left on device".
-            # Currently-running deployment images are referenced by live
-            # containers, so they are preserved; only stale ones are removed.
+            # --- Reclaim disk BEFORE pulling new layers ----------------------
+            # Deliberate order for disk-constrained VMs: stop the running stack
+            # first so its containers, images and networks become reclaimable,
+            # prune aggressively, THEN pull — maximizing free space before the
+            # new image layers are downloaded.
             echo "Disk before cleanup:"; df -h / | tail -1
-            docker container prune -f || true
-            docker image prune -af || true
-            echo "Disk after cleanup:"; df -h / | tail -1
 
-            # Pull new images
-            echo "Pulling images with tag: $DEPLOY_TAG"
-            docker compose -f compose.production.yml pull
-
-            # Stop current deployment gracefully
+            # 1. Stop the currently running deployment.
+            #    '|| true' so a fresh VM (nothing running yet) never fails the job.
             echo "Stopping current deployment..."
             docker compose -f compose.production.yml down --timeout 30 || true
 
-            # Start new deployment
+            # 2. Aggressive prune: unused containers, images, networks & build cache.
+            #    --volumes is intentionally OMITTED so Caddy's TLS certs in the
+            #    caddy_data volume survive (otherwise they'd be re-issued on every
+            #    deploy and hit Let's Encrypt rate limits).
+            docker system prune -af || true
+
+            echo "Disk after cleanup:"; df -h / | tail -1
+
+            # Re-create the external network/volume the prune may have removed
+            # (both are 'external: true' in compose, so 'up' expects them present).
+            docker network create web 2>/dev/null || true
+            docker volume create caddy_data 2>/dev/null || true
+
+            # 3. Pull new images now that space has been reclaimed.
+            echo "Pulling images with tag: $DEPLOY_TAG"
+            docker compose -f compose.production.yml pull
+
+            # 4. Start the new deployment.
             echo "Starting new deployment..."
             docker compose -f compose.production.yml up -d
 
@@ -273,29 +282,6 @@ jobs:
             echo "=== Deployment successful! ==="
             echo "Deployed tag: $DEPLOY_TAG"
             docker compose -f compose.production.yml ps
-
-      - name: Cleanup old images
-        uses: appleboy/ssh-action@v1.0.3
-        if: always()
-        with:
-          host: ${{ secrets.VM_HOST }}
-          username: ${{ secrets.VM_SSH_USER }}
-          key: ${{ secrets.VM_SSH_KEY }}
-          script: |
-            # Remove dangling images
-            docker image prune -f
-
-            # Keep only last 3 versions of each image
-            for img in tasty-erp-waybill tasty-erp-payment tasty-erp-config tasty-erp-frontend; do
-              docker images "${{ env.IMAGE_PREFIX }}/$img" --format "{{.ID}} {{.Tag}}" | \
-                grep -v latest | \
-                tail -n +4 | \
-                awk '{print $1}' | \
-                xargs -r docker rmi || true
-            done
-
-            echo "Disk usage after cleanup:"
-            df -h /
 
       - name: Notify on failure
         if: failure()
