@@ -43,7 +43,7 @@ public class ExcelProcessingService {
 
     private final PaymentRepository paymentRepository;
     private final PaymentReconciliationService reconciliationService;
-    private final AsyncAggregationService asyncAggregationService;
+    private final DebtService debtService;
 
     private static final List<String> BANK_SOURCES = List.of("tbc", "bog");
     @Value("${business.payment-cutoff-date:2025-04-29}")
@@ -361,25 +361,10 @@ public class ExcelProcessingService {
             pendingSaves.clear();
         }
 
-        String aggregationJobId = null;
-
-        // Trigger ASYNC aggregation after successful Excel upload
-        // This updates customer_debt_summary collection with latest data
-        // Processing happens in background to prevent HTTP timeout errors
+        // Debt is computed on demand (DebtService), not from a stored summary.
+        // Drop its cached snapshot so the next read reflects the new payments.
         if (!validateOnly && !addedTransactions.isEmpty()) {
-            log.info("[{}] 🚀 Triggering ASYNC customer debt aggregation after Excel upload", requestId);
-            try {
-                aggregationJobId = asyncAggregationService.triggerAggregation("excel_upload");
-                log.info("[{}] ✅ Async aggregation job created: {}. Upload response will be sent immediately.",
-                        requestId, aggregationJobId);
-            } catch (Exception e) {
-                log.error("[{}] ⚠️ Failed to trigger async aggregation: {}. Excel upload succeeded, but aggregation must be triggered manually.",
-                        requestId, e.getMessage(), e);
-                // Don't fail the Excel upload if aggregation trigger fails
-                // Aggregation can be triggered manually later
-            }
-        } else if (!validateOnly && addedTransactions.isEmpty()) {
-            log.info("[{}] ℹ️ No new payments added, skipping aggregation", requestId);
+            debtService.invalidate();
         }
 
         // Calculate existing app total for this bank
@@ -411,12 +396,9 @@ public class ExcelProcessingService {
             message += String.format(" %d payments before %s (historical).", beforeWindowCount, paymentCutoffDate);
         }
 
-        log.info("[{}] 📦 Building response with aggregation job ID: {}", requestId, aggregationJobId);
-
         return ExcelUploadResponse.builder()
                 .success(true)
                 .message(message)
-                .aggregationJobId(aggregationJobId)  // NEW: Include job ID for frontend polling
                 .excelTotalAll(AmountUtils.round(excelTotalAll))
                 .excelTotalWindow(AmountUtils.round(excelTotalWindow))
                 .analyzedTotal(AmountUtils.round(analyzedTotal))

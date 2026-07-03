@@ -94,13 +94,6 @@ public class WaybillController {
         return ResponseEntity.ok(ApiResponse.success(waybills));
     }
 
-    @GetMapping("/stats")
-    @Operation(summary = "Get waybill statistics")
-    public ResponseEntity<ApiResponse<Object>> getWaybillStats() {
-        Object stats = waybillService.getWaybillStatistics();
-        return ResponseEntity.ok(ApiResponse.success(stats));
-    }
-
     @GetMapping("/product-sales")
     @Operation(summary = "Get product sales aggregated by beef/pork categories per customer")
     public ResponseEntity<ApiResponse<List<ProductSalesDto>>> getProductSales(
@@ -134,29 +127,4 @@ public class WaybillController {
         return ResponseEntity.ok(ApiResponse.success(summary));
     }
 
-    @GetMapping("/customer/{customerId}")
-    @Operation(summary = "Get all waybills for a customer")
-    public ResponseEntity<ApiResponse<List<WaybillDto>>> getCustomerWaybills(
-            @PathVariable String customerId,
-            @RequestParam(required = false, defaultValue = "true") Boolean afterCutoffOnly) {
-
-        List<WaybillDto> waybills = waybillService.getWaybillsByCustomer(customerId, afterCutoffOnly);
-        return ResponseEntity.ok(ApiResponse.success(waybills));
-    }
-
-    @GetMapping("/customer/{customerId}/total")
-    @Operation(summary = "Get total sales amount for a customer")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> getCustomerTotal(
-            @PathVariable String customerId) {
-
-        Map<String, Object> total = waybillService.getCustomerTotalSales(customerId);
-        return ResponseEntity.ok(ApiResponse.success(total));
-    }
-
-    @GetMapping("/{id}")
-    @Operation(summary = "Get waybill by ID")
-    public ResponseEntity<ApiResponse<WaybillDto>> getWaybillById(@PathVariable String id) {
-        WaybillDto waybill = waybillService.getWaybillById(id);
-        return ResponseEntity.ok(ApiResponse.success(waybill));
-    }
 }

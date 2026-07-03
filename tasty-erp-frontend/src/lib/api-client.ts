@@ -110,23 +110,6 @@ export const waybillsApi = {
     return jsonData<WaybillFetchResponse>(response)
   },
 
-  getById: async (id: string) => {
-    const response = await fetchWithAuth(`/waybills/${id}`)
-    return jsonData<Waybill>(response)
-  },
-
-  getByCustomer: async (customerId: string, afterCutoffOnly: boolean = true) => {
-    const response = await fetchWithAuth(`/waybills/customer/${customerId}`, {
-      params: { afterCutoffOnly },
-    })
-    return jsonData<Waybill[]>(response)
-  },
-
-  getStats: async () => {
-    const response = await fetchWithAuth('/waybills/stats')
-    return jsonData<Record<string, unknown>>(response)
-  },
-
   getVatSummary: async (params: { startDate: string; endDate: string; afterCutoffOnly?: boolean }) => {
     const response = await fetchWithAuth('/waybills/vat', { params })
     return jsonData<WaybillVatSummary>(response)
@@ -211,17 +194,6 @@ export const paymentsApi = {
     return jsonData<Record<string, unknown>>(response)
   },
 
-  // Customer Analysis
-  getCustomerAnalysis: async () => {
-    const response = await fetchWithAuth('/payments/analysis')
-    return jsonData<Array<import('@/types/domain').CustomerAnalysis>>(response)
-  },
-
-  getCustomerAnalysisById: async (customerId: string) => {
-    const response = await fetchWithAuth(`/payments/analysis/${customerId}`)
-    return jsonData<import('@/types/domain').CustomerAnalysis>(response)
-  },
-
   // Manual Cash Payments
   getAllManualCashPayments: async () => {
     const response = await fetchWithAuth('/payments/manual')
@@ -260,18 +232,6 @@ export const paymentsApi = {
 
   deleteManualCashPayment: async (id: string) => {
     await fetchWithAuth(`/payments/manual/${id}`, { method: 'DELETE' })
-  },
-
-  // Aggregation Job Status
-  getAggregationJobStatus: async (jobId: string) => {
-    const response = await fetchWithAuth(`/payments/aggregation/job/${jobId}`)
-    return jsonData<import('@/types/domain').AggregationJob>(response)
-  },
-
-  // Manual sync: re-aggregate customer debts from fresh RS.ge data
-  syncDebts: async () => {
-    const response = await fetchWithAuth('/payments/sync', { method: 'POST' })
-    return jsonData<{ jobId: string }>(response)
   },
 
   // Delete all bank payments (TBC/BOG)

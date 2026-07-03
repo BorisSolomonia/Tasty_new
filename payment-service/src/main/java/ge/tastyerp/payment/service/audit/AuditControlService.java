@@ -24,8 +24,8 @@ import java.util.stream.Collectors;
 /**
  * Orchestrates the Audit Control dashboard (BOR-74).
  *
- * Pulls product movements from waybill-service, customer debt analysis from
- * {@link CustomerAnalysisService}, payments from Firestore and customer entity
+ * Pulls product movements from waybill-service, authoritative customer debt from
+ * {@link DebtService}, payments from Firestore and customer entity
  * classification from config-service, then assembles:
  *  - the date-range inventory ledger (with the daily write-off algorithm),
  *  - "Real Total Sales/Purchases" filtered by is_real_entity,

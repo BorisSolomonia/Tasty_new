@@ -58,38 +58,6 @@ export type InitialDebt = {
   date: string
 }
 
-export type CustomerAnalysis = {
-  customerId: string
-  customerName: string
-  totalSales: number
-  totalPayments: number
-  totalCashPayments: number
-  currentDebt: number
-  startingDebt: number
-  startingDebtDate: string | null
-  waybillCount: number
-  paymentCount: number
-  waybills: Waybill[]
-  payments: Array<{
-    customerId: string
-    payment: number
-    date: string
-    isAfterCutoff: boolean
-    source: string
-    uniqueCode?: string
-    paymentId?: string
-    description?: string
-    balance?: number
-  }>
-  cashPayments: Array<{
-    customerId: string
-    payment: number
-    date: string
-    isAfterCutoff: boolean
-    source: string
-    paymentId?: string
-  }>
-}
 
 export type ProductSales = {
   customerId: string
@@ -240,22 +208,3 @@ export type ProductCatalog = {
   sold: ProductCatalogRow[]
 }
 
-export type AggregationJob = {
-  jobId: string
-  status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED'
-  source: string
-  currentStep?: string
-  progressPercent?: number
-  createdAt: string
-  startedAt?: string
-  completedAt?: string
-  result?: {
-    totalCustomers: number
-    newCount: number
-    updatedCount: number
-    unchangedCount: number
-    durationMs: number
-  }
-  errorMessage?: string
-  errorDetails?: string
-}

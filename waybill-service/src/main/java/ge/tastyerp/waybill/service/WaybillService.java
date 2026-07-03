@@ -9,7 +9,6 @@ import ge.tastyerp.common.dto.waybill.WaybillVatSummaryDto;
 import ge.tastyerp.common.exception.ResourceNotFoundException;
 import ge.tastyerp.common.util.DateUtils;
 import ge.tastyerp.common.util.TinValidator;
-import ge.tastyerp.waybill.repository.WaybillRepository;
 import ge.tastyerp.waybill.service.rsge.RsGeSoapClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,7 +38,6 @@ public class WaybillService {
     private static final BigDecimal VAT_RATE = new BigDecimal("0.18");
     private static final BigDecimal VAT_DIVISOR = new BigDecimal("1.18");
 
-    private final WaybillRepository waybillRepository;
     private final RsGeSoapClient rsGeSoapClient;
     private final WaybillProcessingService processingService;
 
@@ -250,75 +248,6 @@ public class WaybillService {
                     return normalizedCustomerId.equals(w.getBuyerTin());
                 })
                 .collect(java.util.stream.Collectors.toList());
-    }
-
-    /**
-     * Get waybill by ID.
-     */
-    public WaybillDto getWaybillById(String id) {
-        return waybillRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Waybill", id));
-    }
-
-    /**
-     * Get waybills by customer ID.
-     */
-    public List<WaybillDto> getWaybillsByCustomer(String customerId, Boolean afterCutoffOnly) {
-        // Reuse the new getWaybills method
-        return getWaybills(customerId, null, null, afterCutoffOnly, WaybillType.SALE);
-    }
-
-    /**
-     * Get total sales for a customer.
-     */
-    public Map<String, Object> getCustomerTotalSales(String customerId) {
-        List<WaybillDto> waybills = getWaybills(customerId, null, null, true, WaybillType.SALE);
-
-        BigDecimal totalSales = waybills.stream()
-                .map(WaybillDto::getAmount)
-                .filter(a -> a != null)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-        Map<String, Object> result = new HashMap<>();
-        result.put("customerId", customerId);
-        result.put("totalSales", totalSales);
-        result.put("waybillCount", waybills.size());
-        result.put("cutoffDate", cutoffDate);
-
-        return result;
-    }
-
-    /**
-     * Get waybill statistics.
-     * REFACTORED: Uses live data from RS.ge (Sales only for performance/relevance)
-     */
-    public Object getWaybillStatistics() {
-        // Fetch ALL sales from cutoff to now
-        List<WaybillDto> sales = getAllSalesWaybills();
-
-        long salesAfterCutoffCount = sales.size(); // getAllSalesWaybills fetches after cutoff
-
-        BigDecimal totalSalesAmount = sales.stream()
-                .map(WaybillDto::getAmount)
-                .filter(a -> a != null)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-        // Group by customer
-        Map<String, Long> byCustomer = new HashMap<>();
-        sales.forEach(w -> byCustomer.merge(w.getBuyerTin(), 1L, Long::sum));
-
-        Map<String, Object> stats = new HashMap<>();
-        stats.put("totalWaybills", sales.size()); // Just sales for now
-        stats.put("salesWaybills", sales.size());
-        stats.put("purchaseWaybills", 0); // Not fetching purchases to save time
-        stats.put("afterCutoffSalesWaybills", salesAfterCutoffCount);
-        stats.put("afterCutoffPurchaseWaybills", 0);
-        stats.put("totalSalesAmount", totalSalesAmount);
-        stats.put("totalAmount", totalSalesAmount);
-        stats.put("uniqueCustomers", byCustomer.size());
-        stats.put("cutoffDate", cutoffDate);
-
-        return stats;
     }
 
     /**

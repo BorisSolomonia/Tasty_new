@@ -7,7 +7,7 @@ import ge.tastyerp.common.dto.payment.PaymentDto;
 import ge.tastyerp.common.dto.payment.PaymentStatusDto;
 import ge.tastyerp.payment.service.PaymentService;
 import ge.tastyerp.payment.service.ExcelProcessingService;
-import ge.tastyerp.payment.service.AsyncAggregationService;
+import ge.tastyerp.payment.service.DebtService;
 import ge.tastyerp.payment.service.DeduplicationService;
 import ge.tastyerp.payment.service.PaymentStatusService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -37,7 +37,7 @@ public class PaymentController {
 
     private final PaymentService paymentService;
     private final ExcelProcessingService excelProcessingService;
-    private final AsyncAggregationService asyncAggregationService;
+    private final DebtService debtService;
     private final DeduplicationService deduplicationService;
     private final PaymentStatusService paymentStatusService;
 
@@ -113,9 +113,9 @@ public class PaymentController {
     @Operation(summary = "Delete all bank payments (tbc/bog)")
     public ResponseEntity<ApiResponse<Object>> deleteBankPayments() {
         int deleted = paymentService.purgeBankPayments(List.of("tbc", "bog"));
-        String jobId = asyncAggregationService.triggerAggregation("bank_purge");
+        debtService.invalidate(); // debt is computed on demand — drop the cached snapshot
         return ResponseEntity.ok(ApiResponse.success(
-                Map.of("deleted", deleted, "aggregationJobId", jobId),
+                Map.of("deleted", deleted),
                 "Bank payments deleted"
         ));
     }
@@ -139,34 +139,6 @@ public class PaymentController {
         return ResponseEntity.ok(ApiResponse.success(statusMap));
     }
 
-    // ==================== MANUAL SYNC ====================
-
-    @PostMapping("/sync")
-    @Operation(summary = "Manually trigger customer debt re-aggregation",
-            description = "Fetches fresh waybills from RS.ge and recalculates customer debt summaries. " +
-                         "Use this to fix stale debt data without uploading an Excel file. " +
-                         "Returns a job ID to poll for status.")
-    public ResponseEntity<ApiResponse<Map<String, String>>> triggerManualSync() {
-        String jobId = asyncAggregationService.triggerAggregation("manual_sync");
-        return ResponseEntity.ok(ApiResponse.success(
-                Map.of("jobId", jobId),
-                "Aggregation started. Poll /api/payments/aggregation/job/" + jobId + " for status."
-        ));
-    }
-
-    // ==================== AGGREGATION JOB STATUS ====================
-
-    @GetMapping("/aggregation/job/{jobId}")
-    @Operation(summary = "Get aggregation job status",
-            description = "Poll this endpoint to track async aggregation progress after Excel upload")
-    public ResponseEntity<ApiResponse<ge.tastyerp.common.dto.aggregation.AggregationJobDto>> getAggregationJobStatus(
-            @PathVariable String jobId) {
-
-        return asyncAggregationService.getJobStatus(jobId)
-                .map(job -> ResponseEntity.ok(ApiResponse.success(job)))
-                .orElse(ResponseEntity.notFound().build());
-    }
-
     // ==================== DEDUPLICATION ====================
 
     @GetMapping("/deduplicate/analyze")
@@ -187,20 +159,12 @@ public class PaymentController {
     public ResponseEntity<ApiResponse<DeduplicationService.DeduplicationResult>> removeDuplicates() {
         DeduplicationService.DeduplicationResult result = deduplicationService.removeDuplicates();
 
-        // Trigger aggregation after deduplication to update customer debt summaries
-        String jobId = null;
         if (result.paymentsDeleted() > 0) {
-            try {
-                jobId = asyncAggregationService.triggerAggregation("deduplication");
-            } catch (Exception e) {
-                // Don't fail the dedup response if the aggregation trigger fails,
-                // but do record why so a stale debt summary can be explained.
-                log.warn("Aggregation trigger after deduplication failed: {}", e.getMessage(), e);
-            }
+            debtService.invalidate(); // recomputed debt must reflect the removed duplicates
         }
 
-        String message = String.format("Removed %d duplicate payments (₾%.2f recovered). Aggregation job: %s",
-                result.paymentsDeleted(), result.amountRecovered(), jobId != null ? jobId : "none");
+        String message = String.format("Removed %d duplicate payments (₾%.2f recovered).",
+                result.paymentsDeleted(), result.amountRecovered());
         return ResponseEntity.ok(ApiResponse.success(result, message));
     }
 }

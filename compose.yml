@@ -14,29 +14,6 @@ services:
       - "3000"
     networks: [web]
 
-  api-gateway:
-    build:
-      context: .
-      dockerfile: api-gateway/Dockerfile
-    container_name: tasty-erp-gateway
-    restart: unless-stopped
-    env_file: [.env]
-    environment:
-      - SERVER_PORT=3005
-      - SPRING_PROFILES_ACTIVE=dev
-      - WAYBILL_SERVICE_URL=http://waybill-service:8081
-      - PAYMENT_SERVICE_URL=http://payment-service:8082
-      - CONFIG_SERVICE_URL=http://config-service:8888
-    ports:
-      - "3005:3005"
-    networks: [web]
-    volumes:
-      - ./secrets/firebase-sa.json:/secrets/firebase-sa.json:ro
-    depends_on:
-      - waybill-service
-      - payment-service
-      - config-service
-
   waybill-service:
     build:
       context: .
