@@ -2,6 +2,19 @@ import { format, parseISO, isValid } from 'date-fns'
 import { ka } from 'date-fns/locale'
 
 /**
+ * Canonical customer identity key — mirrors backend TinValidator.canonicalId.
+ * Digits only, then leading zeros stripped, so RS.ge's zero-stripped IDs
+ * ("1008057492") match Excel/initial-debt IDs ("01008057492"). Used ONLY to
+ * match client-fetched detail rows to the authoritative server debt rows.
+ */
+export function canonicalId(id: string | null | undefined): string {
+  if (!id) return ''
+  const digits = String(id).replace(/\D/g, '')
+  if (!digits) return String(id).trim()
+  return digits.replace(/^0+(\d)/, '$1')
+}
+
+/**
  * Format amount in Georgian Lari
  */
 export function formatCurrency(amount: number): string {

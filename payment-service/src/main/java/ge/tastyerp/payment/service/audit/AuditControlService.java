@@ -1,7 +1,7 @@
 package ge.tastyerp.payment.service.audit;
 
 import ge.tastyerp.common.dto.audit.*;
-import ge.tastyerp.common.dto.payment.CustomerAnalysisDto;
+import ge.tastyerp.common.dto.payment.CustomerDebtDto;
 import ge.tastyerp.common.dto.payment.PaymentDto;
 import ge.tastyerp.common.dto.waybill.WaybillType;
 import ge.tastyerp.common.exception.ExternalServiceException;
@@ -9,7 +9,7 @@ import ge.tastyerp.common.util.TinValidator;
 import ge.tastyerp.payment.repository.AuditExceptionRepository;
 import ge.tastyerp.payment.repository.PaymentOverrideRepository;
 import ge.tastyerp.payment.repository.PaymentRepository;
-import ge.tastyerp.payment.service.CustomerAnalysisService;
+import ge.tastyerp.payment.service.DebtService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -38,7 +38,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class AuditControlService {
 
-    private final CustomerAnalysisService customerAnalysisService;
+    private final DebtService debtService;
     private final PaymentRepository paymentRepository;
     private final AuditExceptionRepository exceptionRepository;
     private final PaymentOverrideRepository overrideRepository;
@@ -302,11 +302,13 @@ public class AuditControlService {
     // ==================== RECONCILIATION ====================
 
     private List<ReconciliationRowDto> buildReconciliation(Map<String, Boolean> realEntityMap) {
-        List<CustomerAnalysisDto> analysis = customerAnalysisService.analyzeAllCustomers();
+        // Read the SAME authoritative debt the payments page reads, so audit and
+        // payments can never disagree (single source of truth).
+        List<CustomerDebtDto> analysis = debtService.getOverview().getCustomers();
         Set<String> paidKeys = overrideRepository.findMarkedPaidKeys();
 
         List<ReconciliationRowDto> rows = new ArrayList<>();
-        for (CustomerAnalysisDto a : analysis) {
+        for (CustomerDebtDto a : analysis) {
             boolean real = isReal(a.getCustomerId(), realEntityMap);
             boolean paid = paidKeys.contains(a.getCustomerId());
             BigDecimal debt = a.getCurrentDebt() != null ? a.getCurrentDebt() : BigDecimal.ZERO;
@@ -338,7 +340,7 @@ public class AuditControlService {
     // ==================== TARGETED ID EXPENSE ====================
 
     public TargetedExpenseDto computeTargetedExpense(LocalDate startDate, LocalDate endDate) {
-        String targetNorm = TinValidator.normalize(targetedExpenseId);
+        String targetNorm = TinValidator.canonicalId(targetedExpenseId);
 
         List<PaymentDto> candidates = new ArrayList<>();
         candidates.addAll(paymentRepository.findBankPayments(null, startDate, endDate, null));
@@ -348,7 +350,7 @@ public class AuditControlService {
         BigDecimal total = BigDecimal.ZERO;
 
         for (PaymentDto p : candidates) {
-            String payerNorm = p.getCustomerId() != null ? TinValidator.normalize(p.getCustomerId()) : null;
+            String payerNorm = p.getCustomerId() != null ? TinValidator.canonicalId(p.getCustomerId()) : null;
             boolean matchById = targetNorm != null && targetNorm.equals(payerNorm);
             boolean matchByDesc = p.getDescription() != null
                     && (p.getDescription().contains(targetedExpenseId)
@@ -440,8 +442,9 @@ public class AuditControlService {
                     String id = (String) c.get("identification");
                     if (id == null) continue;
                     Object real = c.get("isRealEntity");
-                    // null => treated as real by default
-                    map.put(TinValidator.normalize(id), real == null || Boolean.TRUE.equals(real));
+                    // null => treated as real by default. Key by canonical id so it
+                    // matches the canonical debt rows (leading-zero variants merged).
+                    map.put(TinValidator.canonicalId(id), real == null || Boolean.TRUE.equals(real));
                 }
             }
         } catch (Exception e) {
@@ -476,7 +479,7 @@ public class AuditControlService {
 
     private boolean isReal(String id, Map<String, Boolean> realEntityMap) {
         if (id == null) return true; // unknown counterparties default to real
-        return realEntityMap.getOrDefault(TinValidator.normalize(id), true);
+        return realEntityMap.getOrDefault(TinValidator.canonicalId(id), true);
     }
 
     private BigDecimal toBigDecimal(Object value) {

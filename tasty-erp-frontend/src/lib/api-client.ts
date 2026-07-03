@@ -421,6 +421,30 @@ export const configApi = {
   deleteProductCategory: async (name: string) => {
     await fetchWithAuth('/config/product-categories', { method: 'DELETE', params: { name } })
   },
+
+  // Shared exclude-from-total customer set (device-consistent)
+  getExcludedCustomers: async () => {
+    const response = await fetchWithAuth('/config/excluded-customers')
+    return jsonData<string[]>(response)
+  },
+
+  addExcludedCustomer: async (customerId: string) => {
+    const response = await fetchWithAuth('/config/excluded-customers', { method: 'PUT', params: { customerId } })
+    return jsonData<string[]>(response)
+  },
+
+  removeExcludedCustomer: async (customerId: string) => {
+    const response = await fetchWithAuth('/config/excluded-customers', { method: 'DELETE', params: { customerId } })
+    return jsonData<string[]>(response)
+  },
+}
+
+// Authoritative debt (single source of truth) — every page reads this
+export const debtsApi = {
+  getOverview: async () => {
+    const response = await fetchWithAuth('/payments/debts')
+    return jsonData<import('@/types/domain').DebtOverview>(response)
+  },
 }
 
 // Product Sales API

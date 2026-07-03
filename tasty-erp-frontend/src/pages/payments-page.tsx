@@ -1,13 +1,25 @@
 import * as React from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { addDays } from 'date-fns'
-import { paymentsApi, waybillsApi, configApi, ApiError } from '@/lib/api-client'
-import { useCachedQuery } from '@/lib/use-cached-query'
+import { paymentsApi, waybillsApi, configApi, debtsApi, ApiError } from '@/lib/api-client'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
-import { formatCurrency, formatDateISO } from '@/lib/utils'
-import type { CustomerAnalysis, Waybill, Payment, InitialDebt } from '@/types/domain'
+import { formatCurrency, formatDateISO, canonicalId } from '@/lib/utils'
+import type { CustomerDebt, Waybill, Payment } from '@/types/domain'
+
+// Client-side detail row: authoritative server debt + matched transaction lists
+// (lists are informational for the drill-down only — never used to compute debt).
+type PaymentDetail = {
+  date: string
+  payment: number
+  source?: string
+  uniqueCode?: string
+  paymentId?: string
+  description?: string
+}
+type DebtRow = CustomerDebt & { waybills: Waybill[]; payments: PaymentDetail[] }
+type SortKey = 'currentDebt' | 'totalPayments' | 'totalSales' | 'startingDebt' | 'customerId' | 'customerName'
 
 function getApiErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
@@ -34,26 +46,27 @@ export function PaymentsPage() {
   const [uploadStatus, setUploadStatus] = React.useState<string>('')
   const [manualUploadStatus, setManualUploadStatus] = React.useState<string>('')
   const [searchTerm, setSearchTerm] = React.useState('')
-  const [sortBy, setSortBy] = React.useState<keyof CustomerAnalysis>('currentDebt')
+  const [sortBy, setSortBy] = React.useState<SortKey>('currentDebt')
   const [sortOrder, setSortOrder] = React.useState<'asc' | 'desc'>('desc')
   const [expandedCustomers, setExpandedCustomers] = React.useState<Set<string>>(new Set())
   const [currentPage, setCurrentPage] = React.useState(1)
   const itemsPerPage = 50
-  const [excludedCustomers, setExcludedCustomers] = React.useState<Set<string>>(() => {
-    if (typeof window === 'undefined') return new Set()
-    const raw = window.localStorage.getItem('tasty-erp-excluded-customers')
-    if (!raw) return new Set()
-    try {
-      const list = JSON.parse(raw) as string[]
-      return new Set(list)
-    } catch {
-      return new Set()
-    }
-  })
 
   const paymentWindowStart = formatDateISO(addDays(new Date(PAYMENT_CUTOFF_DATE), 1))
 
-  // Sales waybills after cutoff — SHARED cache key with waybills page (no double RS.ge call)
+  // AUTHORITATIVE debt — single server source of truth. Every device that reads
+  // this within the server's TTL window gets the identical snapshot, so the
+  // numbers no longer diverge across devices. The frontend only DISPLAYS these.
+  const debtsQuery = useQuery({
+    queryKey: ['debts'],
+    queryFn: () => debtsApi.getOverview(),
+    staleTime: 1000 * 60,
+    gcTime: 1000 * 60 * 5,
+    retry: 1,
+  })
+
+  // Sales waybills + payments are fetched ONLY to populate the per-customer
+  // drill-down detail (never to compute debt). Matched to server rows by canonical id.
   const waybillsQuery = useQuery({
     queryKey: ['waybills', 'afterCutoff'],
     queryFn: () => waybillsApi.getAll({ afterCutoffOnly: true, type: 'SALE' }),
@@ -62,35 +75,11 @@ export function PaymentsPage() {
     retry: 1,
   })
 
-  // Bank + manual cash payments from Firebase
   const paymentsQuery = useQuery({
     queryKey: ['payments', 'afterCutoff', paymentWindowStart],
     queryFn: () => paymentsApi.getAll(paymentWindowStart),
     staleTime: 1000 * 60 * 15,
     gcTime: 1000 * 60 * 30,
-    retry: 1,
-  })
-
-  // Initial debts (starting balances) — shared cache with waybills page
-  const initialDebtsQuery = useCachedQuery({
-    queryKey: ['config', 'initialDebts'],
-    queryFn: async () => {
-      const result = await configApi.getInitialDebts()
-      if (Array.isArray(result)) return result as InitialDebt[]
-      if (typeof result === 'object' && result !== null) {
-        return Object.entries(result).map(([customerId, data]: [string, any]) => ({
-          customerId,
-          customerName: data.name || data.customerName || customerId,
-          debt: Number(data.debt || data.amount || 0),
-          date: data.date || PAYMENT_CUTOFF_DATE,
-        }))
-      }
-      return [] as InitialDebt[]
-    },
-    cacheKey: 'initial_debts',
-    cacheTTL: 7 * 24 * 60 * 60 * 1000,
-    staleTime: 1000 * 60 * 60 * 4,
-    gcTime: 1000 * 60 * 60 * 24,
     retry: 1,
   })
 
@@ -103,159 +92,73 @@ export function PaymentsPage() {
     retry: 1,
   })
 
+  const overview = debtsQuery.data
   const waybills = (waybillsQuery.data || []) as Waybill[]
   const payments = (paymentsQuery.data || []) as Payment[]
-  const initialDebts = (initialDebtsQuery.data || []) as InitialDebt[]
   const paymentStatus = (paymentStatusQuery.data || {}) as Record<string, import('@/types/domain').PaymentStatus>
 
-  const handleToggleExcluded = (customerId: string) => {
-    setExcludedCustomers(prev => {
-      const next = new Set(prev)
-      if (next.has(customerId)) {
-        next.delete(customerId)
-      } else {
-        const confirmed = window.confirm('Exclude this customer from total debt calculation?')
-        if (!confirmed) return prev
-        next.add(customerId)
-      }
-      window.localStorage.setItem('tasty-erp-excluded-customers', JSON.stringify(Array.from(next)))
-      return next
-    })
+  const excludeMutation = useMutation({
+    mutationFn: ({ customerId, exclude }: { customerId: string; exclude: boolean }) =>
+      exclude ? configApi.addExcludedCustomer(customerId) : configApi.removeExcludedCustomer(customerId),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['debts'] }),
+  })
+
+  const handleToggleExcluded = (customerId: string, currentlyExcluded: boolean) => {
+    if (!currentlyExcluded) {
+      const confirmed = window.confirm('Exclude this customer from total debt calculation?')
+      if (!confirmed) return
+    }
+    excludeMutation.mutate({ customerId, exclude: !currentlyExcluded })
   }
 
-  // Build customer analysis — exact logic from the correct reference version
-  const customerAnalysis = React.useMemo((): Record<string, CustomerAnalysis> => {
-    const analysis: Record<string, CustomerAnalysis> = {}
-    const customerSales = new Map<string, { totalSales: number; waybillCount: number; waybills: Waybill[]; buyerName: string }>()
-    const customerPayments = new Map<string, { totalPayments: number; paymentCount: number; payments: any[] }>()
-
-    const resolveWaybillCustomerName = (waybill?: Waybill) =>
-      waybill?.buyerName || waybill?.customerName || waybill?.sellerName || ''
-
-    // Process sales: only waybills where isAfterCutoff = true
+  // Detail lists grouped by CANONICAL id, matched to the authoritative server rows.
+  const detailsByCanonical = React.useMemo(() => {
+    const map = new Map<string, { waybills: Waybill[]; payments: PaymentDetail[] }>()
+    const bucket = (id: string) => {
+      const key = canonicalId(id)
+      let entry = map.get(key)
+      if (!entry) { entry = { waybills: [], payments: [] }; map.set(key, entry) }
+      return entry
+    }
     waybills.forEach(wb => {
       if (!wb.customerId) return
       const afterCutoff = wb.isAfterCutoff ?? (wb as { afterCutoff?: boolean }).afterCutoff
       if (!afterCutoff) return
-
-      if (!customerSales.has(wb.customerId)) {
-        customerSales.set(wb.customerId, { totalSales: 0, waybillCount: 0, waybills: [], buyerName: '' })
-      }
-      const customer = customerSales.get(wb.customerId)!
-      customer.totalSales += Number(wb.amount) || 0
-      customer.waybillCount += 1
-      customer.waybills.push(wb)
-      if (!customer.buyerName) {
-        customer.buyerName = resolveWaybillCustomerName(wb)
-      }
+      bucket(wb.customerId).waybills.push(wb)
     })
-
-    // Process payments: date filter only, ALL sources included (no source filter)
     payments.forEach(p => {
       if (!p.customerId) return
-      const paymentDate = p.paymentDate || ''
-      if (paymentDate < paymentWindowStart) return
-
-      if (!customerPayments.has(p.customerId)) {
-        customerPayments.set(p.customerId, { totalPayments: 0, paymentCount: 0, payments: [] })
-      }
-      const customer = customerPayments.get(p.customerId)!
-      const amount = Number(p.amount) || 0
-      customer.totalPayments += amount
-      customer.paymentCount += 1
-      customer.payments.push({
-        customerId: p.customerId,
-        payment: amount,
-        date: paymentDate,
-        isAfterCutoff: true,
-        source: p.source || 'unknown',
-        uniqueCode: p.uniqueCode,
-        paymentId: p.id,
-        description: p.description,
-        balance: Number(p.balance) || 0,
+      if ((p.paymentDate || '') < paymentWindowStart) return
+      bucket(p.customerId).payments.push({
+        date: p.paymentDate || '',
+        payment: Number(p.amount) || 0,
+        source: p.source ?? undefined,
+        uniqueCode: p.uniqueCode ?? undefined,
+        paymentId: p.id ?? undefined,
+        description: p.description ?? undefined,
       })
     })
+    return map
+  }, [waybills, payments, paymentWindowStart])
 
-    // Initial debts map
-    const startingDebtsMap = new Map<string, { amount: number; date: string; name: string }>()
-    initialDebts.forEach(debt => {
-      startingDebtsMap.set(debt.customerId, { amount: debt.debt, date: debt.date, name: debt.customerName })
+  // Rows = authoritative server debt + matched detail lists.
+  const rows = React.useMemo<DebtRow[]>(() => {
+    if (!overview) return []
+    return overview.customers.map(c => {
+      const d = detailsByCanonical.get(canonicalId(c.customerId))
+      return { ...c, waybills: d?.waybills ?? [], payments: d?.payments ?? [] }
     })
+  }, [overview, detailsByCanonical])
 
-    // Union of all customer IDs
-    const allIds = new Set([
-      ...customerSales.keys(),
-      ...customerPayments.keys(),
-      ...startingDebtsMap.keys(),
-    ])
-
-    allIds.forEach(customerId => {
-      const sales = customerSales.get(customerId) || { totalSales: 0, waybillCount: 0, waybills: [], buyerName: '' }
-      const pays = customerPayments.get(customerId) || { totalPayments: 0, paymentCount: 0, payments: [] }
-      const sd = startingDebtsMap.get(customerId) || { amount: 0, date: '', name: '' }
-
-      let customerName = customerId
-      if (sales.buyerName) customerName = sales.buyerName
-      else if (sd.name) customerName = sd.name
-
-      // Formula: currentDebt = startingDebt + totalSales - totalPayments
-      // totalPayments includes all sources (bank + cash)
-      const currentDebt = sd.amount + sales.totalSales - pays.totalPayments
-
-      const cashPayments = pays.payments.filter(p => p.source === 'manual-cash' || p.source === 'cash')
-      const totalCashPayments = cashPayments.reduce((sum: number, p: any) => sum + p.payment, 0)
-
-      analysis[customerId] = {
-        customerId,
-        customerName,
-        totalSales: sales.totalSales,
-        totalPayments: pays.totalPayments,
-        totalCashPayments,
-        currentDebt,
-        startingDebt: sd.amount,
-        startingDebtDate: sd.date || null,
-        waybillCount: sales.waybillCount,
-        paymentCount: pays.paymentCount,
-        waybills: sales.waybills,
-        payments: pays.payments,
-        cashPayments,
-      }
-    })
-
-    return analysis
-  }, [waybills, payments, initialDebts, paymentWindowStart])
-
-  const includedTotals = React.useMemo(() => {
-    let totalSales = 0
-    let totalPayments = 0
-    let totalCashPayments = 0
-    let totalStartingDebts = 0
-
-    Object.values(customerAnalysis).forEach(customer => {
-      if (excludedCustomers.has(customer.customerId)) return
-      totalSales += customer.totalSales
-      totalPayments += customer.totalPayments
-      totalCashPayments += customer.totalCashPayments
-      totalStartingDebts += customer.startingDebt
-    })
-
-    const totalOutstanding = totalStartingDebts + totalSales - totalPayments
-
-    return { totalSales, totalPayments, totalCashPayments, totalOutstanding }
-  }, [customerAnalysis, excludedCustomers])
-
-  // Filter and sort customers
   const sortedCustomers = React.useMemo(() => {
-    let customers = Object.values(customerAnalysis)
-
+    let customers = rows
     if (searchTerm) {
       customers = customers.filter(c =>
         c.customerId.includes(searchTerm) ||
         c.customerName.toLowerCase().includes(searchTerm.toLowerCase())
       )
     }
-
-    customers.sort((a, b) => {
+    return [...customers].sort((a, b) => {
       const aVal = a[sortBy]
       const bVal = b[sortBy]
       if (typeof aVal === 'string' && typeof bVal === 'string') {
@@ -265,9 +168,7 @@ export function PaymentsPage() {
       const bNum = Number(bVal) || 0
       return sortOrder === 'desc' ? bNum - aNum : aNum - bNum
     })
-
-    return customers
-  }, [customerAnalysis, searchTerm, sortBy, sortOrder])
+  }, [rows, searchTerm, sortBy, sortOrder])
 
   const totalPages = Math.ceil(sortedCustomers.length / itemsPerPage)
   const paginatedCustomers = React.useMemo(() => {
@@ -279,12 +180,13 @@ export function PaymentsPage() {
     setCurrentPage(1)
   }, [searchTerm, sortBy, sortOrder])
 
-  const totalExpected = includedTotals.totalSales
-  const totalReceived = includedTotals.totalPayments
-  const totalCashReceived = includedTotals.totalCashPayments
-  const totalOutstanding = includedTotals.totalOutstanding
+  // Headline totals come straight from the server (exclusions already applied).
+  const totalExpected = overview?.totalSales ?? 0
+  const totalReceived = overview?.totalPayments ?? 0
+  const totalCashReceived = overview?.totalCashPayments ?? 0
+  const totalOutstanding = overview?.totalOutstanding ?? 0
 
-  const isDataLoading = waybillsQuery.isLoading || paymentsQuery.isLoading
+  const isDataLoading = debtsQuery.isLoading
 
   const uploadMutation = useMutation({
     mutationFn: ({ file, bank }: { file: File; bank: 'tbc' | 'bog' }) =>
@@ -294,6 +196,7 @@ export function PaymentsPage() {
       const duplicateCount = data.duplicateCount || 0
       setUploadStatus(`✅ ${addedCount} ახალი გადახდა, ${duplicateCount} დუბლიკატი`)
       void queryClient.invalidateQueries({ queryKey: ['payments'] })
+      void queryClient.invalidateQueries({ queryKey: ['debts'] })
       if (fileInputRef.current) fileInputRef.current.value = ''
     },
     onError: (err) => {
@@ -306,6 +209,7 @@ export function PaymentsPage() {
     onSuccess: () => {
       setManualUploadStatus('OK - Manual cash payments uploaded')
       void queryClient.invalidateQueries({ queryKey: ['payments'] })
+      void queryClient.invalidateQueries({ queryKey: ['debts'] })
       if (manualFileInputRef.current) manualFileInputRef.current.value = ''
     },
     onError: (err) => {
@@ -318,6 +222,7 @@ export function PaymentsPage() {
     onSuccess: (data) => {
       setUploadStatus(`✅ წაიშალა ${data.deleted} ბანკის გადახდა`)
       void queryClient.invalidateQueries({ queryKey: ['payments'] })
+      void queryClient.invalidateQueries({ queryKey: ['debts'] })
     },
     onError: (err) => {
       setUploadStatus(`❌ წაშლა ვერ მოხერხდა: ${getApiErrorMessage(err)}`)
@@ -357,7 +262,7 @@ export function PaymentsPage() {
     manualUploadMutation.mutate(file)
   }
 
-  const handleSort = (column: keyof CustomerAnalysis) => {
+  const handleSort = (column: SortKey) => {
     if (sortBy === column) {
       setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc')
     } else {
@@ -375,7 +280,7 @@ export function PaymentsPage() {
     })
   }
 
-  const handleManualPaymentAdd = async (customer: CustomerAnalysis) => {
+  const handleManualPaymentAdd = async (customer: DebtRow) => {
     const date = window.prompt('Payment date (YYYY-MM-DD):', formatDateISO(new Date()))
     if (!date) return
     const amountRaw = window.prompt('Amount:', '')
@@ -396,6 +301,7 @@ export function PaymentsPage() {
         description,
       })
       void queryClient.invalidateQueries({ queryKey: ['payments'] })
+      void queryClient.invalidateQueries({ queryKey: ['debts'] })
     } catch (error) {
       window.alert(`Failed to add manual payment: ${getApiErrorMessage(error)}`)
     }
@@ -409,6 +315,7 @@ export function PaymentsPage() {
     try {
       await paymentsApi.deleteManualCashPayment(paymentId)
       void queryClient.invalidateQueries({ queryKey: ['payments'] })
+      void queryClient.invalidateQueries({ queryKey: ['debts'] })
     } catch (error) {
       window.alert(`Failed to delete manual payment: ${getApiErrorMessage(error)}`)
     }
@@ -436,8 +343,8 @@ export function PaymentsPage() {
           </div>
         )}
         <div className="mt-2 text-sm text-muted-foreground">
-          გაყიდვები: {waybillsQuery.isLoading ? '…' : formatCurrency(totalExpected)} |
-          გადახდები: {paymentsQuery.isLoading ? '…' : formatCurrency(totalReceived)}
+          გაყიდვები: {isDataLoading ? '…' : formatCurrency(totalExpected)} |
+          გადახდები: {isDataLoading ? '…' : formatCurrency(totalReceived)}
         </div>
       </Card>
 
@@ -543,8 +450,8 @@ export function PaymentsPage() {
                       <td className="px-4 py-3 text-sm">
                         <input
                           type="checkbox"
-                          checked={!excludedCustomers.has(customer.customerId)}
-                          onChange={() => handleToggleExcluded(customer.customerId)}
+                          checked={!customer.excluded}
+                          onChange={() => handleToggleExcluded(customer.customerId, customer.excluded)}
                         />
                       </td>
                       <td className="px-4 py-3 text-sm">
@@ -745,19 +652,19 @@ export function PaymentsPage() {
         <Card className="p-3 md:p-4">
           <div className="text-xs text-muted-foreground">გაყიდვები</div>
           <div className="mt-1 text-lg font-semibold md:text-xl">
-            {waybillsQuery.isLoading ? <Skeleton className="h-6 w-24" /> : formatCurrency(totalExpected)}
+            {isDataLoading ? <Skeleton className="h-6 w-24" /> : formatCurrency(totalExpected)}
           </div>
         </Card>
         <Card className="p-3 md:p-4">
           <div className="text-xs text-muted-foreground">ბანკი</div>
           <div className="mt-1 text-lg font-semibold md:text-xl">
-            {paymentsQuery.isLoading ? <Skeleton className="h-6 w-24" /> : formatCurrency(totalReceived - totalCashReceived)}
+            {isDataLoading ? <Skeleton className="h-6 w-24" /> : formatCurrency(totalReceived - totalCashReceived)}
           </div>
         </Card>
         <Card className="p-3 md:p-4">
           <div className="text-xs text-muted-foreground">ნაღდი</div>
           <div className="mt-1 text-lg font-semibold md:text-xl">
-            {paymentsQuery.isLoading ? <Skeleton className="h-6 w-24" /> : formatCurrency(totalCashReceived)}
+            {isDataLoading ? <Skeleton className="h-6 w-24" /> : formatCurrency(totalCashReceived)}
           </div>
         </Card>
         <Card className="p-3 md:p-4">

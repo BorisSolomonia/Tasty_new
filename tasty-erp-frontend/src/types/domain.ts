@@ -201,6 +201,27 @@ export type AuditDashboard = {
   exceptions: AuditException[]
 }
 
+export type CustomerDebt = {
+  customerId: string
+  customerName: string
+  startingDebt: number
+  totalSales: number
+  totalPayments: number
+  totalCashPayments: number
+  currentDebt: number
+  waybillCount: number
+  paymentCount: number
+  excluded: boolean
+}
+
+export type DebtOverview = {
+  customers: CustomerDebt[]
+  totalSales: number
+  totalPayments: number
+  totalCashPayments: number
+  totalOutstanding: number
+}
+
 export type ProductCategoryCode = 'BEEF' | 'PORK' | 'FAT' | 'OTHER'
 
 export type ProductCategory = {

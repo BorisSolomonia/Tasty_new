@@ -1,14 +1,12 @@
 import * as React from 'react'
 import { Link } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { startOfMonth, addDays } from 'date-fns'
-import { ApiError, waybillsApi, paymentsApi, configApi } from '@/lib/api-client'
+import { startOfMonth } from 'date-fns'
+import { ApiError, waybillsApi, debtsApi } from '@/lib/api-client'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
-import { formatCurrency, formatDate, formatDateISO, getPaymentCutoffDate } from '@/lib/utils'
-import { useCachedQuery } from '@/lib/use-cached-query'
-import type { InitialDebt } from '@/types/domain'
+import { formatCurrency, formatDate, formatDateISO } from '@/lib/utils'
 
 function getApiErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
@@ -61,113 +59,20 @@ export function WaybillsPage() {
     })
   }, [vatSummary, vatSummaryQuery.isLoading, vatSummaryQuery.isError, vatSummaryQuery.error])
 
-  // Debt calculation: Total sales after cutoff - Total payments after cutoff
-  const paymentWindowStart = formatDateISO(addDays(getPaymentCutoffDate(), 1))
-
-  const afterCutoffSalesQuery = useQuery({
-    queryKey: ['waybills', 'afterCutoff'],
-    queryFn: () => waybillsApi.getAll({ afterCutoffOnly: true, type: 'SALE' }),
-    staleTime: 1000 * 60 * 30, // Cache for 30 minutes - waybills change infrequently
-    gcTime: 1000 * 60 * 60, // Keep in cache for 1 hour
+  // Debt now comes from the single authoritative server endpoint (same number
+  // every device, identical to the payments page). No client-side recompute.
+  const debtsQuery = useQuery({
+    queryKey: ['debts'],
+    queryFn: () => debtsApi.getOverview(),
+    staleTime: 1000 * 60,
+    gcTime: 1000 * 60 * 5,
     retry: 1,
   })
 
-  const afterCutoffPaymentsQuery = useQuery({
-    queryKey: ['payments', 'afterCutoff', paymentWindowStart],
-    queryFn: () => paymentsApi.getAll(paymentWindowStart),
-    staleTime: 1000 * 60 * 15, // Cache for 15 minutes - payments update more frequently
-    gcTime: 1000 * 60 * 30, // Keep in cache for 30 minutes
-    retry: 1,
-  })
-
-  // Fetch initial debts (same as payments page) - React Query will dedupe/cache this
-  const PAYMENT_CUTOFF_DATE = '2025-04-29'
-  const initialDebtsQuery = useCachedQuery({
-    queryKey: ['config', 'initialDebts'],
-    queryFn: async () => {
-      const result = await configApi.getInitialDebts()
-      // Convert Firebase response to InitialDebt array
-      if (Array.isArray(result)) return result as InitialDebt[]
-      if (typeof result === 'object' && result !== null) {
-        return Object.entries(result).map(([customerId, data]: [string, any]) => ({
-          customerId,
-          customerName: data.name || data.customerName || customerId,
-          debt: Number(data.debt || data.amount || 0),
-          date: data.date || PAYMENT_CUTOFF_DATE
-        }))
-      }
-      return []
-    },
-    cacheKey: 'initial_debts',
-    cacheTTL: 7 * 24 * 60 * 60 * 1000, // Cache for 7 days
-    staleTime: 1000 * 60 * 60 * 4, // Refetch after 4 hours
-    gcTime: 1000 * 60 * 60 * 24, // Keep in memory for 24 hours
-    retry: 1,
-  })
-
-  const afterCutoffWaybills = afterCutoffSalesQuery.data ?? []
-  const afterCutoffPayments = afterCutoffPaymentsQuery.data ?? []
-  const initialDebts = initialDebtsQuery.data ?? []
-
-  // Read excluded customers from localStorage (same as payments page)
-  const excludedCustomers = React.useMemo(() => {
-    if (typeof window === 'undefined') return new Set<string>()
-    const raw = window.localStorage.getItem('tasty-erp-excluded-customers')
-    if (!raw) return new Set<string>()
-    try {
-      const list = JSON.parse(raw) as string[]
-      return new Set(list)
-    } catch {
-      return new Set<string>()
-    }
-  }, [])
-
-  // Group data by customer to calculate per-customer totals
-  const customerSales = new Map<string, number>()
-  afterCutoffWaybills.forEach(w => {
-    const id = w.buyerTin || w.customerId
-    if (id) {
-      const amount = typeof w.amount === 'number' ? w.amount : Number(w.amount || 0)
-      customerSales.set(id, (customerSales.get(id) || 0) + amount)
-    }
-  })
-
-  const customerPayments = new Map<string, number>()
-  afterCutoffPayments.forEach(p => {
-    if (p.customerId && (p.source === 'tbc' || p.source === 'bog' || p.source === 'manual-cash')) {
-      const amount = typeof p.amount === 'number' ? p.amount : Number(p.amount || 0)
-      customerPayments.set(p.customerId, (customerPayments.get(p.customerId) || 0) + amount)
-    }
-  })
-
-  // Calculate totals ONLY for INCLUDED customers (EXACT same logic as payments page)
-  let totalSales = 0
-  let totalPayments = 0
-  let totalStartingDebts = 0
-
-  // Sum starting debts for included customers
-  initialDebts.forEach(debt => {
-    if (!excludedCustomers.has(debt.customerId)) {
-      totalStartingDebts += debt.debt
-    }
-  })
-
-  // Sum sales for included customers
-  customerSales.forEach((amount, customerId) => {
-    if (!excludedCustomers.has(customerId)) {
-      totalSales += amount
-    }
-  })
-
-  // Sum payments for included customers
-  customerPayments.forEach((amount, customerId) => {
-    if (!excludedCustomers.has(customerId)) {
-      totalPayments += amount
-    }
-  })
-
-  // Net debt calculation (EXACT same formula as payments page, with excluded customers filtered)
-  const netDebt = totalStartingDebts + totalSales - totalPayments
+  const overview = debtsQuery.data
+  const totalSales = overview?.totalSales ?? 0
+  const totalPayments = overview?.totalPayments ?? 0
+  const netDebt = overview?.totalOutstanding ?? 0
 
   const syncSalesMutation = useMutation({
     mutationFn: () => waybillsApi.fetch(startDate, endDate),
@@ -246,7 +151,7 @@ export function WaybillsPage() {
           <div className="flex-1">
             <div className="text-xs text-muted-foreground">Net Debt (Total Outstanding)</div>
             <div className="mt-1 text-2xl font-semibold md:text-3xl">
-              {afterCutoffSalesQuery.isLoading || afterCutoffPaymentsQuery.isLoading ? (
+              {debtsQuery.isLoading ? (
                 <Skeleton className="h-9 w-36" />
               ) : (
                 <span className={netDebt >= 0 ? 'text-red-600 dark:text-red-500' : 'text-green-600 dark:text-green-500'}>
@@ -255,8 +160,8 @@ export function WaybillsPage() {
               )}
             </div>
             <div className="mt-1 text-xs text-muted-foreground">
-              Sales after cutoff: {afterCutoffSalesQuery.isLoading ? '…' : formatCurrency(totalSales)} |
-              Payments: {afterCutoffPaymentsQuery.isLoading ? '…' : formatCurrency(totalPayments)}
+              Sales after cutoff: {debtsQuery.isLoading ? '…' : formatCurrency(totalSales)} |
+              Payments: {debtsQuery.isLoading ? '…' : formatCurrency(totalPayments)}
             </div>
           </div>
           <Link to="/payments">
