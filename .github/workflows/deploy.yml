@@ -221,39 +221,36 @@ jobs:
             chmod 600 .env
             chmod 644 secrets/firebase-sa.json
 
-            # Export tag for docker compose
-            export TAG="$DEPLOY_TAG"
-
-            # --- Reclaim disk BEFORE pulling new layers ----------------------
-            # Deliberate order for disk-constrained VMs: stop the running stack
-            # first so its containers, images and networks become reclaimable,
-            # prune aggressively, THEN pull — maximizing free space before the
-            # new image layers are downloaded.
-            echo "Disk before cleanup:"; df -h / | tail -1
-
-            # 1. Stop the currently running deployment.
-            #    '|| true' so a fresh VM (nothing running yet) never fails the job.
-            echo "Stopping current deployment..."
-            docker compose -f compose.production.yml down --timeout 30 || true
-
-            # 2. Aggressive prune: unused containers, images, networks & build cache.
-            #    --volumes is intentionally OMITTED so Caddy's TLS certs in the
-            #    caddy_data volume survive (otherwise they'd be re-issued on every
-            #    deploy and hit Let's Encrypt rate limits).
-            docker system prune -af || true
-
-            echo "Disk after cleanup:"; df -h / | tail -1
-
-            # Re-create the external network/volume the prune may have removed
-            # (both are 'external: true' in compose, so 'up' expects them present).
+            # Ensure the external network/volume exist (fresh VM, or if a prior
+            # aggressive prune removed the idle network).
             docker network create web 2>/dev/null || true
             docker volume create caddy_data 2>/dev/null || true
 
-            # 3. Pull new images now that space has been reclaimed.
+            # Export tag for docker compose
+            export TAG="$DEPLOY_TAG"
+
+            # --- Reclaim disk BEFORE pulling, WITHOUT downtime ---------------
+            # Prune while the current stack is STILL RUNNING: images referenced by
+            # live containers are kept, so this removes only genuinely-unused
+            # containers, images, networks and build cache — and the pull below
+            # only downloads changed layers (no full re-pull). Because the old
+            # stack keeps serving traffic until 'up' succeeds, a failed pull can
+            # never black out the site.
+            # --volumes is OMITTED so Caddy's TLS certs (caddy_data) survive
+            # (otherwise they'd be re-issued each deploy and hit Let's Encrypt
+            # rate limits).
+            echo "Disk before cleanup:"; df -h / | tail -1
+            docker system prune -af || true
+            echo "Disk after cleanup:"; df -h / | tail -1
+
+            # Pull new images (old stack still serving traffic).
             echo "Pulling images with tag: $DEPLOY_TAG"
             docker compose -f compose.production.yml pull
 
-            # 4. Start the new deployment.
+            # Swap to the new deployment (brief restart only).
+            echo "Stopping current deployment..."
+            docker compose -f compose.production.yml down --timeout 30 || true
+
             echo "Starting new deployment..."
             docker compose -f compose.production.yml up -d
 
