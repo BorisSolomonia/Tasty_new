@@ -91,8 +91,12 @@ public class CustomerRepository {
      */
     public Optional<CustomerDto> findByIdentification(String identification) {
         try {
+            // orderBy(documentId) makes the limit(1) pick DETERMINISTIC when more
+            // than one doc shares the identification (otherwise which one wins is
+            // arbitrary, so name/isRealEntity could differ between calls/devices).
             var query = firestore.collection(COLLECTION)
                     .whereEqualTo("Identification", identification)
+                    .orderBy(com.google.cloud.firestore.FieldPath.documentId())
                     .limit(1)
                     .get()
                     .get();

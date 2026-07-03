@@ -2,6 +2,7 @@ package ge.tastyerp.payment.service;
 
 import com.google.cloud.firestore.*;
 import ge.tastyerp.common.dto.payment.PaymentDto;
+import ge.tastyerp.common.util.UniqueCodeGenerator;
 import ge.tastyerp.payment.repository.PaymentRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -206,16 +207,12 @@ public class DeduplicationService {
     }
 
     /**
-     * Build uniqueCode format (with balance).
+     * Build uniqueCode via the shared {@link UniqueCodeGenerator} so the dedup
+     * key is computed IDENTICALLY to ingestion (previously a private copy here
+     * could diverge and hide real duplicates).
      */
     private String buildUniqueCode(PaymentRecord record) {
-        long amountCents = record.amount.multiply(BigDecimal.valueOf(100))
-                .setScale(0, java.math.RoundingMode.HALF_UP)
-                .longValue();
-        long balanceCents = record.balance.multiply(BigDecimal.valueOf(100))
-                .setScale(0, java.math.RoundingMode.HALF_UP)
-                .longValue();
-        return String.format("%s|%d|%s|%d", record.date.toString(), amountCents, record.customerId.trim(), balanceCents);
+        return UniqueCodeGenerator.buildUniqueCode(record.date, record.amount, record.customerId, record.balance);
     }
 
     private record PaymentRecord(
