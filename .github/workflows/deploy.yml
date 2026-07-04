@@ -239,11 +239,6 @@ jobs:
             chmod 600 .env
             chmod 644 secrets/firebase-sa.json
 
-            # Ensure the external network/volume exist (fresh VM, or if a prior
-            # aggressive prune removed the idle network).
-            docker network create web 2>/dev/null || true
-            docker volume create caddy_data 2>/dev/null || true
-
             # Export tag for docker compose
             export TAG="$DEPLOY_TAG"
 
@@ -260,6 +255,13 @@ jobs:
             echo "Disk before cleanup:"; df -h / | tail -1
             docker system prune -af || true
             echo "Disk after cleanup:"; df -h / | tail -1
+
+            # Ensure the external network/volume exist. MUST come AFTER the prune:
+            # on the first deploy to a fresh VM nothing is using 'web' yet, so the
+            # prune above would delete it and 'up' would fail with
+            # "network web declared as external, but could not be found".
+            docker network create web 2>/dev/null || true
+            docker volume create caddy_data 2>/dev/null || true
 
             # Pull new images (old stack still serving traffic).
             echo "Pulling images with tag: $DEPLOY_TAG"
