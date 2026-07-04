@@ -1973,4 +1973,4 @@ gcloud secrets versions add env --data-file=.env.new --project=MY_PROJECT_ID
 
 ---
 
-*This guide reflects the deployment architecture of Tasty ERP — a Java Spring Boot microservices app with a React/Vite frontend, deployed on GCP. The patterns generalize to any stack..*
+*This guide reflects the deployment architecture of Tasty ERP — a Java Spring Boot microservices app with a React/Vite frontend, deployed on GCP. The patterns generalize to any stack.*
