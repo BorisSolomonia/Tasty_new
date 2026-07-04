@@ -31,8 +31,26 @@ env:
   DEPLOY_DIR: /home/borissolomonia/apps/tasty-erp
 
 jobs:
-  # Run tests first - deploy only if tests pass
+  # Preflight: verify the VM is reachable AND the SSH key authenticates BEFORE
+  # spending time on tests/builds. A bad host/firewall/key fails here in seconds
+  # instead of after a full test + 4-image build.
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: VM SSH handshake check
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_SSH_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          timeout: 20s
+          command_timeout: 1m
+          script: |
+            echo "VM reachable and SSH authenticated: $(hostname), up $(uptime -p)"
+
+  # Run tests (only after the VM handshake passes)
   test:
+    needs: preflight
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
