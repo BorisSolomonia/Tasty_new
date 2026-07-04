@@ -608,9 +608,18 @@ public class PaymentRepository {
                 return ((com.google.cloud.Timestamp) dateObj).toDate()
                         .toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
             }
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error fetching latest payment date for source {}: {}", source, e.getMessage());
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag and stop.
+            log.error("Interrupted fetching latest payment date for source {}", source);
             Thread.currentThread().interrupt();
+        } catch (ExecutionException e) {
+            // Non-fatal (e.g. FAILED_PRECONDITION when the source+paymentDate
+            // composite index is missing): overlap detection is simply skipped
+            // for this source. Do NOT interrupt the thread — that previously
+            // poisoned the interrupt flag and made the very next Firestore read
+            // (getAllUniqueCodesAfterCutoff) throw InterruptedException, aborting
+            // the whole Excel upload.
+            log.error("Error fetching latest payment date for source {}: {}", source, e.getMessage());
         }
         return null;
     }
