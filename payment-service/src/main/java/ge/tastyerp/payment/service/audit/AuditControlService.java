@@ -135,16 +135,21 @@ public class AuditControlService {
                 .collect(Collectors.toList());
 
         Map<String, String> overrides = fetchCategoryOverrides();
+        Map<String, BigDecimal> vatRates = fetchProductVatRates();
 
         return ProductCatalogDto.builder()
-                .purchased(distinctRows(movements, WaybillType.PURCHASE, overrides))
-                .sold(distinctRows(movements, WaybillType.SALE, overrides))
+                .purchased(distinctRows(movements, WaybillType.PURCHASE, overrides, vatRates))
+                .sold(distinctRows(movements, WaybillType.SALE, overrides, vatRates))
                 .build();
     }
 
+    /** Default VAT applied to every product unless overridden (Georgian standard). */
+    private static final BigDecimal DEFAULT_VAT_PERCENT = new BigDecimal("18");
+
     private List<ProductCatalogDto.Row> distinctRows(List<ProductMovementDto> movements,
                                                      WaybillType type,
-                                                     Map<String, String> overrides) {
+                                                     Map<String, String> overrides,
+                                                     Map<String, BigDecimal> vatRates) {
         Map<String, ProductCatalogDto.Row> byName = new LinkedHashMap<>();
         for (ProductMovementDto m : movements) {
             if (m.getType() != type || m.getProductName() == null) continue;
@@ -153,10 +158,13 @@ public class AuditControlService {
             String key = overrideKey(name);
             boolean overridden = overrides.containsKey(key);
             String category = overridden ? overrides.get(key) : m.getParentCategory();
+            BigDecimal vatOverride = vatRates.get(key);
             byName.put(name, ProductCatalogDto.Row.builder()
                     .name(name)
                     .category(category)
                     .overridden(overridden)
+                    .vatPercent(vatOverride != null ? vatOverride : DEFAULT_VAT_PERCENT)
+                    .vatOverridden(vatOverride != null)
                     .build());
         }
         List<ProductCatalogDto.Row> rows = new ArrayList<>(byName.values());
@@ -186,6 +194,8 @@ public class AuditControlService {
                                                  Map<String, BigDecimal> writeOffRates) {
         Map<String, List<ProductMovementDto>> byCategory = movements.stream()
                 .filter(m -> m.getParentCategory() != null)
+                // SUPPLIES are purchase-only expenses — never part of the meat ledger.
+                .filter(m -> !ProductHierarchy.isSupplies(m.getParentCategory()))
                 .filter(m -> productFilter == null || productFilter.isBlank()
                         || productFilter.equalsIgnoreCase(m.getParentCategory()))
                 .collect(Collectors.groupingBy(ProductMovementDto::getParentCategory));
@@ -303,6 +313,9 @@ public class AuditControlService {
         Set<String> excludedEntities = new HashSet<>();
 
         for (ProductMovementDto m : movements) {
+            // Supplies (car parts, maintenance) are not meat trade — keep them out
+            // of Real Total Sales/Purchases; they surface in their own section.
+            if (ProductHierarchy.isSupplies(m.getParentCategory())) continue;
             BigDecimal amount = m.getAmount() != null ? m.getAmount() : BigDecimal.ZERO;
             boolean real = isReal(m.getCounterpartyId(), realEntityMap);
             String entity = m.getCounterpartyId() != null ? m.getCounterpartyId() : "UNKNOWN";
@@ -552,6 +565,33 @@ public class AuditControlService {
             log.warn("Could not fetch unreal customers, treating all as real: {}", e.getMessage());
         }
         return Collections.emptyList();
+    }
+
+    /**
+     * Per-product VAT-rate overrides from config-service, keyed by the same
+     * lowercased/trimmed name as the category overrides. Products absent here
+     * default to 18% at the point of use. Optional refinement — a config outage
+     * just means everything falls back to the default.
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, BigDecimal> fetchProductVatRates() {
+        Map<String, BigDecimal> map = new HashMap<>();
+        try {
+            String url = configServiceUrl + "/api/config/product-vat-rates";
+            Map<String, Object> response = internalRestTemplate.getForObject(url, Map.class);
+            if (response != null && response.get("data") instanceof List) {
+                for (Map<String, Object> c : (List<Map<String, Object>>) response.get("data")) {
+                    Object name = c.get("name");
+                    Object percent = c.get("percent");
+                    if (name != null && percent != null) {
+                        map.put(overrideKey(String.valueOf(name)), new BigDecimal(String.valueOf(percent)));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Could not fetch product VAT rates, using 18% default: {}", e.getMessage());
+        }
+        return map;
     }
 
     private boolean isReal(String id, Map<String, Boolean> realEntityMap) {

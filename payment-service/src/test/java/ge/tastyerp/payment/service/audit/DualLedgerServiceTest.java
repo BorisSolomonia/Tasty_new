@@ -11,6 +11,7 @@ import java.time.LocalDate;
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Parity tests for BOR-76 dual-ledger analytics against the issue's worked
@@ -37,10 +38,19 @@ class DualLedgerServiceTest {
                               Map<String, CategoryLedgerInputDto> inputs,
                               Map<String, FormalSalesCustomerDto> formal,
                               Map<String, BigDecimal> writeOff) {
+        return run(movements, inputs, formal, writeOff, Map.of());
+    }
+
+    private DualLedgerDto run(List<ProductMovementDto> movements,
+                              Map<String, CategoryLedgerInputDto> inputs,
+                              Map<String, FormalSalesCustomerDto> formal,
+                              Map<String, BigDecimal> writeOff,
+                              Map<String, BigDecimal> productVatRates) {
         return svc.compute(movements, S, E, null,
                 inputs == null ? Map.of() : inputs,
                 formal == null ? Map.of() : formal,
-                writeOff == null ? Map.of() : writeOff);
+                writeOff == null ? Map.of() : writeOff,
+                productVatRates == null ? Map.of() : productVatRates);
     }
 
     private static Map<String, CategoryLedgerInputDto> input(CategoryLedgerInputDto in) {
@@ -188,6 +198,33 @@ class DualLedgerServiceTest {
                 input(CategoryLedgerInputDto.builder().category(CAT).docSalePrice(bd("34.22")).build()),
                 null, Map.of(CAT, bd("15")));
         assertEquals(0, r.getVat().get(0).getProjectedVatPayable().compareTo(bd("137.70")));
+    }
+
+    @Test
+    void vat_perProductZeroRateHasNoOutputVat() {
+        // A product set to 0% VAT (VAT-exempt sheep/chicken) yields no output VAT.
+        DualLedgerDto r = run(List.of(pm(WaybillType.SALE, CAT, "100", "3422", null)),
+                null, null, null, Map.of("x", bd("0")));
+        CategoryVatDto v = r.getVat().get(0);
+        assertEquals(0, v.getSalesVat().compareTo(bd("0")), "0% product -> no output VAT");
+        assertEquals(0, v.getVatPayable().compareTo(bd("0")));
+    }
+
+    // ==================== Supplies ====================
+
+    @Test
+    void supplies_inputVatDeductibleAndExcludedFromMeatMath() {
+        // Supplies purchase 118 @ default 18% -> input VAT 18.00 (deductible).
+        DualLedgerDto r = run(List.of(pm(WaybillType.PURCHASE, ProductHierarchy.SUPPLIES, "0", "118", null)),
+                null, null, null, Map.of());
+        assertEquals(1, r.getSupplies().size());
+        assertEquals(0, r.getTotalSuppliesSpend().compareTo(bd("118")));
+        assertEquals(0, r.getTotalSuppliesInputVat().compareTo(bd("18")), "18% of 118");
+        // Excluded from cash gaps and from the meat VAT list...
+        assertTrue(r.getPurchaseShortages().isEmpty(), "supplies not a purchase shortage");
+        assertTrue(r.getVat().isEmpty(), "supplies not a meat VAT row");
+        // ...but its input VAT reduces the overall payable: 0 (meat) - 18 = -18.
+        assertEquals(0, r.getTotalVatPayable().compareTo(bd("-18")));
     }
 
     // ==================== Determinism ====================

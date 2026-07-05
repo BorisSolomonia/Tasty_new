@@ -37,17 +37,24 @@ public final class ProductHierarchy {
     /** Parent category codes. */
     public static final String BEEF = "BEEF";
     public static final String PORK = "PORK";
+    public static final String SHEEP = "SHEEP";
+    public static final String CHICKEN = "CHICKEN";
     public static final String FAT = "FAT";
+    public static final String OTHER_FOOD = "OTHER_FOOD";
+    /** Purchase-only supplies (car maintenance, spare parts): never sold, own section. */
+    public static final String SUPPLIES = "SUPPLIES";
     public static final String OTHER = "OTHER";
 
     /**
      * Categories that participate in the daily posib write-off (28% of purchased).
-     * Only the primary meats — Fat and Other are passthrough (own ledger, no write-off).
+     * Only whole-carcass primary meats — everything else is passthrough (own
+     * ledger, no write-off). Sheep/Chicken are passthrough unless changed here.
      */
     private static final Set<String> WRITE_OFF_CATEGORIES = Set.of(BEEF, PORK);
 
-    /** Every selectable category, in display order (BEEF, PORK, FAT, OTHER). */
-    private static final List<String> ALL_CATEGORIES = List.of(BEEF, PORK, FAT, OTHER);
+    /** Every selectable category, in display order. */
+    private static final List<String> ALL_CATEGORIES =
+            List.of(BEEF, PORK, SHEEP, CHICKEN, FAT, OTHER_FOOD, SUPPLIES, OTHER);
 
     /**
      * Auto-classification roots: category -> keyword roots (canonical Georgian
@@ -69,6 +76,20 @@ public final class ProductHierarchy {
                 "ქონი",              // tallow / fat (ღორის ქონი, საქონლის ქონი) — safe: not a substring of საქონლის
                 "ცხიმ"               // ცხიმი – fat
         ));
+        ROOTS.put(SHEEP, List.of(
+                "ცხვრის",            // mutton (ცხვრის ხორცი)
+                "ცხვარ",             // sheep
+                "ბატკნის",           // lamb
+                "ბატკან",
+                "კრავ"               // lamb (კრავის ხორცი)
+        ));
+        ROOTS.put(CHICKEN, List.of(
+                "ქათმის",            // chicken (ქათმის ხორცი)
+                "ქათამ",             // chicken
+                "წიწილ"              // broiler / chick
+        ));
+        // OTHER_FOOD and SUPPLIES have no auto-roots: they are assigned manually
+        // on the Product Categories page (heterogeneous, no reliable keyword).
     }
 
     private ProductHierarchy() {
@@ -124,11 +145,24 @@ public final class ProductHierarchy {
         return WRITE_OFF_CATEGORIES.contains(category);
     }
 
+    /**
+     * Whether a category is a purchase-only supply (car maintenance, spare parts):
+     * never sold, excluded from the meat inventory/cash-gap math and shown in its
+     * own Supplies section.
+     */
+    public static boolean isSupplies(String category) {
+        return SUPPLIES.equals(category);
+    }
+
     /** Human-facing category label. */
     public static String displayName(String category) {
         if (BEEF.equals(category)) return "Beef";
         if (PORK.equals(category)) return "Pork";
+        if (SHEEP.equals(category)) return "Sheep";
+        if (CHICKEN.equals(category)) return "Chicken";
         if (FAT.equals(category)) return "Fat";
+        if (OTHER_FOOD.equals(category)) return "Other food";
+        if (SUPPLIES.equals(category)) return "Supplies";
         return "Other";
     }
 }

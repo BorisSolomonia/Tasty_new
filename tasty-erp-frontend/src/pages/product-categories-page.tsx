@@ -11,7 +11,11 @@ import type { ProductCatalog, ProductCatalogRow, ProductCategoryCode } from '@/t
 const CATEGORY_OPTIONS: { value: ProductCategoryCode; label: string }[] = [
   { value: 'BEEF', label: '🐄 Beef' },
   { value: 'PORK', label: '🐷 Pork' },
+  { value: 'SHEEP', label: '🐑 Sheep' },
+  { value: 'CHICKEN', label: '🐔 Chicken' },
   { value: 'FAT', label: 'Fat' },
+  { value: 'OTHER_FOOD', label: 'Other food' },
+  { value: 'SUPPLIES', label: '🔧 Supplies' },
   { value: 'OTHER', label: 'Other' },
 ]
 
@@ -38,6 +42,11 @@ export function ProductCategoriesPage() {
   // Apply the new category to every row with the same name in the local cache
   // (one category per name -> reflect it in both purchased and sold lists) and
   // mark the audit dashboard stale so it picks up the change.
+  const invalidateAudit = () => {
+    queryClient.invalidateQueries({ queryKey: ['audit-dashboard'] })
+    queryClient.invalidateQueries({ queryKey: ['audit-dual-ledger'] })
+  }
+
   const patchLocalCatalog = (name: string, category: ProductCategoryCode, overridden: boolean) => {
     queryClient.setQueryData<ProductCatalog>(catalogKey, (old) => {
       if (!old) return old
@@ -45,7 +54,17 @@ export function ProductCategoriesPage() {
         rows.map((r) => (r.name === name ? { ...r, category, overridden } : r))
       return { purchased: patch(old.purchased), sold: patch(old.sold) }
     })
-    queryClient.invalidateQueries({ queryKey: ['audit-dashboard'] })
+    invalidateAudit()
+  }
+
+  const patchLocalVat = (name: string, vatPercent: number, vatOverridden: boolean) => {
+    queryClient.setQueryData<ProductCatalog>(catalogKey, (old) => {
+      if (!old) return old
+      const patch = (rows: ProductCatalogRow[]) =>
+        rows.map((r) => (r.name === name ? { ...r, vatPercent, vatOverridden } : r))
+      return { purchased: patch(old.purchased), sold: patch(old.sold) }
+    })
+    invalidateAudit()
   }
 
   const setCategory = useMutation({
@@ -62,7 +81,24 @@ export function ProductCategoriesPage() {
     // Auto category is server-derived; refetch the catalog to show the reverted value.
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: catalogKey })
-      queryClient.invalidateQueries({ queryKey: ['audit-dashboard'] })
+      invalidateAudit()
+    },
+    onSettled: () => setSavingName(null),
+  })
+
+  const setVat = useMutation({
+    mutationFn: (entry: { name: string; percent: number }) => configApi.setProductVatRate(entry),
+    onMutate: ({ name }) => setSavingName(name),
+    onSuccess: (_data, entry) => patchLocalVat(entry.name, entry.percent, true),
+    onSettled: () => setSavingName(null),
+  })
+
+  const revertVat = useMutation({
+    mutationFn: (name: string) => configApi.deleteProductVatRate(name),
+    onMutate: (name) => setSavingName(name),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: catalogKey })
+      invalidateAudit()
     },
     onSettled: () => setSavingName(null),
   })
@@ -129,6 +165,8 @@ export function ProductCategoriesPage() {
             savingName={savingName}
             onSetCategory={(name, category) => setCategory.mutate({ name, category })}
             onRevert={(name) => revert.mutate(name)}
+            onSetVat={(name, percent) => setVat.mutate({ name, percent })}
+            onRevertVat={(name) => revertVat.mutate(name)}
           />
           <CategoryTable
             title="Sold products"
@@ -137,6 +175,8 @@ export function ProductCategoriesPage() {
             savingName={savingName}
             onSetCategory={(name, category) => setCategory.mutate({ name, category })}
             onRevert={(name) => revert.mutate(name)}
+            onSetVat={(name, percent) => setVat.mutate({ name, percent })}
+            onRevertVat={(name) => revertVat.mutate(name)}
           />
         </div>
       )}
@@ -151,6 +191,8 @@ function CategoryTable({
   savingName,
   onSetCategory,
   onRevert,
+  onSetVat,
+  onRevertVat,
 }: {
   title: string
   rows: ProductCatalogRow[] | undefined
@@ -158,6 +200,8 @@ function CategoryTable({
   savingName: string | null
   onSetCategory: (name: string, category: ProductCategoryCode) => void
   onRevert: (name: string) => void
+  onSetVat: (name: string, percent: number) => void
+  onRevertVat: (name: string) => void
 }) {
   return (
     <Card className="overflow-hidden">
@@ -172,6 +216,7 @@ function CategoryTable({
               <th className="w-8 px-3 py-2 text-right text-xs font-medium uppercase tracking-wide text-muted-foreground">#</th>
               <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">Product</th>
               <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">Category</th>
+              <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">VAT %</th>
             </tr>
           </thead>
           <tbody>
@@ -181,6 +226,7 @@ function CategoryTable({
                     <td className="px-3 py-2 text-right text-muted-foreground">{i + 1}</td>
                     <td className="px-3 py-2"><Skeleton className="h-4 w-48" /></td>
                     <td className="px-3 py-2"><Skeleton className="h-7 w-32" /></td>
+                    <td className="px-3 py-2"><Skeleton className="h-7 w-16" /></td>
                   </tr>
                 ))
               : (rows ?? []).map((row, i) => (
@@ -216,11 +262,20 @@ function CategoryTable({
                         )}
                       </div>
                     </td>
+                    <td className="px-3 py-2">
+                      <VatCell
+                        percent={row.vatPercent ?? 18}
+                        overridden={row.vatOverridden}
+                        disabled={savingName === row.name}
+                        onSet={(percent) => onSetVat(row.name, percent)}
+                        onRevert={() => onRevertVat(row.name)}
+                      />
+                    </td>
                   </tr>
                 ))}
             {!loading && (rows?.length ?? 0) === 0 && (
               <tr>
-                <td colSpan={3} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                <td colSpan={4} className="px-3 py-8 text-center text-sm text-muted-foreground">
                   No products in this range.
                 </td>
               </tr>
@@ -229,5 +284,68 @@ function CategoryTable({
         </table>
       </div>
     </Card>
+  )
+}
+
+// Editable per-product VAT %. Default 18; commit on blur/Enter; revert clears the override.
+function VatCell({
+  percent,
+  overridden,
+  disabled,
+  onSet,
+  onRevert,
+}: {
+  percent: number
+  overridden: boolean
+  disabled: boolean
+  onSet: (percent: number) => void
+  onRevert: () => void
+}) {
+  const [draft, setDraft] = React.useState(String(percent))
+
+  React.useEffect(() => {
+    setDraft(String(percent))
+  }, [percent])
+
+  const commit = () => {
+    const n = Number(draft)
+    if (!Number.isFinite(n) || n < 0 || n > 100) {
+      setDraft(String(percent))
+      return
+    }
+    if (n !== percent) onSet(n)
+  }
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <input
+        type="number"
+        min={0}
+        max={100}
+        step="0.5"
+        value={draft}
+        disabled={disabled}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+        }}
+        className="w-16 rounded-md border bg-background px-2 py-1 text-right text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+        aria-label="VAT percent"
+      />
+      {overridden ? (
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={onRevert}
+          title="Revert to 18% default"
+          className="rounded px-1.5 py-0.5 text-xs text-amber-600 hover:bg-amber-500/10 disabled:opacity-50"
+        >
+          ✕
+        </button>
+      ) : (
+        <span className="text-xs text-muted-foreground">18</span>
+      )}
+    </div>
   )
 }

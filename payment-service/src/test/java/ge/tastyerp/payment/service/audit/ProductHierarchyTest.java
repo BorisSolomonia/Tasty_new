@@ -67,11 +67,46 @@ class ProductHierarchyTest {
     }
 
     @Test
-    @DisplayName("Only BEEF and PORK participate in write-off; FAT and OTHER are passthrough")
+    @DisplayName("Chicken names classify as CHICKEN")
+    void chicken() {
+        assertEquals(ProductHierarchy.CHICKEN, ProductHierarchy.classify("ქათმის ხორცი"));
+        assertEquals(ProductHierarchy.CHICKEN, ProductHierarchy.classify("ქათამი"));
+        assertEquals(ProductHierarchy.CHICKEN, ProductHierarchy.classify("წიწილა"));
+    }
+
+    @Test
+    @DisplayName("Sheep / lamb names classify as SHEEP")
+    void sheep() {
+        assertEquals(ProductHierarchy.SHEEP, ProductHierarchy.classify("ცხვრის ხორცი"));
+        assertEquals(ProductHierarchy.SHEEP, ProductHierarchy.classify("ბატკნის ხორცი"));
+        assertEquals(ProductHierarchy.SHEEP, ProductHierarchy.classify("კრავის ხორცი"));
+    }
+
+    @Test
+    @DisplayName("Other-food and Supplies have no roots — auto-classify falls to OTHER (assigned manually)")
+    void otherFoodAndSuppliesAreManual() {
+        assertEquals(ProductHierarchy.OTHER, ProductHierarchy.classify("სასმელი წყალი"));
+        assertEquals(ProductHierarchy.OTHER, ProductHierarchy.classify("ავტო ნაწილი"));
+    }
+
+    @Test
+    @DisplayName("Only BEEF and PORK participate in write-off; new categories are passthrough")
     void writeOffApplicability() {
         assertTrue(ProductHierarchy.appliesWriteOff(ProductHierarchy.BEEF));
         assertTrue(ProductHierarchy.appliesWriteOff(ProductHierarchy.PORK));
         assertFalse(ProductHierarchy.appliesWriteOff(ProductHierarchy.FAT));
         assertFalse(ProductHierarchy.appliesWriteOff(ProductHierarchy.OTHER));
+        assertFalse(ProductHierarchy.appliesWriteOff(ProductHierarchy.SHEEP));
+        assertFalse(ProductHierarchy.appliesWriteOff(ProductHierarchy.CHICKEN));
+        assertFalse(ProductHierarchy.appliesWriteOff(ProductHierarchy.OTHER_FOOD));
+        assertFalse(ProductHierarchy.appliesWriteOff(ProductHierarchy.SUPPLIES));
+    }
+
+    @Test
+    @DisplayName("SUPPLIES is the only purchase-only category")
+    void suppliesFlag() {
+        assertTrue(ProductHierarchy.isSupplies(ProductHierarchy.SUPPLIES));
+        assertFalse(ProductHierarchy.isSupplies(ProductHierarchy.BEEF));
+        assertFalse(ProductHierarchy.isSupplies(ProductHierarchy.OTHER_FOOD));
     }
 }

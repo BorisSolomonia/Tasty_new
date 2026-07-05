@@ -43,6 +43,8 @@ public class DualLedgerService {
     private static final BigDecimal VAT_MUL = new BigDecimal("18");
     private static final BigDecimal VAT_DIV = new BigDecimal("118");
     private static final BigDecimal HUNDRED = new BigDecimal("100");
+    /** Default VAT applied to a product unless overridden (Georgian standard). */
+    private static final BigDecimal DEFAULT_VAT_PERCENT = new BigDecimal("18");
     private static final int MONEY = 2;
     private static final int KG = 3;
     private static final int PRICE = 6;
@@ -74,8 +76,9 @@ public class DualLedgerService {
         Map<String, CategoryLedgerInputDto> inputs = fetchDualLedgerInputs();
         Map<String, FormalSalesCustomerDto> formal = fetchFormalSalesCustomers();
         Map<String, BigDecimal> writeOffPercent = fetchWriteOffRates();
+        Map<String, BigDecimal> productVatRates = fetchProductVatRates();
 
-        return compute(movements, startDate, endDate, productFilter, inputs, formal, writeOffPercent);
+        return compute(movements, startDate, endDate, productFilter, inputs, formal, writeOffPercent, productVatRates);
     }
 
     // ==================== PURE COMPUTATION ====================
@@ -93,7 +96,8 @@ public class DualLedgerService {
                           LocalDate startDate, LocalDate endDate, String productFilter,
                           Map<String, CategoryLedgerInputDto> inputs,
                           Map<String, FormalSalesCustomerDto> formal,
-                          Map<String, BigDecimal> writeOffPercent) {
+                          Map<String, BigDecimal> writeOffPercent,
+                          Map<String, BigDecimal> productVatRates) {
 
         List<ProductMovementDto> filtered = movements.stream()
                 .filter(m -> m.getParentCategory() != null)
@@ -109,19 +113,28 @@ public class DualLedgerService {
         List<CategoryVatDto> vatList = new ArrayList<>();
 
         for (String category : categories) {
+            // SUPPLIES are purchase-only expenses handled in their own section below.
+            if (ProductHierarchy.isSupplies(category)) continue;
+
             BigDecimal purKgDoc = BigDecimal.ZERO, purAmtKg = BigDecimal.ZERO, purAmtAll = BigDecimal.ZERO;
             BigDecimal saleKgDoc = BigDecimal.ZERO, saleAmtKg = BigDecimal.ZERO, saleAmtAll = BigDecimal.ZERO;
+            // Gross grouped by the line's VAT rate, so VAT respects per-product rates.
+            Map<BigDecimal, BigDecimal> saleGrossByRate = new HashMap<>();
+            Map<BigDecimal, BigDecimal> purGrossByRate = new HashMap<>();
 
             for (ProductMovementDto m : filtered) {
                 if (!category.equals(m.getParentCategory())) continue;
                 BigDecimal amount = nz(m.getAmount());
                 BigDecimal kg = nz(m.getQuantityKg());
                 boolean isKg = isKilogram(m.getUnit());
+                BigDecimal rate = vatRate(m.getProductName(), productVatRates);
                 if (m.getType() == WaybillType.PURCHASE) {
                     purAmtAll = purAmtAll.add(amount);
+                    purGrossByRate.merge(rate, amount, BigDecimal::add);
                     if (isKg) { purKgDoc = purKgDoc.add(kg); purAmtKg = purAmtKg.add(amount); }
                 } else if (m.getType() == WaybillType.SALE) {
                     saleAmtAll = saleAmtAll.add(amount);
+                    saleGrossByRate.merge(rate, amount, BigDecimal::add);
                     if (isKg) { saleKgDoc = saleKgDoc.add(kg); saleAmtKg = saleAmtKg.add(amount); }
                 }
             }
@@ -162,9 +175,9 @@ public class DualLedgerService {
                         .build());
             }
 
-            // Part 4 — VAT (actual output − input)
-            BigDecimal salesVat = vatFromGross(saleAmtAll);
-            BigDecimal purchaseVat = vatFromGross(purAmtAll);
+            // Part 4 — VAT (actual output − input), per-product rates (default 18%)
+            BigDecimal salesVat = vatByRate(saleGrossByRate);
+            BigDecimal purchaseVat = vatByRate(purGrossByRate);
             BigDecimal vatPayable = money(salesVat.subtract(purchaseVat));
 
             BigDecimal woPct = writeOffPercent.get(category);
@@ -178,7 +191,12 @@ public class DualLedgerService {
                         avg(saleAmtKg, saleKgDoc));
                 BigDecimal projSoldKg = purKgDoc.multiply(
                         BigDecimal.ONE.subtract(woPct.divide(HUNDRED, PRICE, RoundingMode.HALF_UP)));
-                BigDecimal projSalesVat = vatFromGross(projSoldKg.multiply(salePrice));
+                // Apply the category's effective inclusive VAT fraction (from its own
+                // sales; falls back to 18% when there are no documented sales).
+                BigDecimal effFrac = saleAmtAll.signum() > 0
+                        ? salesVat.divide(saleAmtAll, 10, RoundingMode.HALF_UP)
+                        : VAT_MUL.divide(VAT_DIV, 10, RoundingMode.HALF_UP);
+                BigDecimal projSalesVat = money(projSoldKg.multiply(salePrice).multiply(effFrac));
                 projectedVatPayable = money(projSalesVat.subtract(purchaseVat));
             }
 
@@ -192,6 +210,34 @@ public class DualLedgerService {
                     .projectedVatPayable(projectedVatPayable)
                     .build());
         }
+
+        // Supplies — purchase-only (car maintenance, spare parts), own section.
+        // Aggregated per product with deductible input VAT (per the product's rate).
+        Map<String, BigDecimal[]> suppliesByProduct = new LinkedHashMap<>(); // name -> [kg, amount]
+        for (ProductMovementDto m : filtered) {
+            if (!ProductHierarchy.isSupplies(m.getParentCategory())) continue;
+            if (m.getType() != WaybillType.PURCHASE) continue;
+            String name = m.getProductName() != null && !m.getProductName().isBlank()
+                    ? m.getProductName().trim() : "(unnamed)";
+            BigDecimal[] agg = suppliesByProduct.computeIfAbsent(name, k -> new BigDecimal[]{BigDecimal.ZERO, BigDecimal.ZERO});
+            if (isKilogram(m.getUnit())) agg[0] = agg[0].add(nz(m.getQuantityKg()));
+            agg[1] = agg[1].add(nz(m.getAmount()));
+        }
+        List<SuppliesLineDto> supplies = new ArrayList<>();
+        BigDecimal totalSuppliesSpend = BigDecimal.ZERO, totalSuppliesInputVat = BigDecimal.ZERO;
+        for (Map.Entry<String, BigDecimal[]> e : suppliesByProduct.entrySet()) {
+            BigDecimal amount = e.getValue()[1];
+            BigDecimal inputVat = vatAtRate(amount, vatRate(e.getKey(), productVatRates));
+            supplies.add(SuppliesLineDto.builder()
+                    .productName(e.getKey())
+                    .quantityKg(kg(e.getValue()[0]))
+                    .amount(money(amount))
+                    .inputVat(inputVat)
+                    .build());
+            totalSuppliesSpend = totalSuppliesSpend.add(amount);
+            totalSuppliesInputVat = totalSuppliesInputVat.add(inputVat);
+        }
+        supplies.sort(Comparator.comparing(SuppliesLineDto::getProductName));
 
         // Part 3 — formal-sales commission AR (all configured formal customers)
         List<FormalCommissionDto> formalCommissions = new ArrayList<>();
@@ -218,24 +264,56 @@ public class DualLedgerService {
         formalCommissions.sort(Comparator.comparing(
                 f -> f.getCustomerName() != null ? f.getCustomerName() : f.getCustomerId()));
 
+        // Supplies input VAT is deductible: it reduces the overall VAT payable.
+        BigDecimal totalVatPayable = money(
+                sum(vatList, CategoryVatDto::getVatPayable).subtract(money(totalSuppliesInputVat)));
+
         return DualLedgerDto.builder()
                 .startDate(startDate).endDate(endDate).productFilter(productFilter)
                 .purchaseShortages(purchaseShortages)
                 .saleSurpluses(saleSurpluses)
                 .formalCommissions(formalCommissions)
                 .vat(vatList)
+                .supplies(supplies)
                 .totalPurchaseShortage(sum(purchaseShortages, CategoryCashGapDto::getGap))
                 .totalSaleSurplus(sum(saleSurpluses, CategoryCashGapDto::getGap))
                 .totalFormalCommission(sum(formalCommissions, FormalCommissionDto::getCommissionAr))
-                .totalVatPayable(sum(vatList, CategoryVatDto::getVatPayable))
+                .totalVatPayable(totalVatPayable)
+                .totalSuppliesSpend(money(totalSuppliesSpend))
+                .totalSuppliesInputVat(money(totalSuppliesInputVat))
                 .build();
     }
 
     // ==================== HELPERS (math) ====================
 
-    private static BigDecimal vatFromGross(BigDecimal gross) {
-        if (gross == null || gross.signum() == 0) return BigDecimal.ZERO.setScale(MONEY);
-        return gross.multiply(VAT_MUL).divide(VAT_DIV, MONEY, RoundingMode.HALF_UP);
+    /** The VAT rate (%) for a product: override if present, else 18% default. */
+    private static BigDecimal vatRate(String productName, Map<String, BigDecimal> productVatRates) {
+        if (productName == null) return DEFAULT_VAT_PERCENT;
+        BigDecimal r = productVatRates.get(productName.trim().toLowerCase());
+        return r != null ? r : DEFAULT_VAT_PERCENT;
+    }
+
+    /** VAT-inclusive tax on {@code gross} at {@code ratePercent}: gross × r/(100+r). */
+    private static BigDecimal vatAtRate(BigDecimal gross, BigDecimal ratePercent) {
+        if (gross == null || gross.signum() == 0 || ratePercent == null || ratePercent.signum() == 0) {
+            return BigDecimal.ZERO.setScale(MONEY);
+        }
+        return gross.multiply(ratePercent).divide(ratePercent.add(HUNDRED), MONEY, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * Total VAT for gross amounts grouped by rate: Σ grossᵣ × r/(100+r), summed in
+     * high precision and rounded once. For a single 18% rate this is exactly
+     * {@code gross × 18/118}, preserving the pre-per-product numbers.
+     */
+    private static BigDecimal vatByRate(Map<BigDecimal, BigDecimal> grossByRate) {
+        BigDecimal acc = BigDecimal.ZERO;
+        for (Map.Entry<BigDecimal, BigDecimal> e : grossByRate.entrySet()) {
+            BigDecimal r = e.getKey();
+            if (r == null || r.signum() == 0) continue;
+            acc = acc.add(e.getValue().multiply(r).divide(r.add(HUNDRED), 10, RoundingMode.HALF_UP));
+        }
+        return acc.setScale(MONEY, RoundingMode.HALF_UP);
     }
 
     private static BigDecimal avg(BigDecimal amount, BigDecimal kg) {
@@ -413,6 +491,27 @@ public class DualLedgerService {
             }
         } catch (Exception e) {
             log.warn("Could not fetch write-off rates, using default: {}", e.getMessage());
+        }
+        return map;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, BigDecimal> fetchProductVatRates() {
+        Map<String, BigDecimal> map = new HashMap<>();
+        try {
+            String url = configServiceUrl + "/api/config/product-vat-rates";
+            Map<String, Object> response = internalRestTemplate.getForObject(url, Map.class);
+            if (response != null && response.get("data") instanceof List) {
+                for (Map<String, Object> c : (List<Map<String, Object>>) response.get("data")) {
+                    Object name = c.get("name");
+                    Object percent = c.get("percent");
+                    if (name != null && percent != null) {
+                        map.put(overrideKey(String.valueOf(name)), new BigDecimal(String.valueOf(percent)));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Could not fetch product VAT rates, using 18% default: {}", e.getMessage());
         }
         return map;
     }

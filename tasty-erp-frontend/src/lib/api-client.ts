@@ -382,6 +382,24 @@ export const configApi = {
     await fetchWithAuth('/config/product-categories', { method: 'DELETE', params: { name } })
   },
 
+  // Per-product VAT-rate overrides (default 18%)
+  getProductVatRates: async () => {
+    const response = await fetchWithAuth('/config/product-vat-rates')
+    return jsonData<Array<import('@/types/domain').ProductVatRate>>(response)
+  },
+
+  setProductVatRate: async (entry: import('@/types/domain').ProductVatRate) => {
+    const response = await fetchWithAuth('/config/product-vat-rates', {
+      method: 'PUT',
+      body: JSON.stringify(entry),
+    })
+    return jsonData<import('@/types/domain').ProductVatRate>(response)
+  },
+
+  deleteProductVatRate: async (name: string) => {
+    await fetchWithAuth('/config/product-vat-rates', { method: 'DELETE', params: { name } })
+  },
+
   // Per-category "possible write-off" rates (% of purchased kg) for Audit Control
   getWriteOffRates: async () => {
     const response = await fetchWithAuth('/config/write-off-rates')

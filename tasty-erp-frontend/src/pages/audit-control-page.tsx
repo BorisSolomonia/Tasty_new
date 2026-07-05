@@ -11,6 +11,7 @@ import type {
   DualLedger,
   FormalCommission,
   InventoryLedger,
+  SuppliesLine,
 } from '@/types/domain'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -22,6 +23,11 @@ const PRODUCT_FILTERS = [
   { value: '', label: 'All products' },
   { value: 'BEEF', label: 'Beef' },
   { value: 'PORK', label: 'Pork' },
+  { value: 'SHEEP', label: 'Sheep' },
+  { value: 'CHICKEN', label: 'Chicken' },
+  { value: 'FAT', label: 'Fat' },
+  { value: 'OTHER_FOOD', label: 'Other food' },
+  { value: 'SUPPLIES', label: 'Supplies' },
   { value: 'OTHER', label: 'Other' },
 ]
 
@@ -57,7 +63,9 @@ export function AuditControlPage() {
         endDate: applied.endDate,
         product: applied.product || undefined,
       }),
-    enabled: Boolean(applied.startDate && applied.endDate) && (tab === 'dual-ledger' || tab === 'vat'),
+    enabled:
+      Boolean(applied.startDate && applied.endDate) &&
+      (tab === 'dual-ledger' || tab === 'vat' || tab === 'supplies'),
     staleTime: 1000 * 60 * 5,
     retry: 1,
   })
@@ -136,6 +144,7 @@ export function AuditControlPage() {
               <TabsTrigger value="reconciliation">Reconciliation</TabsTrigger>
               <TabsTrigger value="dual-ledger">Dual-Ledger</TabsTrigger>
               <TabsTrigger value="vat">VAT</TabsTrigger>
+              <TabsTrigger value="supplies">Supplies</TabsTrigger>
             </TabsList>
 
             <TabsContent value="inventory" className="space-y-4">
@@ -160,6 +169,10 @@ export function AuditControlPage() {
 
             <TabsContent value="vat" className="space-y-4">
               <VatTab query={dualLedgerQuery} />
+            </TabsContent>
+
+            <TabsContent value="supplies" className="space-y-4">
+              <SuppliesTab query={dualLedgerQuery} />
             </TabsContent>
           </Tabs>
         </>
@@ -584,6 +597,86 @@ function VatTab({ query }: { query: DualQuery }) {
             ) : null}
           </table>
         </div>
+        {query.data.totalSuppliesInputVat > 0 ? (
+          <div className="border-t px-4 py-2 text-xs text-muted-foreground">
+            Total already nets a deductible supplies input-VAT credit of{' '}
+            <span className="font-medium">{formatCurrency(query.data.totalSuppliesInputVat)}</span> (see the
+            Supplies tab).
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ==================== Supplies tab (purchase-only expenses) ====================
+
+function SuppliesTab({ query }: { query: DualQuery }) {
+  if (query.isError) {
+    return (
+      <Card>
+        <CardContent className="p-6 text-sm text-destructive">
+          Failed to load supplies: {(query.error as Error)?.message}
+        </CardContent>
+      </Card>
+    )
+  }
+  if (query.isLoading || !query.data) {
+    return <Skeleton className="h-64 w-full" />
+  }
+  const rows: SuppliesLine[] = query.data.supplies
+  return (
+    <Card>
+      <CardHeader className="p-4 pb-2">
+        <CardTitle className="text-base">Supplies (purchase-only)</CardTitle>
+        <CardDescription>
+          Non-sold purchases — car maintenance, spare parts, etc. Excluded from the meat inventory and cash-gap
+          math; their input VAT is deductible and already credited in the VAT tab. Assign products to the
+          Supplies category on the Product Categories page.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y text-sm">
+            <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
+              <tr>
+                <Th>Product</Th>
+                <Th right>Qty (kg)</Th>
+                <Th right>Spend</Th>
+                <Th right>Input VAT</Th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {rows.map((r) => (
+                <tr key={r.productName}>
+                  <Td>{r.productName}</Td>
+                  <Td right>{formatNumber(r.quantityKg)}</Td>
+                  <Td right>{formatCurrency(r.amount)}</Td>
+                  <Td right>{formatCurrency(r.inputVat)}</Td>
+                </tr>
+              ))}
+              {!rows.length ? (
+                <tr>
+                  <Td>
+                    <span className="text-muted-foreground">
+                      No supplies purchases in range. Tag products as "Supplies" on the Product Categories page.
+                    </span>
+                  </Td>
+                </tr>
+              ) : null}
+            </tbody>
+            {rows.length ? (
+              <tfoot>
+                <tr className="border-t font-medium">
+                  <Td>Total</Td>
+                  <Td right> </Td>
+                  <Td right>{formatCurrency(query.data.totalSuppliesSpend)}</Td>
+                  <Td right>{formatCurrency(query.data.totalSuppliesInputVat)}</Td>
+                </tr>
+              </tfoot>
+            ) : null}
+          </table>
+        </div>
       </CardContent>
     </Card>
   )
@@ -773,7 +866,11 @@ function InventorySection({ ledgers }: { ledgers: InventoryLedger[] }) {
 const CATEGORY_LABELS: Record<string, string> = {
   BEEF: '🐄 Beef',
   PORK: '🐷 Pork',
+  SHEEP: '🐑 Sheep',
+  CHICKEN: '🐔 Chicken',
   FAT: 'Fat',
+  OTHER_FOOD: 'Other food',
+  SUPPLIES: '🔧 Supplies',
   OTHER: 'Other',
 }
 

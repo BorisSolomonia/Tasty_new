@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -28,7 +29,10 @@ public class ProductCatalogDto {
     @AllArgsConstructor
     public static class Row {
         private String name;         // exact RS.ge product name (unique within its list)
-        private String category;     // resolved category: BEEF / PORK / FAT / OTHER
+        private String category;     // resolved category (user override if present, else auto)
         private boolean overridden;  // true if an explicit user override drives the category
+
+        private BigDecimal vatPercent;  // resolved VAT % for this product (override else default 18)
+        private boolean vatOverridden;  // true if the VAT % is a user override (not the 18 default)
     }
 }

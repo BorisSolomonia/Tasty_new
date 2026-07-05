@@ -35,10 +35,14 @@ public class DualLedgerDto {
     private List<FormalCommissionDto> formalCommissions;
     /** Part 4 — per-category VAT position. */
     private List<CategoryVatDto> vat;
+    /** Purchase-only supplies (car maintenance, spare parts) — own section. */
+    private List<SuppliesLineDto> supplies;
 
     // Grand totals
     private BigDecimal totalPurchaseShortage; // Σ gap (negative = net shortage)
     private BigDecimal totalSaleSurplus;      // Σ gap (positive = net surplus)
     private BigDecimal totalFormalCommission; // Σ commissionAr
-    private BigDecimal totalVatPayable;       // Σ vatPayable (actual)
+    private BigDecimal totalVatPayable;       // Σ vatPayable incl. supplies input VAT
+    private BigDecimal totalSuppliesSpend;    // Σ supplies amount
+    private BigDecimal totalSuppliesInputVat; // Σ supplies input VAT (deductible)
 }

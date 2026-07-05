@@ -211,6 +211,13 @@ export type CategoryVat = {
   projectedVatPayable?: number | null
 }
 
+export type SuppliesLine = {
+  productName: string
+  quantityKg: number
+  amount: number
+  inputVat: number
+}
+
 export type DualLedger = {
   startDate: string
   endDate: string
@@ -219,10 +226,13 @@ export type DualLedger = {
   saleSurpluses: CategoryCashGap[]
   formalCommissions: FormalCommission[]
   vat: CategoryVat[]
+  supplies: SuppliesLine[]
   totalPurchaseShortage: number
   totalSaleSurplus: number
   totalFormalCommission: number
   totalVatPayable: number
+  totalSuppliesSpend: number
+  totalSuppliesInputVat: number
 }
 
 // Editable config
@@ -263,7 +273,15 @@ export type DebtOverview = {
   totalOutstanding: number
 }
 
-export type ProductCategoryCode = 'BEEF' | 'PORK' | 'FAT' | 'OTHER'
+export type ProductCategoryCode =
+  | 'BEEF'
+  | 'PORK'
+  | 'SHEEP'
+  | 'CHICKEN'
+  | 'FAT'
+  | 'OTHER_FOOD'
+  | 'SUPPLIES'
+  | 'OTHER'
 
 export type ProductCategory = {
   name: string
@@ -274,6 +292,13 @@ export type ProductCatalogRow = {
   name: string
   category: ProductCategoryCode
   overridden: boolean
+  vatPercent: number
+  vatOverridden: boolean
+}
+
+export type ProductVatRate = {
+  name: string
+  percent: number
 }
 
 export type ProductCatalog = {
