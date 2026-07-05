@@ -12,13 +12,16 @@ import java.time.LocalDate;
  * (BOR-74 Phase 2).
  *
  * <h3>Model — "possible write-off"</h3>
- * For a meat processor, bone/trim loss during processing is expressed as a flat
- * <b>28% of the stock received that day</b> ("posib Write-off" = possible
- * write-off). This is the write-off that drives the running inventory.
+ * For a meat processor, bone/trim loss during processing is expressed as a
+ * percentage <b>of the stock received that day</b> ("posib Write-off" = possible
+ * write-off). The rate defaults to {@value #DEFAULT_WRITE_OFF_PERCENT_LITERAL}%
+ * but is user-editable per category (persisted in config-service); the caller
+ * passes the resolved rate in. This is the write-off that drives the running
+ * inventory.
  *
  * <pre>
  *   base            = startingInventory + purchased          (available before sales)
- *   posibWriteOff   = purchased * 0.28                        (possible write-off)
+ *   posibWriteOff   = purchased * rate                        (rate default 0.28)
  *   ending          = base - sold - posibWriteOff
  *   overage         = sold > base  ||  ending < 0
  * </pre>
@@ -33,13 +36,18 @@ import java.time.LocalDate;
 @Component
 public class WriteOffCalculator {
 
-    /** Possible write-off: 28% of the stock received (purchased) that day. */
+    /** Default possible write-off: 28% of the stock received (purchased) that day. */
     public static final BigDecimal POSSIBLE_WRITE_OFF_RATE = new BigDecimal("0.28");
+
+    /** Default rate as a whole percentage (used to seed the editable input). */
+    public static final BigDecimal DEFAULT_WRITE_OFF_PERCENT = new BigDecimal("28");
+    private static final String DEFAULT_WRITE_OFF_PERCENT_LITERAL = "28";
 
     private static final int SCALE = 3;
 
     /**
-     * Compute one ledger day.
+     * Compute one ledger day at the default 28% rate. Retained for callers/tests
+     * that don't override the rate; delegates to the rate-aware overload.
      *
      * @param date      the day
      * @param starting  inventory carried in from the previous day (kg)
@@ -50,12 +58,27 @@ public class WriteOffCalculator {
                                         BigDecimal starting,
                                         BigDecimal purchased,
                                         BigDecimal sold) {
+        return computeDay(date, starting, purchased, sold, POSSIBLE_WRITE_OFF_RATE);
+    }
+
+    /**
+     * Compute one ledger day at an explicit possible-write-off rate.
+     *
+     * @param rate write-off rate as a fraction of purchased kg (e.g. 0.28 for
+     *             28%); {@code null} falls back to {@link #POSSIBLE_WRITE_OFF_RATE}
+     */
+    public DailyLedgerRowDto computeDay(LocalDate date,
+                                        BigDecimal starting,
+                                        BigDecimal purchased,
+                                        BigDecimal sold,
+                                        BigDecimal rate) {
         BigDecimal start = nz(starting);
         BigDecimal buy = nz(purchased);
         BigDecimal sell = nz(sold);
+        BigDecimal r = rate != null ? rate : POSSIBLE_WRITE_OFF_RATE;
 
         BigDecimal base = start.add(buy);
-        BigDecimal posibWriteOff = buy.multiply(POSSIBLE_WRITE_OFF_RATE);
+        BigDecimal posibWriteOff = buy.multiply(r);
 
         BigDecimal ending = base.subtract(sell).subtract(posibWriteOff);
 

@@ -103,8 +103,15 @@ export type InventoryLedger = {
   totalSoldKg: number
   totalWriteOffKg: number
   endingInventoryKg: number
+  /** Applied write-off rate as % of purchased kg (BEEF/PORK only; null for passthrough). */
+  writeOffRatePercent: number | null
   overageDays: number
   dailyRows: DailyLedgerRow[]
+}
+
+export type WriteOffRate = {
+  category: string
+  percent: number
 }
 
 export type RealTotals = {
@@ -167,6 +174,72 @@ export type AuditDashboard = {
   exceptionDebtTotal: number
   targetedExpense: TargetedExpense
   exceptions: AuditException[]
+}
+
+// ==================== Dual-Ledger / Shadow Cash Flow (BOR-76) ====================
+
+export type CategoryCashGap = {
+  category: string
+  docKg: number
+  docPrice: number
+  docTotal: number
+  realKg: number
+  realPrice: number
+  realTotal: number
+  gap: number
+}
+
+export type FormalCommission = {
+  customerId: string
+  customerName?: string | null
+  documentedKg: number
+  documentedAr: number
+  commissionPerKg: number
+  commissionAr: number
+}
+
+export type CategoryVat = {
+  category: string
+  salesGross: number
+  salesVat: number
+  purchaseGross: number
+  purchaseVat: number
+  vatPayable: number
+  writeOffPercent: number
+  documentedPurchaseKg: number
+  documentedSoldKg: number
+  projectedVatPayable?: number | null
+}
+
+export type DualLedger = {
+  startDate: string
+  endDate: string
+  productFilter?: string | null
+  purchaseShortages: CategoryCashGap[]
+  saleSurpluses: CategoryCashGap[]
+  formalCommissions: FormalCommission[]
+  vat: CategoryVat[]
+  totalPurchaseShortage: number
+  totalSaleSurplus: number
+  totalFormalCommission: number
+  totalVatPayable: number
+}
+
+// Editable config
+export type CategoryLedgerInput = {
+  category: string
+  docPurchasePrice?: number | null
+  realPurchasePrice?: number | null
+  realPurchaseKg?: number | null
+  docSalePrice?: number | null
+  realSalePrice?: number | null
+  realSaleKg?: number | null
+}
+
+export type FormalSalesCustomer = {
+  customerId: string
+  customerName?: string | null
+  commissionPerKg: number
 }
 
 export type CustomerDebt = {

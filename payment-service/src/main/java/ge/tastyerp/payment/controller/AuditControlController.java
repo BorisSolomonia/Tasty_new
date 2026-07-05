@@ -3,9 +3,11 @@ package ge.tastyerp.payment.controller;
 import ge.tastyerp.common.dto.ApiResponse;
 import ge.tastyerp.common.dto.audit.AuditDashboardDto;
 import ge.tastyerp.common.dto.audit.AuditExceptionDto;
+import ge.tastyerp.common.dto.audit.DualLedgerDto;
 import ge.tastyerp.common.dto.audit.ProductCatalogDto;
 import ge.tastyerp.common.dto.audit.TargetedExpenseDto;
 import ge.tastyerp.payment.service.audit.AuditControlService;
+import ge.tastyerp.payment.service.audit.DualLedgerService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +31,7 @@ import java.util.List;
 public class AuditControlController {
 
     private final AuditControlService auditControlService;
+    private final DualLedgerService dualLedgerService;
 
     @GetMapping("/dashboard")
     @Operation(summary = "Get the full audit-control dashboard for a date range")
@@ -38,6 +41,16 @@ public class AuditControlController {
             @RequestParam(required = false) String product) {
         AuditDashboardDto dashboard = auditControlService.getDashboard(startDate, endDate, product);
         return ResponseEntity.ok(ApiResponse.success(dashboard));
+    }
+
+    @GetMapping("/dual-ledger")
+    @Operation(summary = "Get the dual-ledger / shadow-cash-flow analytics (BOR-76) for a date range")
+    public ResponseEntity<ApiResponse<DualLedgerDto>> getDualLedger(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) String product) {
+        DualLedgerDto result = dualLedgerService.getDualLedger(startDate, endDate, product);
+        return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     @GetMapping("/product-catalog")

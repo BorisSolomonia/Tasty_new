@@ -2,11 +2,20 @@ import * as React from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { startOfMonth, endOfMonth } from 'date-fns'
 import { AlertTriangle, Download, RefreshCw, ShieldCheck } from 'lucide-react'
-import { auditApi } from '@/lib/api-client'
-import type { AuditDashboard, InventoryLedger } from '@/types/domain'
+import { auditApi, configApi } from '@/lib/api-client'
+import type {
+  AuditDashboard,
+  CategoryCashGap,
+  CategoryLedgerInput,
+  CategoryVat,
+  DualLedger,
+  FormalCommission,
+  InventoryLedger,
+} from '@/types/domain'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatCurrency, formatNumber, formatDate, formatDateISO } from '@/lib/utils'
 
 const PRODUCT_FILTERS = [
@@ -24,6 +33,7 @@ export function AuditControlPage() {
 
   // Applied filters drive the query; the inputs are staged until "Apply".
   const [applied, setApplied] = React.useState({ startDate, endDate, product })
+  const [tab, setTab] = React.useState('inventory')
 
   const dashboardQuery = useQuery({
     queryKey: ['audit-dashboard', applied.startDate, applied.endDate, applied.product],
@@ -34,6 +44,20 @@ export function AuditControlPage() {
         product: applied.product || undefined,
       }),
     enabled: Boolean(applied.startDate && applied.endDate),
+    staleTime: 1000 * 60 * 5,
+    retry: 1,
+  })
+
+  // Dual-ledger (BOR-76) is fetched lazily — only once its tab is opened.
+  const dualLedgerQuery = useQuery({
+    queryKey: ['audit-dual-ledger', applied.startDate, applied.endDate, applied.product],
+    queryFn: () =>
+      auditApi.getDualLedger({
+        startDate: applied.startDate,
+        endDate: applied.endDate,
+        product: applied.product || undefined,
+      }),
+    enabled: Boolean(applied.startDate && applied.endDate) && (tab === 'dual-ledger' || tab === 'vat'),
     staleTime: 1000 * 60 * 5,
     retry: 1,
   })
@@ -93,18 +117,511 @@ export function AuditControlPage() {
       ) : data ? (
         <>
           <RealTotalsCards data={data} />
-          <InventorySection ledgers={data.inventoryLedgers} />
-          <ReconciliationSection
-            data={data}
-            onTogglePaid={handleTogglePaid}
-            togglingKey={paidMutation.isPending ? paidMutation.variables?.key : undefined}
-          />
-          <TargetedExpenseCard data={data} />
-          <ExceptionsCard data={data} />
+
+          <Tabs value={tab} onValueChange={setTab}>
+            <TabsList className="flex-wrap">
+              <TabsTrigger value="inventory">Inventory</TabsTrigger>
+              <TabsTrigger value="reconciliation">Reconciliation</TabsTrigger>
+              <TabsTrigger value="dual-ledger">Dual-Ledger</TabsTrigger>
+              <TabsTrigger value="vat">VAT</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="inventory" className="space-y-4">
+              <InventorySection ledgers={data.inventoryLedgers} />
+            </TabsContent>
+
+            <TabsContent value="reconciliation" className="space-y-4">
+              <ReconciliationSection
+                data={data}
+                onTogglePaid={handleTogglePaid}
+                togglingKey={paidMutation.isPending ? paidMutation.variables?.key : undefined}
+              />
+              <TargetedExpenseCard data={data} />
+              <ExceptionsCard data={data} />
+            </TabsContent>
+
+            <TabsContent value="dual-ledger" className="space-y-4">
+              <DualLedgerTab query={dualLedgerQuery} />
+            </TabsContent>
+
+            <TabsContent value="vat" className="space-y-4">
+              <VatTab query={dualLedgerQuery} />
+            </TabsContent>
+          </Tabs>
         </>
       ) : null}
     </div>
   )
+}
+
+// ==================== Dual-Ledger (BOR-76) ====================
+
+type DualQuery = {
+  data?: DualLedger
+  isLoading: boolean
+  isError: boolean
+  error: unknown
+}
+
+function DualLedgerTab({ query }: { query: DualQuery }) {
+  const queryClient = useQueryClient()
+
+  const inputsQuery = useQuery({
+    queryKey: ['dual-ledger-inputs'],
+    queryFn: () => configApi.getDualLedgerInputs(),
+    staleTime: 1000 * 60,
+  })
+  const inputsByCat = React.useMemo(() => {
+    const m = new Map<string, CategoryLedgerInput>()
+    ;(inputsQuery.data ?? []).forEach((i) => m.set(i.category, i))
+    return m
+  }, [inputsQuery.data])
+
+  const saveMutation = useMutation({
+    mutationFn: (entry: CategoryLedgerInput) => configApi.setDualLedgerInput(entry),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['audit-dual-ledger'] })
+      queryClient.invalidateQueries({ queryKey: ['dual-ledger-inputs'] })
+    },
+  })
+
+  // Merge one field into the category's override object so other overrides survive.
+  const saveField = React.useCallback(
+    (category: string, field: keyof CategoryLedgerInput, value: number | null) => {
+      const cur = inputsByCat.get(category) ?? { category }
+      saveMutation.mutate({ ...cur, category, [field]: value })
+    },
+    [inputsByCat, saveMutation]
+  )
+
+  if (query.isError) {
+    return (
+      <Card>
+        <CardContent className="p-6 text-sm text-destructive">
+          Failed to load dual-ledger: {(query.error as Error)?.message}
+        </CardContent>
+      </Card>
+    )
+  }
+  if (query.isLoading || !query.data) {
+    return <Skeleton className="h-64 w-full" />
+  }
+  const d = query.data
+  const saving = saveMutation.isPending
+
+  return (
+    <>
+      <CashGapCard
+        title="Purchase Cash Shortage"
+        subtitle="Real price paid vs the documented purchase price. Negative = cash shortage (paid more than paper)."
+        rows={d.purchaseShortages}
+        kind="purchase"
+        total={d.totalPurchaseShortage}
+        saving={saving}
+        onSaveField={saveField}
+      />
+      <CashGapCard
+        title="Sales Cash Surplus"
+        subtitle="Real price received vs the documented sale price. Positive = cash surplus (received more than paper)."
+        rows={d.saleSurpluses}
+        kind="sale"
+        total={d.totalSaleSurplus}
+        saving={saving}
+        onSaveField={saveField}
+      />
+      <FormalCommissionCard commissions={d.formalCommissions} total={d.totalFormalCommission} />
+    </>
+  )
+}
+
+// Documented | Real | Gap table, reused for purchase shortage & sale surplus.
+function CashGapCard({
+  title,
+  subtitle,
+  rows,
+  kind,
+  total,
+  saving,
+  onSaveField,
+}: {
+  title: string
+  subtitle: string
+  rows: CategoryCashGap[]
+  kind: 'purchase' | 'sale'
+  total: number
+  saving: boolean
+  onSaveField: (category: string, field: keyof CategoryLedgerInput, value: number | null) => void
+}) {
+  const docPriceField: keyof CategoryLedgerInput = kind === 'purchase' ? 'docPurchasePrice' : 'docSalePrice'
+  const realPriceField: keyof CategoryLedgerInput = kind === 'purchase' ? 'realPurchasePrice' : 'realSalePrice'
+  const realKgField: keyof CategoryLedgerInput = kind === 'purchase' ? 'realPurchaseKg' : 'realSaleKg'
+
+  return (
+    <Card>
+      <CardHeader className="p-4 pb-2">
+        <CardTitle className="text-base">{title}</CardTitle>
+        <CardDescription>{subtitle}</CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y text-sm">
+            <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
+              <tr>
+                <Th>Category</Th>
+                <Th right>Doc kg</Th>
+                <Th right>Doc price</Th>
+                <Th right>Doc total</Th>
+                <Th right>Real kg</Th>
+                <Th right>Real price</Th>
+                <Th right>Real total</Th>
+                <Th right>Gap</Th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {rows.map((r) => (
+                <tr key={r.category}>
+                  <Td>{CATEGORY_LABELS[r.category] ?? r.category}</Td>
+                  <Td right>{formatNumber(r.docKg)}</Td>
+                  <Td right>
+                    <EditableNumber
+                      value={r.docPrice}
+                      disabled={saving}
+                      onSave={(v) => onSaveField(r.category, docPriceField, v)}
+                    />
+                  </Td>
+                  <Td right>{formatCurrency(r.docTotal)}</Td>
+                  <Td right>
+                    <EditableNumber
+                      value={r.realKg}
+                      disabled={saving}
+                      onSave={(v) => onSaveField(r.category, realKgField, v)}
+                    />
+                  </Td>
+                  <Td right>
+                    <EditableNumber
+                      value={r.realPrice}
+                      disabled={saving}
+                      onSave={(v) => onSaveField(r.category, realPriceField, v)}
+                    />
+                  </Td>
+                  <Td right>{formatCurrency(r.realTotal)}</Td>
+                  <Td right>
+                    <span className={gapClass(r.gap)}>{formatCurrency(r.gap)}</span>
+                  </Td>
+                </tr>
+              ))}
+              {!rows.length ? (
+                <tr>
+                  <Td>
+                    <span className="text-muted-foreground">No movements in range.</span>
+                  </Td>
+                </tr>
+              ) : null}
+            </tbody>
+            {rows.length ? (
+              <tfoot>
+                <tr className="border-t font-medium">
+                  <Td>Total</Td>
+                  <Td right> </Td>
+                  <Td right> </Td>
+                  <Td right> </Td>
+                  <Td right> </Td>
+                  <Td right> </Td>
+                  <Td right> </Td>
+                  <Td right>
+                    <span className={gapClass(total)}>{formatCurrency(total)}</span>
+                  </Td>
+                </tr>
+              </tfoot>
+            ) : null}
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function FormalCommissionCard({
+  commissions,
+  total,
+}: {
+  commissions: FormalCommission[]
+  total: number
+}) {
+  const queryClient = useQueryClient()
+  const [customerId, setCustomerId] = React.useState('')
+  const [customerName, setCustomerName] = React.useState('')
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['audit-dual-ledger'] })
+  }
+  const addMutation = useMutation({
+    mutationFn: () =>
+      configApi.setFormalSalesCustomer({
+        customerId,
+        customerName: customerName || undefined,
+        commissionPerKg: 0.5,
+      }),
+    onSuccess: () => {
+      setCustomerId('')
+      setCustomerName('')
+      invalidate()
+    },
+  })
+  const rateMutation = useMutation({
+    mutationFn: (v: { id: string; name?: string | null; rate: number }) =>
+      configApi.setFormalSalesCustomer({ customerId: v.id, customerName: v.name ?? undefined, commissionPerKg: v.rate }),
+    onSuccess: invalidate,
+  })
+  const removeMutation = useMutation({
+    mutationFn: (id: string) => configApi.removeFormalSalesCustomer(id),
+    onSuccess: invalidate,
+  })
+
+  return (
+    <Card>
+      <CardHeader className="p-4 pb-2">
+        <CardTitle className="text-base">Formal Sales — Commission AR</CardTitle>
+        <CardDescription>
+          Documentation-only customers. Their RS.ge invoice AR is ignored; real receivable = documented kg ×
+          commission. Total commission: <span className="font-medium">{formatCurrency(total)}</span>
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3 p-4 pt-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={customerId}
+            onChange={(e) => setCustomerId(e.target.value)}
+            placeholder="Customer TIN / ID"
+            className="h-9 w-40 rounded-md border border-input bg-background px-3 text-sm"
+          />
+          <input
+            value={customerName}
+            onChange={(e) => setCustomerName(e.target.value)}
+            placeholder="Name (optional)"
+            className="h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm"
+          />
+          <Button
+            size="sm"
+            disabled={!customerId.trim() || addMutation.isPending}
+            onClick={() => addMutation.mutate()}
+          >
+            Add formal customer
+          </Button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y text-sm">
+            <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
+              <tr>
+                <Th>Customer</Th>
+                <Th right>Documented kg</Th>
+                <Th right>Documented AR (ignored)</Th>
+                <Th right>Commission /kg</Th>
+                <Th right>Commission AR</Th>
+                <Th> </Th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {commissions.map((c) => (
+                <tr key={c.customerId}>
+                  <Td>
+                    <div className="font-medium">{c.customerName || c.customerId}</div>
+                    <div className="text-xs text-muted-foreground">{c.customerId}</div>
+                  </Td>
+                  <Td right>{formatNumber(c.documentedKg)}</Td>
+                  <Td right className="text-muted-foreground line-through">
+                    {formatCurrency(c.documentedAr)}
+                  </Td>
+                  <Td right>
+                    <EditableNumber
+                      value={c.commissionPerKg}
+                      disabled={rateMutation.isPending}
+                      onSave={(v) =>
+                        rateMutation.mutate({ id: c.customerId, name: c.customerName, rate: v ?? 0 })
+                      }
+                    />
+                  </Td>
+                  <Td right className="font-medium text-emerald-600">
+                    {formatCurrency(c.commissionAr)}
+                  </Td>
+                  <Td>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={removeMutation.isPending}
+                      onClick={() => removeMutation.mutate(c.customerId)}
+                    >
+                      Remove
+                    </Button>
+                  </Td>
+                </tr>
+              ))}
+              {!commissions.length ? (
+                <tr>
+                  <Td>
+                    <span className="text-muted-foreground">No formal-sales customers configured.</span>
+                  </Td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+// ==================== VAT tab (BOR-76) ====================
+
+function VatTab({ query }: { query: DualQuery }) {
+  if (query.isError) {
+    return (
+      <Card>
+        <CardContent className="p-6 text-sm text-destructive">
+          Failed to load VAT: {(query.error as Error)?.message}
+        </CardContent>
+      </Card>
+    )
+  }
+  if (query.isLoading || !query.data) {
+    return <Skeleton className="h-64 w-full" />
+  }
+  const rows: CategoryVat[] = query.data.vat
+  const total = query.data.totalVatPayable
+  const hasProjection = rows.some((r) => r.projectedVatPayable != null)
+
+  return (
+    <Card>
+      <CardHeader className="p-4 pb-2">
+        <CardTitle className="text-base">VAT (18% inclusive)</CardTitle>
+        <CardDescription>
+          Actual liability from documented RS.ge amounts: <b>VAT payable = output − input</b>. The write-off %
+          and kg columns are context; the "Projected" column is a what-if at that write-off and does not change
+          the filed figure.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y text-sm">
+            <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
+              <tr>
+                <Th>Category</Th>
+                <Th right>Purchase gross</Th>
+                <Th right>Input VAT</Th>
+                <Th right>Sales gross</Th>
+                <Th right>Output VAT</Th>
+                <Th right>VAT payable</Th>
+                <Th right>Write-off %</Th>
+                <Th right>Purch. kg</Th>
+                <Th right>Sold kg</Th>
+                {hasProjection ? <Th right>Projected</Th> : null}
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {rows.map((r) => (
+                <tr key={r.category}>
+                  <Td>{CATEGORY_LABELS[r.category] ?? r.category}</Td>
+                  <Td right>{formatCurrency(r.purchaseGross)}</Td>
+                  <Td right>{formatCurrency(r.purchaseVat)}</Td>
+                  <Td right>{formatCurrency(r.salesGross)}</Td>
+                  <Td right>{formatCurrency(r.salesVat)}</Td>
+                  <Td right>
+                    <span className={r.vatPayable >= 0 ? 'font-medium' : 'font-medium text-emerald-600'}>
+                      {formatCurrency(r.vatPayable)}
+                    </span>
+                  </Td>
+                  <Td right>{formatNumber(r.writeOffPercent)}%</Td>
+                  <Td right>{formatNumber(r.documentedPurchaseKg)}</Td>
+                  <Td right>{formatNumber(r.documentedSoldKg)}</Td>
+                  {hasProjection ? (
+                    <Td right>
+                      {r.projectedVatPayable != null ? (
+                        <span className="text-muted-foreground">{formatCurrency(r.projectedVatPayable)}</span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </Td>
+                  ) : null}
+                </tr>
+              ))}
+              {!rows.length ? (
+                <tr>
+                  <Td>
+                    <span className="text-muted-foreground">No movements in range.</span>
+                  </Td>
+                </tr>
+              ) : null}
+            </tbody>
+            {rows.length ? (
+              <tfoot>
+                <tr className="border-t font-medium">
+                  <Td>Total VAT payable</Td>
+                  <Td right> </Td>
+                  <Td right> </Td>
+                  <Td right> </Td>
+                  <Td right> </Td>
+                  <Td right>{formatCurrency(total)}</Td>
+                  <Td right> </Td>
+                  <Td right> </Td>
+                  <Td right> </Td>
+                  {hasProjection ? <Td right> </Td> : null}
+                </tr>
+              </tfoot>
+            ) : null}
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+// Small editable numeric input reused across the dual-ledger tables.
+function EditableNumber({
+  value,
+  onSave,
+  disabled,
+}: {
+  value: number | null
+  onSave: (value: number | null) => void
+  disabled?: boolean
+}) {
+  const [draft, setDraft] = React.useState(value == null ? '' : String(value))
+
+  React.useEffect(() => {
+    setDraft(value == null ? '' : String(value))
+  }, [value])
+
+  const commit = () => {
+    const raw = draft.trim()
+    const n = raw === '' ? null : Number(raw)
+    if (raw !== '' && (!Number.isFinite(n as number) || (n as number) < 0)) {
+      setDraft(value == null ? '' : String(value))
+      return
+    }
+    if (n !== value) onSave(n)
+  }
+
+  return (
+    <input
+      type="number"
+      min={0}
+      step="0.01"
+      value={draft}
+      disabled={disabled}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+      }}
+      className="h-7 w-20 rounded border border-input bg-background px-1 text-right text-xs tabular-nums"
+    />
+  )
+}
+
+function gapClass(gap: number) {
+  if (gap < -0.005) return 'font-medium text-destructive'
+  if (gap > 0.005) return 'font-medium text-emerald-600'
+  return 'text-muted-foreground'
 }
 
 // ==================== Filter bar ====================
@@ -250,8 +767,18 @@ const CATEGORY_LABELS: Record<string, string> = {
 // with hundreds of daily rows must only re-render when their ledger changes.
 const LedgerCard = React.memo(function LedgerCard({ ledger }: { ledger: InventoryLedger }) {
   const [open, setOpen] = React.useState(false)
+  const queryClient = useQueryClient()
   const isTracked = ledger.parentCategory === 'BEEF' || ledger.parentCategory === 'PORK'
   const label = CATEGORY_LABELS[ledger.parentCategory] ?? ledger.parentCategory
+
+  // Persist the per-category write-off % server-side, then refetch the dashboard
+  // so the whole ledger (box, daily rows, ending inventory, overage flags)
+  // recomputes at the new rate — single source of truth, shared across devices.
+  const rateMutation = useMutation({
+    mutationFn: (percent: number) =>
+      configApi.setWriteOffRate({ category: ledger.parentCategory, percent }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['audit-dashboard'] }),
+  })
   return (
     <Card>
       <CardHeader className="p-4">
@@ -282,7 +809,16 @@ const LedgerCard = React.memo(function LedgerCard({ ledger }: { ledger: Inventor
           <Metric label="Opening kg" value={formatNumber(ledger.openingStockKg)} />
           <Metric label="Purchased kg" value={formatNumber(ledger.totalPurchasedKg)} />
           <Metric label="Sold kg" value={formatNumber(ledger.totalSoldKg)} />
-          <Metric label="posib Write-off kg" value={formatNumber(ledger.totalWriteOffKg)} />
+          {isTracked ? (
+            <WriteOffMetric
+              ratePercent={ledger.writeOffRatePercent ?? 28}
+              writeOffKg={ledger.totalWriteOffKg}
+              saving={rateMutation.isPending}
+              onSave={(pct) => rateMutation.mutate(pct)}
+            />
+          ) : (
+            <Metric label="posib Write-off kg" value={formatNumber(ledger.totalWriteOffKg)} />
+          )}
           <Metric label="On hand kg" value={formatNumber(ledger.endingInventoryKg)} />
         </div>
       </CardHeader>
@@ -337,6 +873,69 @@ function Metric({ label, value }: { label: string; value: string }) {
     <div className="rounded-md border bg-muted/30 px-3 py-2">
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="font-medium">{value}</div>
+    </div>
+  )
+}
+
+// "posib Write-off kg" box with an editable % on top. Typing a new percentage and
+// blurring (or pressing Enter) persists it per category; the dashboard then
+// refetches and the write-off amount here — plus the daily rows below — recompute.
+function WriteOffMetric({
+  ratePercent,
+  writeOffKg,
+  saving,
+  onSave,
+}: {
+  ratePercent: number
+  writeOffKg: number
+  saving: boolean
+  onSave: (percent: number) => void
+}) {
+  const [draft, setDraft] = React.useState(String(ratePercent))
+
+  // Re-sync the input when the persisted rate changes (e.g. after refetch).
+  React.useEffect(() => {
+    setDraft(String(ratePercent))
+  }, [ratePercent])
+
+  const commit = () => {
+    const pct = Number(draft)
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+      setDraft(String(ratePercent)) // revert invalid input
+      return
+    }
+    if (pct !== ratePercent) {
+      onSave(pct)
+    }
+  }
+
+  return (
+    <div className="rounded-md border bg-muted/30 px-3 py-2">
+      <div className="flex items-center justify-between gap-1">
+        <span className="text-xs text-muted-foreground">posib Write-off kg</span>
+        <div className="flex items-center gap-0.5">
+          <input
+            type="number"
+            min={0}
+            max={100}
+            step="0.1"
+            value={draft}
+            disabled={saving}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+            }}
+            className="h-6 w-14 rounded border border-input bg-background px-1 text-right text-xs tabular-nums"
+            aria-label="Write-off percent of purchased"
+            title="Write-off as % of purchased kg"
+          />
+          <span className="text-xs text-muted-foreground">%</span>
+        </div>
+      </div>
+      <div className="mt-0.5 font-medium tabular-nums">
+        {saving ? <span className="text-muted-foreground">…</span> : formatNumber(writeOffKg)}
+      </div>
     </div>
   )
 }
@@ -552,8 +1151,18 @@ function Th({ children, right }: { children: React.ReactNode; right?: boolean })
   return <th className={`px-3 py-2 font-medium ${right ? 'text-right' : 'text-left'}`}>{children}</th>
 }
 
-function Td({ children, right }: { children: React.ReactNode; right?: boolean }) {
-  return <td className={`px-3 py-2 ${right ? 'text-right tabular-nums' : ''}`}>{children}</td>
+function Td({
+  children,
+  right,
+  className,
+}: {
+  children: React.ReactNode
+  right?: boolean
+  className?: string
+}) {
+  return (
+    <td className={`px-3 py-2 ${right ? 'text-right tabular-nums' : ''} ${className ?? ''}`}>{children}</td>
+  )
 }
 
 function LoadingState() {

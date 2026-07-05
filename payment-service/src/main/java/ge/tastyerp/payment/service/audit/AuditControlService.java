@@ -76,9 +76,13 @@ public class AuditControlService {
         movements.forEach(m -> m.setParentCategory(resolveCategory(m.getProductName(), m.getParentCategory(), overrides)));
 
         Map<String, Boolean> realEntityMap = fetchRealEntityMap();
+        // Editable per-category write-off rates (percent of purchased kg). Fetched
+        // fresh each request (user-editable state is never cached), category ->
+        // percent; categories without an entry fall back to the default 28%.
+        Map<String, BigDecimal> writeOffRates = fetchWriteOffRates();
         long tConfig = System.currentTimeMillis();
 
-        List<InventoryLedgerDto> ledgers = buildLedgers(movements, productFilter);
+        List<InventoryLedgerDto> ledgers = buildLedgers(movements, productFilter, writeOffRates);
         RealTotalsDto realTotals = computeRealTotals(movements, realEntityMap);
         long tCompute = System.currentTimeMillis();
 
@@ -172,7 +176,8 @@ public class AuditControlService {
      * no historical physical-stock source exists yet (documented limitation);
      * inventory is then carried forward day-by-day across the range.
      */
-    public List<InventoryLedgerDto> buildLedgers(List<ProductMovementDto> movements, String productFilter) {
+    public List<InventoryLedgerDto> buildLedgers(List<ProductMovementDto> movements, String productFilter,
+                                                 Map<String, BigDecimal> writeOffRates) {
         Map<String, List<ProductMovementDto>> byCategory = movements.stream()
                 .filter(m -> m.getParentCategory() != null)
                 .filter(m -> productFilter == null || productFilter.isBlank()
@@ -181,15 +186,29 @@ public class AuditControlService {
 
         List<InventoryLedgerDto> ledgers = new ArrayList<>();
         for (Map.Entry<String, List<ProductMovementDto>> entry : byCategory.entrySet()) {
-            ledgers.add(buildLedgerForCategory(entry.getKey(), entry.getValue()));
+            ledgers.add(buildLedgerForCategory(entry.getKey(), entry.getValue(), writeOffRates));
         }
         ledgers.sort(Comparator.comparing(InventoryLedgerDto::getParentCategory));
         return ledgers;
     }
 
-    private InventoryLedgerDto buildLedgerForCategory(String category, List<ProductMovementDto> movements) {
+    private InventoryLedgerDto buildLedgerForCategory(String category, List<ProductMovementDto> movements,
+                                                      Map<String, BigDecimal> writeOffRates) {
         // OTHER / Unclassified carries inventory forward without a write-off ceiling.
         boolean applyWriteOff = ProductHierarchy.appliesWriteOff(category);
+
+        // Effective write-off percentage for this category (editable; default 28).
+        // Only meaningful for write-off categories; passthrough reports null.
+        BigDecimal ratePercent = applyWriteOff
+                ? (writeOffRates != null ? writeOffRates.get(category) : null)
+                : null;
+        if (applyWriteOff && ratePercent == null) {
+            ratePercent = WriteOffCalculator.DEFAULT_WRITE_OFF_PERCENT;
+        }
+        // Fraction of purchased kg passed to the calculator (e.g. 28% -> 0.28).
+        BigDecimal rateFraction = ratePercent != null
+                ? ratePercent.divide(new BigDecimal("100"), 6, java.math.RoundingMode.HALF_UP)
+                : WriteOffCalculator.POSSIBLE_WRITE_OFF_RATE;
 
         // Sum purchased/sold kg per active day.
         Map<LocalDate, BigDecimal> purchasedByDay = new HashMap<>();
@@ -235,7 +254,7 @@ public class AuditControlService {
             BigDecimal sold = soldByDay.getOrDefault(day, BigDecimal.ZERO);
 
             DailyLedgerRowDto row = applyWriteOff
-                    ? writeOffCalculator.computeDay(day, running, purchased, sold)
+                    ? writeOffCalculator.computeDay(day, running, purchased, sold, rateFraction)
                     : writeOffCalculator.passthroughDay(day, running, purchased, sold);
             rows.add(row);
 
@@ -256,6 +275,7 @@ public class AuditControlService {
                 .totalSoldKg(totalSold)
                 .totalWriteOffKg(totalWriteOff)
                 .endingInventoryKg(running)
+                .writeOffRatePercent(ratePercent)
                 .overageDays(overageDays)
                 .dailyRows(rows)
                 .build();
@@ -473,6 +493,33 @@ public class AuditControlService {
             // Overrides are optional refinement; if config is unreachable, fall back
             // to auto-classification rather than failing the whole dashboard.
             log.warn("Could not fetch product category overrides, using auto-classification: {}", e.getMessage());
+        }
+        return map;
+    }
+
+    /**
+     * Editable per-category write-off rates (percent of purchased kg) from
+     * config-service, keyed by category. Optional refinement: if config is
+     * unreachable the ledger falls back to the default 28% rather than failing.
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, BigDecimal> fetchWriteOffRates() {
+        Map<String, BigDecimal> map = new HashMap<>();
+        try {
+            String url = configServiceUrl + "/api/config/write-off-rates";
+            Map<String, Object> response = internalRestTemplate.getForObject(url, Map.class);
+            if (response != null && response.get("data") instanceof List) {
+                List<Map<String, Object>> items = (List<Map<String, Object>>) response.get("data");
+                for (Map<String, Object> c : items) {
+                    Object category = c.get("category");
+                    Object percent = c.get("percent");
+                    if (category != null && percent != null) {
+                        map.put(String.valueOf(category), new BigDecimal(String.valueOf(percent)));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Could not fetch write-off rates, using default 28%: {}", e.getMessage());
         }
         return map;
     }

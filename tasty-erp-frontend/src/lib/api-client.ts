@@ -382,6 +382,52 @@ export const configApi = {
     await fetchWithAuth('/config/product-categories', { method: 'DELETE', params: { name } })
   },
 
+  // Per-category "possible write-off" rates (% of purchased kg) for Audit Control
+  getWriteOffRates: async () => {
+    const response = await fetchWithAuth('/config/write-off-rates')
+    return jsonData<Array<import('@/types/domain').WriteOffRate>>(response)
+  },
+
+  setWriteOffRate: async (entry: import('@/types/domain').WriteOffRate) => {
+    const response = await fetchWithAuth('/config/write-off-rates', {
+      method: 'PUT',
+      body: JSON.stringify(entry),
+    })
+    return jsonData<import('@/types/domain').WriteOffRate>(response)
+  },
+
+  // Dual-ledger per-category input overrides (BOR-76)
+  getDualLedgerInputs: async () => {
+    const response = await fetchWithAuth('/config/dual-ledger-inputs')
+    return jsonData<Array<import('@/types/domain').CategoryLedgerInput>>(response)
+  },
+
+  setDualLedgerInput: async (entry: import('@/types/domain').CategoryLedgerInput) => {
+    const response = await fetchWithAuth('/config/dual-ledger-inputs', {
+      method: 'PUT',
+      body: JSON.stringify(entry),
+    })
+    return jsonData<import('@/types/domain').CategoryLedgerInput>(response)
+  },
+
+  // Formal-sales customers (documentation-only, per-kg commission) (BOR-76)
+  getFormalSalesCustomers: async () => {
+    const response = await fetchWithAuth('/config/formal-sales-customers')
+    return jsonData<Array<import('@/types/domain').FormalSalesCustomer>>(response)
+  },
+
+  setFormalSalesCustomer: async (entry: import('@/types/domain').FormalSalesCustomer) => {
+    const response = await fetchWithAuth('/config/formal-sales-customers', {
+      method: 'PUT',
+      body: JSON.stringify(entry),
+    })
+    return jsonData<import('@/types/domain').FormalSalesCustomer>(response)
+  },
+
+  removeFormalSalesCustomer: async (customerId: string) => {
+    await fetchWithAuth('/config/formal-sales-customers', { method: 'DELETE', params: { customerId } })
+  },
+
   // Shared exclude-from-total customer set (device-consistent)
   getExcludedCustomers: async () => {
     const response = await fetchWithAuth('/config/excluded-customers')
@@ -425,6 +471,11 @@ export const auditApi = {
   getProductCatalog: async (params: { startDate: string; endDate: string }) => {
     const response = await fetchWithAuth('/audit-control/product-catalog', { params })
     return jsonData<import('@/types/domain').ProductCatalog>(response)
+  },
+
+  getDualLedger: async (params: { startDate: string; endDate: string; product?: string }) => {
+    const response = await fetchWithAuth('/audit-control/dual-ledger', { params })
+    return jsonData<import('@/types/domain').DualLedger>(response)
   },
 
   getTargetedExpense: async (params: { startDate: string; endDate: string }) => {

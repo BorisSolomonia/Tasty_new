@@ -29,6 +29,13 @@ public class InventoryLedgerDto {
     private BigDecimal totalWriteOffKg;
     private BigDecimal endingInventoryKg;   // inventory on hand at range end
 
+    /**
+     * The possible-write-off rate applied to this category, as a percentage of
+     * purchased kg (e.g. 28). Editable per category for BEEF/PORK; null/zero for
+     * passthrough categories (FAT/OTHER) which never apply a write-off.
+     */
+    private BigDecimal writeOffRatePercent;
+
     /** Number of days where the required write-off breached the 30% ceiling. */
     private int overageDays;
 

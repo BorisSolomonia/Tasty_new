@@ -74,4 +74,31 @@ class WriteOffCalculatorTest {
         assertTrue(row.isOverage(), "selling more than available must be flagged");
         assertEquals(0, row.getWriteOffKg().compareTo(bd("14.000")), "write-off = 28% of 50kg purchased");
     }
+
+    @Test
+    void appliesAnExplicitEditableRate() {
+        // User sets 30% -> write-off = 30kg of 100kg purchased; ending = 100 - 0 - 30.
+        DailyLedgerRowDto row = calc.computeDay(day, BigDecimal.ZERO, bd("100"), BigDecimal.ZERO, bd("0.30"));
+
+        assertEquals(0, row.getWriteOffKg().compareTo(bd("30.000")), "30% of 100kg purchased");
+        assertEquals(0, row.getEndingInventoryKg().compareTo(bd("70.000")), "ending = 100 - 0 - 30");
+        assertEquals(0, row.getWriteOffPercent().compareTo(bd("30.00")), "30kg of the 100kg base");
+    }
+
+    @Test
+    void zeroRateMeansNoWriteOff() {
+        // User sets 0% -> no write-off at all, inventory carries straight through.
+        DailyLedgerRowDto row = calc.computeDay(day, BigDecimal.ZERO, bd("100"), bd("40"), BigDecimal.ZERO);
+
+        assertEquals(0, row.getWriteOffKg().compareTo(bd("0.000")), "0% -> no write-off");
+        assertEquals(0, row.getEndingInventoryKg().compareTo(bd("60.000")), "ending = 100 - 40 - 0");
+        assertFalse(row.isOverage());
+    }
+
+    @Test
+    void nullRateFallsBackToDefault28Percent() {
+        DailyLedgerRowDto row = calc.computeDay(day, BigDecimal.ZERO, bd("100"), BigDecimal.ZERO, null);
+
+        assertEquals(0, row.getWriteOffKg().compareTo(bd("28.000")), "null rate defaults to 28%");
+    }
 }
