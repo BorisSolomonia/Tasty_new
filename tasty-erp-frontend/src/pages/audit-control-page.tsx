@@ -68,13 +68,25 @@ export function AuditControlPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['audit-dashboard'] }),
   })
 
+  // Toggle a customer's "unreal" (exception) flag from the reconciliation table.
+  const unrealMutation = useMutation({
+    mutationFn: ({ id, unreal }: { id: string; unreal: boolean }) =>
+      unreal ? configApi.addUnrealCustomer(id) : configApi.removeUnrealCustomer(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['audit-dashboard'] }),
+  })
+
   const data = dashboardQuery.data
 
-  // Stable callback so memoized children (ReconciliationSection) don't re-render
+  // Stable callbacks so memoized children (ReconciliationSection) don't re-render
   // on every parent render (BOR-75 memoization).
   const handleTogglePaid = React.useCallback(
     (key: string, markedPaid: boolean) => paidMutation.mutate({ key, markedPaid }),
     // mutate is stable per TanStack Query docs
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  )
+  const handleToggleUnreal = React.useCallback(
+    (id: string, unreal: boolean) => unrealMutation.mutate({ id, unreal }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   )
@@ -135,6 +147,8 @@ export function AuditControlPage() {
                 data={data}
                 onTogglePaid={handleTogglePaid}
                 togglingKey={paidMutation.isPending ? paidMutation.variables?.key : undefined}
+                onToggleUnreal={handleToggleUnreal}
+                togglingUnrealKey={unrealMutation.isPending ? unrealMutation.variables?.id : undefined}
               />
               <TargetedExpenseCard data={data} />
               <ExceptionsCard data={data} />
@@ -947,10 +961,14 @@ const ReconciliationSection = React.memo(function ReconciliationSection({
   data,
   onTogglePaid,
   togglingKey,
+  onToggleUnreal,
+  togglingUnrealKey,
 }: {
   data: AuditDashboard
   onTogglePaid: (key: string, markedPaid: boolean) => void
   togglingKey?: string
+  onToggleUnreal: (id: string, unreal: boolean) => void
+  togglingUnrealKey?: string
 }) {
   const rows = data.reconciliation
   // Only show customers carrying a non-zero balance to keep the table focused.
@@ -963,7 +981,9 @@ const ReconciliationSection = React.memo(function ReconciliationSection({
       <CardHeader className="p-4">
         <CardTitle className="text-base">Debt reconciliation</CardTitle>
         <CardDescription>
-          Real receivables vs documentation exceptions. Toggle "Paid" to override API status.
+          Real receivables vs documentation exceptions. Tick "Unreal" for customers RS.ge documents but who
+          aren't real partners (their sales leave Real Totals and their debt moves to Exception). Toggle "Paid"
+          to override API status.
         </CardDescription>
       </CardHeader>
       <CardContent className="p-0">
@@ -973,6 +993,7 @@ const ReconciliationSection = React.memo(function ReconciliationSection({
               <tr>
                 <Th>Customer</Th>
                 <Th>Type</Th>
+                <Th>Unreal</Th>
                 <Th right>Sales</Th>
                 <Th right>Payments</Th>
                 <Th right>Real debt</Th>
@@ -997,6 +1018,17 @@ const ReconciliationSection = React.memo(function ReconciliationSection({
                     >
                       {r.realEntity ? 'Real' : 'Exception'}
                     </span>
+                  </Td>
+                  <Td>
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 cursor-pointer accent-amber-600"
+                      checked={!r.realEntity}
+                      disabled={togglingUnrealKey === r.customerId}
+                      onChange={() => onToggleUnreal(r.customerId, r.realEntity)}
+                      aria-label="Mark customer unreal"
+                      title="Mark this customer as unreal (documentation-only)"
+                    />
                   </Td>
                   <Td right>{formatCurrency(r.totalSales)}</Td>
                   <Td right>{formatCurrency(r.totalPayments)}</Td>

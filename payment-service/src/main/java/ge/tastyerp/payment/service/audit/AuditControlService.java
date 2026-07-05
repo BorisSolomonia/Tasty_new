@@ -76,6 +76,12 @@ public class AuditControlService {
         movements.forEach(m -> m.setParentCategory(resolveCategory(m.getProductName(), m.getParentCategory(), overrides)));
 
         Map<String, Boolean> realEntityMap = fetchRealEntityMap();
+        // Overlay the shared "unreal" set (customers RS.ge documents but who are
+        // not real partners): mark them non-real so their sales/purchases leave
+        // the Real Totals and their debt buckets as an exception. Canonical ids.
+        for (String id : fetchUnrealCustomers()) {
+            realEntityMap.put(TinValidator.canonicalId(id), false);
+        }
         // Editable per-category write-off rates (percent of purchased kg). Fetched
         // fresh each request (user-editable state is never cached), category ->
         // percent; categories without an entry fall back to the default 28%.
@@ -522,6 +528,30 @@ public class AuditControlService {
             log.warn("Could not fetch write-off rates, using default 28%: {}", e.getMessage());
         }
         return map;
+    }
+
+    /**
+     * The shared "unreal / exception" customer set (canonical ids) from
+     * config-service. Optional overlay: if config is unreachable, no customers
+     * are forced unreal rather than failing the dashboard.
+     */
+    @SuppressWarnings("unchecked")
+    private List<String> fetchUnrealCustomers() {
+        try {
+            String url = configServiceUrl + "/api/config/unreal-customers";
+            Map<String, Object> response = internalRestTemplate.getForObject(url, Map.class);
+            if (response != null && response.get("data") instanceof List) {
+                List<Object> data = (List<Object>) response.get("data");
+                List<String> ids = new ArrayList<>(data.size());
+                for (Object o : data) {
+                    if (o != null) ids.add(String.valueOf(o));
+                }
+                return ids;
+            }
+        } catch (Exception e) {
+            log.warn("Could not fetch unreal customers, treating all as real: {}", e.getMessage());
+        }
+        return Collections.emptyList();
     }
 
     private boolean isReal(String id, Map<String, Boolean> realEntityMap) {

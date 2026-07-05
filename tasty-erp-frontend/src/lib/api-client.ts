@@ -443,6 +443,22 @@ export const configApi = {
     const response = await fetchWithAuth('/config/excluded-customers', { method: 'DELETE', params: { customerId } })
     return jsonData<string[]>(response)
   },
+
+  // Shared unreal/exception customer set (Audit Control)
+  getUnrealCustomers: async () => {
+    const response = await fetchWithAuth('/config/unreal-customers')
+    return jsonData<string[]>(response)
+  },
+
+  addUnrealCustomer: async (customerId: string) => {
+    const response = await fetchWithAuth('/config/unreal-customers', { method: 'PUT', params: { customerId } })
+    return jsonData<string[]>(response)
+  },
+
+  removeUnrealCustomer: async (customerId: string) => {
+    const response = await fetchWithAuth('/config/unreal-customers', { method: 'DELETE', params: { customerId } })
+    return jsonData<string[]>(response)
+  },
 }
 
 // Authoritative debt (single source of truth) — every page reads this
