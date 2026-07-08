@@ -210,16 +210,17 @@ public class AuditControlService {
 
     private InventoryLedgerDto buildLedgerForCategory(String category, List<ProductMovementDto> movements,
                                                       Map<String, BigDecimal> writeOffRates) {
-        // OTHER / Unclassified carries inventory forward without a write-off ceiling.
+        // Every inventory-bearing category carries an editable rate (BOR-79);
+        // only purchase-only SUPPLIES (never in the ledger) has none.
         boolean applyWriteOff = ProductHierarchy.appliesWriteOff(category);
 
-        // Effective write-off percentage for this category (editable; default 28).
-        // Only meaningful for write-off categories; passthrough reports null.
+        // Effective write-off percentage for this category (editable; default 28
+        // for BEEF/PORK, 0 for the rest — i.e. passthrough until the user sets one).
         BigDecimal ratePercent = applyWriteOff
                 ? (writeOffRates != null ? writeOffRates.get(category) : null)
                 : null;
         if (applyWriteOff && ratePercent == null) {
-            ratePercent = WriteOffCalculator.DEFAULT_WRITE_OFF_PERCENT;
+            ratePercent = ProductHierarchy.defaultWriteOffPercent(category);
         }
         // Fraction of purchased kg passed to the calculator (e.g. 28% -> 0.28).
         BigDecimal rateFraction = ratePercent != null

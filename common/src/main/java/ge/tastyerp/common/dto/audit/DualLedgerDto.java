@@ -27,6 +27,12 @@ public class DualLedgerDto {
     private LocalDate endDate;
     private String productFilter;
 
+    /**
+     * BOR-79 — one unified card per category: purchase window, sales window and
+     * on-hand footer, fully computed server-side for the accordion dashboard.
+     */
+    private List<UnifiedCategoryCardDto> categoryCards;
+
     /** Part 1 — per-category purchase cash shortage (gap = docTotal − realTotal). */
     private List<CategoryCashGapDto> purchaseShortages;
     /** Part 2 — per-category sales cash surplus (gap = realTotal − docTotal). */

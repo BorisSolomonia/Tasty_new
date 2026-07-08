@@ -90,16 +90,30 @@ class ProductHierarchyTest {
     }
 
     @Test
-    @DisplayName("Only BEEF and PORK participate in write-off; new categories are passthrough")
+    @DisplayName("Every category carries an editable write-off except purchase-only SUPPLIES (BOR-79)")
     void writeOffApplicability() {
         assertTrue(ProductHierarchy.appliesWriteOff(ProductHierarchy.BEEF));
         assertTrue(ProductHierarchy.appliesWriteOff(ProductHierarchy.PORK));
-        assertFalse(ProductHierarchy.appliesWriteOff(ProductHierarchy.FAT));
-        assertFalse(ProductHierarchy.appliesWriteOff(ProductHierarchy.OTHER));
-        assertFalse(ProductHierarchy.appliesWriteOff(ProductHierarchy.SHEEP));
-        assertFalse(ProductHierarchy.appliesWriteOff(ProductHierarchy.CHICKEN));
-        assertFalse(ProductHierarchy.appliesWriteOff(ProductHierarchy.OTHER_FOOD));
+        assertTrue(ProductHierarchy.appliesWriteOff(ProductHierarchy.FAT));
+        assertTrue(ProductHierarchy.appliesWriteOff(ProductHierarchy.OTHER));
+        assertTrue(ProductHierarchy.appliesWriteOff(ProductHierarchy.SHEEP));
+        assertTrue(ProductHierarchy.appliesWriteOff(ProductHierarchy.CHICKEN));
+        assertTrue(ProductHierarchy.appliesWriteOff(ProductHierarchy.OTHER_FOOD));
         assertFalse(ProductHierarchy.appliesWriteOff(ProductHierarchy.SUPPLIES));
+        assertFalse(ProductHierarchy.appliesWriteOff("NOT_A_CATEGORY"));
+    }
+
+    @Test
+    @DisplayName("Write-off defaults: 28% for whole-carcass meats, 0% for the rest")
+    void defaultWriteOffPercent() {
+        assertEquals(0, ProductHierarchy.defaultWriteOffPercent(ProductHierarchy.BEEF)
+                .compareTo(new java.math.BigDecimal("28")));
+        assertEquals(0, ProductHierarchy.defaultWriteOffPercent(ProductHierarchy.PORK)
+                .compareTo(new java.math.BigDecimal("28")));
+        assertEquals(0, ProductHierarchy.defaultWriteOffPercent(ProductHierarchy.SHEEP)
+                .compareTo(java.math.BigDecimal.ZERO));
+        assertEquals(0, ProductHierarchy.defaultWriteOffPercent(ProductHierarchy.FAT)
+                .compareTo(java.math.BigDecimal.ZERO));
     }
 
     @Test

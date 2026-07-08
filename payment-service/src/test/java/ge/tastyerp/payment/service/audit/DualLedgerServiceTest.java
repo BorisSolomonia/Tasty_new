@@ -46,11 +46,21 @@ class DualLedgerServiceTest {
                               Map<String, FormalSalesCustomerDto> formal,
                               Map<String, BigDecimal> writeOff,
                               Map<String, BigDecimal> productVatRates) {
+        return run(movements, inputs, formal, writeOff, productVatRates, Set.of());
+    }
+
+    private DualLedgerDto run(List<ProductMovementDto> movements,
+                              Map<String, CategoryLedgerInputDto> inputs,
+                              Map<String, FormalSalesCustomerDto> formal,
+                              Map<String, BigDecimal> writeOff,
+                              Map<String, BigDecimal> productVatRates,
+                              Set<String> unrealCustomers) {
         return svc.compute(movements, S, E, null,
                 inputs == null ? Map.of() : inputs,
                 formal == null ? Map.of() : formal,
                 writeOff == null ? Map.of() : writeOff,
-                productVatRates == null ? Map.of() : productVatRates);
+                productVatRates == null ? Map.of() : productVatRates,
+                unrealCustomers == null ? Set.of() : unrealCustomers);
     }
 
     private static Map<String, CategoryLedgerInputDto> input(CategoryLedgerInputDto in) {
@@ -225,6 +235,93 @@ class DualLedgerServiceTest {
         assertTrue(r.getVat().isEmpty(), "supplies not a meat VAT row");
         // ...but its input VAT reduces the overall payable: 0 (meat) - 18 = -18.
         assertEquals(0, r.getTotalVatPayable().compareTo(bd("-18")));
+    }
+
+    // ==================== Unified category cards (BOR-79) ====================
+
+    @Test
+    void card_netDocKgAndNetKgPrice() {
+        // 100kg @20.06 (=2006), 30% write-off -> net 70kg; net kg price = 2006/70 = 28.66
+        DualLedgerDto r = run(List.of(pm(WaybillType.PURCHASE, CAT, "100", "2006", null)),
+                null, null, Map.of(CAT, bd("30")));
+        UnifiedCategoryCardDto c = r.getCategoryCards().get(0);
+        assertEquals(0, c.getPurchaseDocKg().compareTo(bd("100")));
+        assertEquals(0, c.getPurchaseDocPrice().compareTo(bd("20.06")));
+        assertEquals(0, c.getNetDocPurchaseKg().compareTo(bd("70")));
+        assertEquals(0, c.getNetDocKgPrice().compareTo(bd("28.66")), "2006/70 = 28.657... -> 28.66");
+    }
+
+    @Test
+    void card_debtAndVatDifference() {
+        // Debt Doc 2006, real price 26 -> Debt Real 2600; VAT diff = 594/1.18*0.18 = 90.61
+        DualLedgerDto r = run(List.of(pm(WaybillType.PURCHASE, CAT, "100", "2006", null)),
+                input(CategoryLedgerInputDto.builder().category(CAT).realPurchasePrice(bd("26")).build()),
+                null, null);
+        UnifiedCategoryCardDto c = r.getCategoryCards().get(0);
+        assertEquals(0, c.getDebtDoc().compareTo(bd("2006")));
+        assertEquals(0, c.getDebtReal().compareTo(bd("2600")));
+        assertEquals(0, c.getVatDifference().compareTo(bd("90.61")), "594 × 18/118");
+    }
+
+    @Test
+    void card_salesRealExcludesUnrealAndFormal_andSegregatesCommission() {
+        // 100kg sold @34.22: 60kg real (A), 30kg unreal (B), 10kg formal (C @0.50).
+        Map<String, FormalSalesCustomerDto> formal = new LinkedHashMap<>();
+        formal.put("300", FormalSalesCustomerDto.builder().customerId("300").commissionPerKg(bd("0.50")).build());
+        DualLedgerDto r = run(List.of(
+                        pm(WaybillType.SALE, CAT, "60", "2053.20", "100"),
+                        pm(WaybillType.SALE, CAT, "30", "1026.60", "200"),
+                        pm(WaybillType.SALE, CAT, "10", "342.20", "300")),
+                null, formal, null, Map.of(), Set.of("200"));
+        UnifiedCategoryCardDto c = r.getCategoryCards().get(0);
+        assertEquals(0, c.getSalesDocKg().compareTo(bd("100")));
+        assertEquals(0, c.getSalesDocPrice().compareTo(bd("34.22")));
+        assertEquals(0, c.getUnrealSalesKg().compareTo(bd("30")));
+        assertEquals(0, c.getFormalSalesKg().compareTo(bd("10")));
+        assertEquals(0, c.getSalesRealKg().compareTo(bd("60")), "100 - 30 unreal - 10 formal");
+        assertEquals(0, c.getRealProductSales().compareTo(bd("2053.20")), "60 × 34.22");
+        assertEquals(0, c.getFormalCommission().compareTo(bd("5.00")), "10kg × 0.50");
+        assertEquals(0, c.getSalesRealTotal().compareTo(bd("2058.20")), "product sales + commission");
+    }
+
+    @Test
+    void card_formalTakesPrecedenceOverUnreal() {
+        // A customer marked both formal and unreal counts once, as formal.
+        Map<String, FormalSalesCustomerDto> formal = new LinkedHashMap<>();
+        formal.put("300", FormalSalesCustomerDto.builder().customerId("300").commissionPerKg(bd("0.50")).build());
+        DualLedgerDto r = run(List.of(pm(WaybillType.SALE, CAT, "10", "342.20", "300")),
+                null, formal, null, Map.of(), Set.of("300"));
+        UnifiedCategoryCardDto c = r.getCategoryCards().get(0);
+        assertEquals(0, c.getFormalSalesKg().compareTo(bd("10")));
+        assertEquals(0, c.getUnrealSalesKg().compareTo(bd("0")));
+        assertEquals(0, c.getSalesRealKg().compareTo(bd("0")));
+    }
+
+    @Test
+    void card_onHandDocKg() {
+        // On hand = 0 starting + 100 × (1 − 0.30) − 50 sold = 20
+        DualLedgerDto r = run(List.of(
+                        pm(WaybillType.PURCHASE, CAT, "100", "2006", null),
+                        pm(WaybillType.SALE, CAT, "50", "1711", null)),
+                null, null, Map.of(CAT, bd("30")));
+        UnifiedCategoryCardDto c = r.getCategoryCards().get(0);
+        assertEquals(0, c.getStartingInventoryKg().compareTo(bd("0")));
+        assertEquals(0, c.getOnHandDocKg().compareTo(bd("20")));
+    }
+
+    @Test
+    void card_defaultWriteOffRates() {
+        // No stored rate: BEEF defaults to 28% (net 72), SHEEP to 0% (net 100).
+        DualLedgerDto r = run(List.of(
+                        pm(WaybillType.PURCHASE, ProductHierarchy.BEEF, "100", "2006", null),
+                        pm(WaybillType.PURCHASE, ProductHierarchy.SHEEP, "100", "1500", null)),
+                null, null, null);
+        Map<String, UnifiedCategoryCardDto> byCat = new HashMap<>();
+        r.getCategoryCards().forEach(c -> byCat.put(c.getCategory(), c));
+        assertEquals(0, byCat.get(ProductHierarchy.BEEF).getWriteOffPercent().compareTo(bd("28")));
+        assertEquals(0, byCat.get(ProductHierarchy.BEEF).getNetDocPurchaseKg().compareTo(bd("72")));
+        assertEquals(0, byCat.get(ProductHierarchy.SHEEP).getWriteOffPercent().compareTo(bd("0")));
+        assertEquals(0, byCat.get(ProductHierarchy.SHEEP).getNetDocPurchaseKg().compareTo(bd("100")));
     }
 
     // ==================== Determinism ====================

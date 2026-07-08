@@ -218,10 +218,41 @@ export type SuppliesLine = {
   inputVat: number
 }
 
+/** BOR-79 — one unified card per category: purchases | sales | on-hand footer. */
+export type UnifiedCategoryCard = {
+  category: string
+  // Purchase window
+  purchaseDocKg: number
+  purchaseDocPrice: number
+  writeOffPercent: number
+  netDocPurchaseKg: number
+  netDocKgPrice: number
+  purchaseRealKg: number
+  purchaseRealPrice: number
+  debtDoc: number
+  debtReal: number
+  vatDifference: number
+  // Sales window
+  salesDocKg: number
+  salesDocPrice: number
+  salesDocTotal: number
+  unrealSalesKg: number
+  formalSalesKg: number
+  salesRealKg: number
+  salesRealPrice: number
+  realProductSales: number
+  formalCommission: number
+  salesRealTotal: number
+  // Footer
+  startingInventoryKg: number
+  onHandDocKg: number
+}
+
 export type DualLedger = {
   startDate: string
   endDate: string
   productFilter?: string | null
+  categoryCards: UnifiedCategoryCard[]
   purchaseShortages: CategoryCashGap[]
   saleSurpluses: CategoryCashGap[]
   formalCommissions: FormalCommission[]

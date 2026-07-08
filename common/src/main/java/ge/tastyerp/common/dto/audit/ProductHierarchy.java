@@ -25,9 +25,10 @@ import java.util.Set;
  * "ღორის ხორცი" root. Veal ("ხბოს ხორცი") is a separate beef root.
  *
  * <h3>Categories</h3>
- * Only {@link #BEEF} and {@link #PORK} are tracked product categories. Everything
- * else is {@link #OTHER} ("Unclassified") — surfaced for visibility but never
- * subjected to the write-off algorithm (see {@link #appliesWriteOff}).
+ * Names that match no root fall to {@link #OTHER} ("Unclassified"). Every
+ * inventory-bearing category carries an editable write-off rate (BOR-79);
+ * only {@link #BEEF}/{@link #PORK} default to a non-zero 28% (see
+ * {@link #appliesWriteOff} / {@link #defaultWriteOffPercent}).
  *
  * Intentionally code-driven: the taxonomy is small, stable, and shared. Adding a
  * new root only means extending a list below.
@@ -46,11 +47,11 @@ public final class ProductHierarchy {
     public static final String OTHER = "OTHER";
 
     /**
-     * Categories that participate in the daily posib write-off (28% of purchased).
-     * Only whole-carcass primary meats — everything else is passthrough (own
-     * ledger, no write-off). Sheep/Chicken are passthrough unless changed here.
+     * Whole-carcass primary meats whose write-off defaults to 28% of purchased.
+     * Every other (non-supplies) category defaults to 0% — effectively
+     * passthrough until the user sets a rate (BOR-79 editable per category).
      */
-    private static final Set<String> WRITE_OFF_CATEGORIES = Set.of(BEEF, PORK);
+    private static final Set<String> DEFAULT_28_WRITE_OFF = Set.of(BEEF, PORK);
 
     /** Every selectable category, in display order. */
     private static final List<String> ALL_CATEGORIES =
@@ -137,12 +138,24 @@ public final class ProductHierarchy {
     }
 
     /**
-     * Whether a category participates in the daily posib write-off (28% of
-     * purchased). Only BEEF and PORK do; FAT and OTHER are passthrough
-     * inventories with no write-off.
+     * Whether a category carries an editable posib write-off rate. Every
+     * inventory-bearing category does (BOR-79); only purchase-only SUPPLIES has
+     * no inventory and therefore no write-off. Non-meat categories default to
+     * 0% (passthrough) until the user sets a rate — see
+     * {@link #defaultWriteOffPercent}.
      */
     public static boolean appliesWriteOff(String category) {
-        return WRITE_OFF_CATEGORIES.contains(category);
+        return isValidCategory(category) && !SUPPLIES.equals(category);
+    }
+
+    /**
+     * Default posib write-off percent for a category: 28 for whole-carcass
+     * primary meats (BEEF, PORK), 0 for everything else (passthrough until the
+     * user sets a rate).
+     */
+    public static java.math.BigDecimal defaultWriteOffPercent(String category) {
+        return DEFAULT_28_WRITE_OFF.contains(category)
+                ? new java.math.BigDecimal("28") : java.math.BigDecimal.ZERO;
     }
 
     /**

@@ -77,8 +77,10 @@ public class DualLedgerService {
         Map<String, FormalSalesCustomerDto> formal = fetchFormalSalesCustomers();
         Map<String, BigDecimal> writeOffPercent = fetchWriteOffRates();
         Map<String, BigDecimal> productVatRates = fetchProductVatRates();
+        Set<String> unrealCustomers = fetchUnrealCustomers();
 
-        return compute(movements, startDate, endDate, productFilter, inputs, formal, writeOffPercent, productVatRates);
+        return compute(movements, startDate, endDate, productFilter, inputs, formal,
+                writeOffPercent, productVatRates, unrealCustomers);
     }
 
     // ==================== PURE COMPUTATION ====================
@@ -90,14 +92,16 @@ public class DualLedgerService {
      * @param movements       category-resolved product movements in range
      * @param inputs          per-category editable overrides (may be empty)
      * @param formal          formal-sales customers keyed by canonical TIN
-     * @param writeOffPercent per-category write-off % (context / projection)
+     * @param writeOffPercent per-category write-off % (net kg / projection)
+     * @param unrealCustomers canonical TINs marked unreal in reconciliation
      */
     DualLedgerDto compute(List<ProductMovementDto> movements,
                           LocalDate startDate, LocalDate endDate, String productFilter,
                           Map<String, CategoryLedgerInputDto> inputs,
                           Map<String, FormalSalesCustomerDto> formal,
                           Map<String, BigDecimal> writeOffPercent,
-                          Map<String, BigDecimal> productVatRates) {
+                          Map<String, BigDecimal> productVatRates,
+                          Set<String> unrealCustomers) {
 
         List<ProductMovementDto> filtered = movements.stream()
                 .filter(m -> m.getParentCategory() != null)
@@ -111,6 +115,7 @@ public class DualLedgerService {
         List<CategoryCashGapDto> purchaseShortages = new ArrayList<>();
         List<CategoryCashGapDto> saleSurpluses = new ArrayList<>();
         List<CategoryVatDto> vatList = new ArrayList<>();
+        List<UnifiedCategoryCardDto> categoryCards = new ArrayList<>();
 
         for (String category : categories) {
             // SUPPLIES are purchase-only expenses handled in their own section below.
@@ -118,6 +123,11 @@ public class DualLedgerService {
 
             BigDecimal purKgDoc = BigDecimal.ZERO, purAmtKg = BigDecimal.ZERO, purAmtAll = BigDecimal.ZERO;
             BigDecimal saleKgDoc = BigDecimal.ZERO, saleAmtKg = BigDecimal.ZERO, saleAmtAll = BigDecimal.ZERO;
+            // Documented sale kg to formal / unreal customers (BOR-79): both are
+            // excluded from salesRealKg; formal kg additionally earns commission.
+            // A customer marked both formal and unreal counts once, as formal.
+            BigDecimal unrealSaleKg = BigDecimal.ZERO, formalSaleKg = BigDecimal.ZERO;
+            Map<String, BigDecimal> formalKgByCustomer = new HashMap<>();
             // Gross grouped by the line's VAT rate, so VAT respects per-product rates.
             Map<BigDecimal, BigDecimal> saleGrossByRate = new HashMap<>();
             Map<BigDecimal, BigDecimal> purGrossByRate = new HashMap<>();
@@ -135,11 +145,29 @@ public class DualLedgerService {
                 } else if (m.getType() == WaybillType.SALE) {
                     saleAmtAll = saleAmtAll.add(amount);
                     saleGrossByRate.merge(rate, amount, BigDecimal::add);
-                    if (isKg) { saleKgDoc = saleKgDoc.add(kg); saleAmtKg = saleAmtKg.add(amount); }
+                    if (isKg) {
+                        saleKgDoc = saleKgDoc.add(kg);
+                        saleAmtKg = saleAmtKg.add(amount);
+                        String canon = m.getCounterpartyId() != null
+                                ? TinValidator.canonicalId(m.getCounterpartyId()) : null;
+                        if (canon != null && formal.containsKey(canon)) {
+                            formalSaleKg = formalSaleKg.add(kg);
+                            formalKgByCustomer.merge(canon, kg, BigDecimal::add);
+                        } else if (canon != null && unrealCustomers.contains(canon)) {
+                            unrealSaleKg = unrealSaleKg.add(kg);
+                        }
+                    }
                 }
             }
 
             CategoryLedgerInputDto in = inputs.get(category);
+
+            // Effective write-off % — editable per category; defaults 28 (BEEF/PORK)
+            // or 0 (rest). Drives net purchase kg, the on-hand footer and projection.
+            BigDecimal woPct = writeOffPercent.get(category);
+            if (woPct == null) {
+                woPct = ProductHierarchy.defaultWriteOffPercent(category);
+            }
 
             // Part 1 — purchase cash shortage (gap = docTotal − realTotal)
             if (purKgDoc.signum() > 0 || hasPurchaseOverride(in)) {
@@ -180,11 +208,6 @@ public class DualLedgerService {
             BigDecimal purchaseVat = vatByRate(purGrossByRate);
             BigDecimal vatPayable = money(salesVat.subtract(purchaseVat));
 
-            BigDecimal woPct = writeOffPercent.get(category);
-            if (woPct == null) {
-                woPct = ProductHierarchy.appliesWriteOff(category)
-                        ? WriteOffCalculator.DEFAULT_WRITE_OFF_PERCENT : BigDecimal.ZERO;
-            }
             BigDecimal projectedVatPayable = null;
             if (ProductHierarchy.appliesWriteOff(category)) {
                 BigDecimal salePrice = firstNonNull(in == null ? null : in.getDocSalePrice(),
@@ -208,6 +231,56 @@ public class DualLedgerService {
                     .writeOffPercent(woPct.setScale(MONEY, RoundingMode.HALF_UP))
                     .documentedPurchaseKg(kg(purKgDoc)).documentedSoldKg(kg(saleKgDoc))
                     .projectedVatPayable(projectedVatPayable)
+                    .build());
+
+            // BOR-79 — unified category card: purchase window | sales window | on-hand.
+            BigDecimal purDocPrice = firstNonNull(in == null ? null : in.getDocPurchasePrice(),
+                    avg(purAmtKg, purKgDoc));
+            BigDecimal purRealKg = firstNonNull(in == null ? null : in.getRealPurchaseKg(), purKgDoc);
+            BigDecimal purRealPrice = firstNonNull(in == null ? null : in.getRealPurchasePrice(), purDocPrice);
+            BigDecimal netDocKg = purKgDoc.multiply(
+                    BigDecimal.ONE.subtract(woPct.divide(HUNDRED, PRICE, RoundingMode.HALF_UP)));
+            BigDecimal debtDoc = money(purKgDoc.multiply(purDocPrice));
+            BigDecimal debtReal = money(purRealKg.multiply(purRealPrice));
+            // Net kg price doc = full documented spend spread over the post-write-off kg.
+            BigDecimal netKgPriceDoc = netDocKg.signum() > 0
+                    ? purKgDoc.multiply(purDocPrice).divide(netDocKg, PRICE, RoundingMode.HALF_UP)
+                    : BigDecimal.ZERO;
+            // VAT difference = (debtReal − debtDoc) / 1.18 × 0.18, i.e. × 18/118.
+            BigDecimal vatDifference = debtReal.subtract(debtDoc)
+                    .multiply(VAT_MUL).divide(VAT_DIV, MONEY, RoundingMode.HALF_UP);
+
+            BigDecimal saleDocPrice = firstNonNull(in == null ? null : in.getDocSalePrice(),
+                    avg(saleAmtKg, saleKgDoc));
+            BigDecimal salesRealKg = saleKgDoc.subtract(unrealSaleKg).subtract(formalSaleKg);
+            BigDecimal salesRealPrice = firstNonNull(in == null ? null : in.getRealSalePrice(), saleDocPrice);
+            BigDecimal realProductSales = money(salesRealKg.multiply(salesRealPrice));
+            BigDecimal formalCommissionCat = BigDecimal.ZERO;
+            for (Map.Entry<String, BigDecimal> fe : formalKgByCustomer.entrySet()) {
+                FormalSalesCustomerDto f = formal.get(fe.getKey());
+                if (f != null) {
+                    formalCommissionCat = formalCommissionCat.add(
+                            fe.getValue().multiply(nz(f.getCommissionPerKg())));
+                }
+            }
+
+            BigDecimal startingInventory = BigDecimal.ZERO; // no physical-stock source yet
+            categoryCards.add(UnifiedCategoryCardDto.builder()
+                    .category(category)
+                    .purchaseDocKg(kg(purKgDoc)).purchaseDocPrice(price(purDocPrice))
+                    .writeOffPercent(woPct.setScale(MONEY, RoundingMode.HALF_UP))
+                    .netDocPurchaseKg(kg(netDocKg)).netDocKgPrice(price(netKgPriceDoc))
+                    .purchaseRealKg(kg(purRealKg)).purchaseRealPrice(price(purRealPrice))
+                    .debtDoc(debtDoc).debtReal(debtReal).vatDifference(vatDifference)
+                    .salesDocKg(kg(saleKgDoc)).salesDocPrice(price(saleDocPrice))
+                    .salesDocTotal(money(saleKgDoc.multiply(saleDocPrice)))
+                    .unrealSalesKg(kg(unrealSaleKg)).formalSalesKg(kg(formalSaleKg))
+                    .salesRealKg(kg(salesRealKg)).salesRealPrice(price(salesRealPrice))
+                    .realProductSales(realProductSales)
+                    .formalCommission(money(formalCommissionCat))
+                    .salesRealTotal(money(realProductSales.add(formalCommissionCat)))
+                    .startingInventoryKg(kg(startingInventory))
+                    .onHandDocKg(kg(startingInventory.add(netDocKg).subtract(saleKgDoc)))
                     .build());
         }
 
@@ -270,6 +343,7 @@ public class DualLedgerService {
 
         return DualLedgerDto.builder()
                 .startDate(startDate).endDate(endDate).productFilter(productFilter)
+                .categoryCards(categoryCards)
                 .purchaseShortages(purchaseShortages)
                 .saleSurpluses(saleSurpluses)
                 .formalCommissions(formalCommissions)
@@ -493,6 +567,28 @@ public class DualLedgerService {
             log.warn("Could not fetch write-off rates, using default: {}", e.getMessage());
         }
         return map;
+    }
+
+    /**
+     * The shared "unreal / exception" customer set as canonical TINs. Optional
+     * overlay: a config outage means no customers are excluded from the real
+     * sales rather than failing the dashboard.
+     */
+    @SuppressWarnings("unchecked")
+    private Set<String> fetchUnrealCustomers() {
+        Set<String> ids = new HashSet<>();
+        try {
+            String url = configServiceUrl + "/api/config/unreal-customers";
+            Map<String, Object> response = internalRestTemplate.getForObject(url, Map.class);
+            if (response != null && response.get("data") instanceof List) {
+                for (Object o : (List<Object>) response.get("data")) {
+                    if (o != null) ids.add(TinValidator.canonicalId(String.valueOf(o)));
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Could not fetch unreal customers, excluding none: {}", e.getMessage());
+        }
+        return ids;
     }
 
     @SuppressWarnings("unchecked")

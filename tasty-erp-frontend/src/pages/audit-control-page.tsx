@@ -1,17 +1,17 @@
 import * as React from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { startOfMonth, endOfMonth } from 'date-fns'
-import { AlertTriangle, Download, RefreshCw, ShieldCheck } from 'lucide-react'
+import { AlertTriangle, ChevronRight, Download, RefreshCw, ShieldCheck } from 'lucide-react'
 import { auditApi, configApi } from '@/lib/api-client'
 import type {
   AuditDashboard,
-  CategoryCashGap,
   CategoryLedgerInput,
   CategoryVat,
   DualLedger,
   FormalCommission,
   InventoryLedger,
   SuppliesLine,
+  UnifiedCategoryCard,
 } from '@/types/domain'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -39,7 +39,7 @@ export function AuditControlPage() {
 
   // Applied filters drive the query; the inputs are staged until "Apply".
   const [applied, setApplied] = React.useState({ startDate, endDate, product })
-  const [tab, setTab] = React.useState('inventory')
+  const [tab, setTab] = React.useState('dashboard')
 
   const dashboardQuery = useQuery({
     queryKey: ['audit-dashboard', applied.startDate, applied.endDate, applied.product],
@@ -54,7 +54,8 @@ export function AuditControlPage() {
     retry: 1,
   })
 
-  // Dual-ledger (BOR-76) is fetched lazily — only once its tab is opened.
+  // Dual-ledger drives the main dashboard tab (BOR-79) plus VAT and Supplies,
+  // so it is fetched alongside the dashboard.
   const dualLedgerQuery = useQuery({
     queryKey: ['audit-dual-ledger', applied.startDate, applied.endDate, applied.product],
     queryFn: () =>
@@ -63,12 +64,22 @@ export function AuditControlPage() {
         endDate: applied.endDate,
         product: applied.product || undefined,
       }),
-    enabled:
-      Boolean(applied.startDate && applied.endDate) &&
-      (tab === 'dual-ledger' || tab === 'vat' || tab === 'supplies'),
+    enabled: Boolean(applied.startDate && applied.endDate),
     staleTime: 1000 * 60 * 5,
     retry: 1,
   })
+
+  // Formal-sales customers (commission-only) — drives the reconciliation
+  // "Formal" checkboxes and the formal-commission card.
+  const formalQuery = useQuery({
+    queryKey: ['formal-sales-customers'],
+    queryFn: () => configApi.getFormalSalesCustomers(),
+    staleTime: 1000 * 60,
+  })
+  const formalIds = React.useMemo(
+    () => new Set((formalQuery.data ?? []).map((f) => canonicalId(f.customerId))),
+    [formalQuery.data]
+  )
 
   const paidMutation = useMutation({
     mutationFn: ({ key, markedPaid }: { key: string; markedPaid: boolean }) =>
@@ -80,7 +91,30 @@ export function AuditControlPage() {
   const unrealMutation = useMutation({
     mutationFn: ({ id, unreal }: { id: string; unreal: boolean }) =>
       unreal ? configApi.addUnrealCustomer(id) : configApi.removeUnrealCustomer(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['audit-dashboard'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['audit-dashboard'] })
+      queryClient.invalidateQueries({ queryKey: ['audit-dual-ledger'] })
+    },
+  })
+
+  // Toggle a customer's "formal" (commission-only) flag from the reconciliation
+  // table. Adding uses the default 0.50 GEL/kg rate — editable in the formal card.
+  const formalMutation = useMutation({
+    mutationFn: async ({ id, name, formal }: { id: string; name?: string | null; formal: boolean }) => {
+      if (formal) {
+        await configApi.setFormalSalesCustomer({
+          customerId: id,
+          customerName: name ?? undefined,
+          commissionPerKg: 0.5,
+        })
+      } else {
+        await configApi.removeFormalSalesCustomer(canonicalId(id))
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['formal-sales-customers'] })
+      queryClient.invalidateQueries({ queryKey: ['audit-dual-ledger'] })
+    },
   })
 
   const data = dashboardQuery.data
@@ -98,6 +132,12 @@ export function AuditControlPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   )
+  const handleToggleFormal = React.useCallback(
+    (id: string, name: string | null | undefined, formal: boolean) =>
+      formalMutation.mutate({ id, name, formal }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  )
 
   return (
     <div className="space-y-6">
@@ -106,7 +146,7 @@ export function AuditControlPage() {
         <div>
           <h1 className="text-lg font-semibold tracking-tight">Audit Control</h1>
           <p className="text-sm text-muted-foreground">
-            Inventory, processing write-offs and debt reconciliation
+            Unified dual-ledger dashboard — documented vs physical, per category
           </p>
         </div>
       </div>
@@ -140,15 +180,14 @@ export function AuditControlPage() {
 
           <Tabs value={tab} onValueChange={setTab}>
             <TabsList className="flex-wrap">
-              <TabsTrigger value="inventory">Inventory</TabsTrigger>
+              <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
               <TabsTrigger value="reconciliation">Reconciliation</TabsTrigger>
-              <TabsTrigger value="dual-ledger">Dual-Ledger</TabsTrigger>
               <TabsTrigger value="vat">VAT</TabsTrigger>
               <TabsTrigger value="supplies">Supplies</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="inventory" className="space-y-4">
-              <InventorySection ledgers={data.inventoryLedgers} />
+            <TabsContent value="dashboard" className="space-y-4">
+              <UnifiedDashboardTab query={dualLedgerQuery} ledgers={data.inventoryLedgers} />
             </TabsContent>
 
             <TabsContent value="reconciliation" className="space-y-4">
@@ -158,13 +197,13 @@ export function AuditControlPage() {
                 togglingKey={paidMutation.isPending ? paidMutation.variables?.key : undefined}
                 onToggleUnreal={handleToggleUnreal}
                 togglingUnrealKey={unrealMutation.isPending ? unrealMutation.variables?.id : undefined}
+                formalIds={formalIds}
+                onToggleFormal={handleToggleFormal}
+                togglingFormalKey={formalMutation.isPending ? formalMutation.variables?.id : undefined}
               />
+              <FormalCommissionSection query={dualLedgerQuery} />
               <TargetedExpenseCard data={data} />
               <ExceptionsCard data={data} />
-            </TabsContent>
-
-            <TabsContent value="dual-ledger" className="space-y-4">
-              <DualLedgerTab query={dualLedgerQuery} />
             </TabsContent>
 
             <TabsContent value="vat" className="space-y-4">
@@ -181,7 +220,7 @@ export function AuditControlPage() {
   )
 }
 
-// ==================== Dual-Ledger (BOR-76) ====================
+// ==================== Unified dashboard (BOR-79) ====================
 
 type DualQuery = {
   data?: DualLedger
@@ -190,7 +229,18 @@ type DualQuery = {
   error: unknown
 }
 
-function DualLedgerTab({ query }: { query: DualQuery }) {
+/**
+ * Mirror of backend TinValidator.canonicalId: digits only, leading zeros
+ * stripped (RS.ge drops leading zeros from individual TINs). Non-numeric ids
+ * fall back to the trimmed string.
+ */
+function canonicalId(id: string): string {
+  const digits = id.replace(/\D/g, '')
+  return digits ? digits.replace(/^0+(?=\d)/, '') : id.trim()
+}
+
+// One collapsible split-card per category: Purchases | Sales | On-hand footer.
+function UnifiedDashboardTab({ query, ledgers }: { query: DualQuery; ledgers: InventoryLedger[] }) {
   const queryClient = useQueryClient()
 
   const inputsQuery = useQuery({
@@ -221,11 +271,21 @@ function DualLedgerTab({ query }: { query: DualQuery }) {
     [inputsByCat, saveMutation]
   )
 
+  // Persist the per-category write-off % server-side; both the dashboard ledger
+  // and the dual-ledger cards recompute at the new rate.
+  const rateMutation = useMutation({
+    mutationFn: (v: { category: string; percent: number }) => configApi.setWriteOffRate(v),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['audit-dashboard'] })
+      queryClient.invalidateQueries({ queryKey: ['audit-dual-ledger'] })
+    },
+  })
+
   if (query.isError) {
     return (
       <Card>
         <CardContent className="p-6 text-sm text-destructive">
-          Failed to load dual-ledger: {(query.error as Error)?.message}
+          Failed to load dashboard: {(query.error as Error)?.message}
         </CardContent>
       </Card>
     )
@@ -233,138 +293,328 @@ function DualLedgerTab({ query }: { query: DualQuery }) {
   if (query.isLoading || !query.data) {
     return <Skeleton className="h-64 w-full" />
   }
-  const d = query.data
-  const saving = saveMutation.isPending
+
+  const cards = query.data.categoryCards ?? []
+  const ledgerByCat = new Map(ledgers.map((l) => [l.parentCategory, l]))
+
+  if (!cards.length) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Unified category dashboard</CardTitle>
+          <CardDescription>No product movements found for the selected range.</CardDescription>
+        </CardHeader>
+      </Card>
+    )
+  }
 
   return (
-    <>
-      <CashGapCard
-        title="Purchase Cash Shortage"
-        subtitle="Real price paid vs the documented purchase price. Negative = cash shortage (paid more than paper)."
-        rows={d.purchaseShortages}
-        kind="purchase"
-        total={d.totalPurchaseShortage}
-        saving={saving}
-        onSaveField={saveField}
-      />
-      <CashGapCard
-        title="Sales Cash Surplus"
-        subtitle="Real price received vs the documented sale price. Positive = cash surplus (received more than paper)."
-        rows={d.saleSurpluses}
-        kind="sale"
-        total={d.totalSaleSurplus}
-        saving={saving}
-        onSaveField={saveField}
-      />
-      <FormalCommissionCard commissions={d.formalCommissions} total={d.totalFormalCommission} />
-    </>
+    <div className="space-y-3">
+      {cards.map((c) => (
+        <CategoryAccordionCard
+          key={c.category}
+          card={c}
+          ledger={ledgerByCat.get(c.category)}
+          saving={saveMutation.isPending}
+          onSaveField={saveField}
+          savingRate={rateMutation.isPending}
+          onSaveRate={(percent) => rateMutation.mutate({ category: c.category, percent })}
+        />
+      ))}
+    </div>
   )
 }
 
-// Documented | Real | Gap table, reused for purchase shortage & sale surplus.
-function CashGapCard({
-  title,
-  subtitle,
-  rows,
-  kind,
-  total,
+const CategoryAccordionCard = React.memo(function CategoryAccordionCard({
+  card,
+  ledger,
   saving,
   onSaveField,
+  savingRate,
+  onSaveRate,
 }: {
-  title: string
-  subtitle: string
-  rows: CategoryCashGap[]
-  kind: 'purchase' | 'sale'
-  total: number
+  card: UnifiedCategoryCard
+  ledger?: InventoryLedger
   saving: boolean
   onSaveField: (category: string, field: keyof CategoryLedgerInput, value: number | null) => void
+  savingRate: boolean
+  onSaveRate: (percent: number) => void
 }) {
-  const docPriceField: keyof CategoryLedgerInput = kind === 'purchase' ? 'docPurchasePrice' : 'docSalePrice'
-  const realPriceField: keyof CategoryLedgerInput = kind === 'purchase' ? 'realPurchasePrice' : 'realSalePrice'
-  const realKgField: keyof CategoryLedgerInput = kind === 'purchase' ? 'realPurchaseKg' : 'realSaleKg'
+  const [open, setOpen] = React.useState(false)
+  const [showDaily, setShowDaily] = React.useState(false)
+  const label = CATEGORY_LABELS[card.category] ?? card.category
 
   return (
     <Card>
-      <CardHeader className="p-4 pb-2">
-        <CardTitle className="text-base">{title}</CardTitle>
-        <CardDescription>{subtitle}</CardDescription>
-      </CardHeader>
-      <CardContent className="p-0">
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y text-sm">
-            <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
-              <tr>
-                <Th>Category</Th>
-                <Th right>Doc kg</Th>
-                <Th right>Doc price</Th>
-                <Th right>Doc total</Th>
-                <Th right>Real kg</Th>
-                <Th right>Real price</Th>
-                <Th right>Real total</Th>
-                <Th right>Gap</Th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {rows.map((r) => (
-                <tr key={r.category}>
-                  <Td>{CATEGORY_LABELS[r.category] ?? r.category}</Td>
-                  <Td right>{formatNumber(r.docKg)}</Td>
-                  <Td right>
-                    <EditableNumber
-                      value={r.docPrice}
-                      disabled={saving}
-                      onSave={(v) => onSaveField(r.category, docPriceField, v)}
-                    />
-                  </Td>
-                  <Td right>{formatCurrency(r.docTotal)}</Td>
-                  <Td right>
-                    <EditableNumber
-                      value={r.realKg}
-                      disabled={saving}
-                      onSave={(v) => onSaveField(r.category, realKgField, v)}
-                    />
-                  </Td>
-                  <Td right>
-                    <EditableNumber
-                      value={r.realPrice}
-                      disabled={saving}
-                      onSave={(v) => onSaveField(r.category, realPriceField, v)}
-                    />
-                  </Td>
-                  <Td right>{formatCurrency(r.realTotal)}</Td>
-                  <Td right>
-                    <span className={gapClass(r.gap)}>{formatCurrency(r.gap)}</span>
-                  </Td>
-                </tr>
-              ))}
-              {!rows.length ? (
-                <tr>
-                  <Td>
-                    <span className="text-muted-foreground">No movements in range.</span>
-                  </Td>
-                </tr>
-              ) : null}
-            </tbody>
-            {rows.length ? (
-              <tfoot>
-                <tr className="border-t font-medium">
-                  <Td>Total</Td>
-                  <Td right> </Td>
-                  <Td right> </Td>
-                  <Td right> </Td>
-                  <Td right> </Td>
-                  <Td right> </Td>
-                  <Td right> </Td>
-                  <Td right>
-                    <span className={gapClass(total)}>{formatCurrency(total)}</span>
-                  </Td>
-                </tr>
-              </tfoot>
-            ) : null}
-          </table>
-        </div>
-      </CardContent>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full flex-wrap items-center justify-between gap-2 px-4 py-3 text-left"
+        aria-expanded={open}
+      >
+        <span className="flex items-center gap-2 font-medium">
+          <ChevronRight className={`h-4 w-4 shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} />
+          {label}
+        </span>
+        <span className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs tabular-nums text-muted-foreground">
+          <span>Purchased {formatNumber(card.purchaseDocKg)} kg</span>
+          <span>Sold {formatNumber(card.salesDocKg)} kg</span>
+          {card.vatDifference !== 0 ? (
+            <span className="text-destructive">VAT diff {formatCurrency(card.vatDifference)}</span>
+          ) : null}
+          <span className={`font-medium ${card.onHandDocKg < 0 ? 'text-destructive' : 'text-foreground'}`}>
+            On hand {formatNumber(card.onHandDocKg)} kg
+          </span>
+        </span>
+      </button>
+      {open ? (
+        <CardContent className="space-y-3 p-4 pt-0">
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            <PurchaseWindow
+              card={card}
+              saving={saving}
+              onSaveField={onSaveField}
+              savingRate={savingRate}
+              onSaveRate={onSaveRate}
+            />
+            <SalesWindow card={card} saving={saving} onSaveField={onSaveField} />
+          </div>
+          <OnHandFooter card={card} />
+          {ledger ? (
+            <div className="space-y-2">
+              <Button variant="ghost" size="sm" onClick={() => setShowDaily((v) => !v)}>
+                {showDaily ? 'Hide daily rows' : 'Show daily rows'}
+                {ledger.overageDays > 0 ? (
+                  <span className="ml-2 inline-flex items-center gap-1 text-destructive">
+                    <AlertTriangle className="h-3 w-3" /> {ledger.overageDays} overage day(s)
+                  </span>
+                ) : null}
+              </Button>
+              {showDaily ? <DailyRowsTable ledger={ledger} /> : null}
+            </div>
+          ) : null}
+        </CardContent>
+      ) : null}
     </Card>
+  )
+})
+
+function PurchaseWindow({
+  card,
+  saving,
+  onSaveField,
+  savingRate,
+  onSaveRate,
+}: {
+  card: UnifiedCategoryCard
+  saving: boolean
+  onSaveField: (category: string, field: keyof CategoryLedgerInput, value: number | null) => void
+  savingRate: boolean
+  onSaveRate: (percent: number) => void
+}) {
+  return (
+    <Window title="Purchases" subtitle="Documented (RS.ge) vs physical reality">
+      <Row label="Purchase Doc kg">{formatNumber(card.purchaseDocKg)}</Row>
+      <Row label="Purchase Doc price (avg)">
+        <EditableNumber
+          value={card.purchaseDocPrice}
+          disabled={saving}
+          onSave={(v) => onSaveField(card.category, 'docPurchasePrice', v)}
+        />
+      </Row>
+      <Row label="Write-off %">
+        <PercentInput value={card.writeOffPercent} disabled={savingRate} onSave={onSaveRate} />
+      </Row>
+      <Row label="Net doc purchase kg">{formatNumber(card.netDocPurchaseKg)}</Row>
+      <Row label="Net kg price doc" emphasize>
+        {formatCurrency(card.netDocKgPrice)}
+      </Row>
+      <Row label="Purchase Real kg">
+        <EditableNumber
+          value={card.purchaseRealKg}
+          disabled={saving}
+          onSave={(v) => onSaveField(card.category, 'realPurchaseKg', v)}
+        />
+      </Row>
+      <Row label="Purchase Real price">
+        <EditableNumber
+          value={card.purchaseRealPrice}
+          disabled={saving}
+          onSave={(v) => onSaveField(card.category, 'realPurchasePrice', v)}
+        />
+      </Row>
+      <Row label="Debt Doc">{formatCurrency(card.debtDoc)}</Row>
+      <Row label="Debt Real">{formatCurrency(card.debtReal)}</Row>
+      <Row label="VAT difference" emphasize>
+        <span className={card.vatDifference !== 0 ? 'text-destructive' : 'text-muted-foreground'}>
+          {formatCurrency(card.vatDifference)}
+        </span>
+      </Row>
+    </Window>
+  )
+}
+
+function SalesWindow({
+  card,
+  saving,
+  onSaveField,
+}: {
+  card: UnifiedCategoryCard
+  saving: boolean
+  onSaveField: (category: string, field: keyof CategoryLedgerInput, value: number | null) => void
+}) {
+  return (
+    <Window title="Sales" subtitle="Real excludes unreal/formal customers; commissions segregated">
+      <Row label="Sales Doc kg">{formatNumber(card.salesDocKg)}</Row>
+      <Row label="Sales Doc price (avg)">
+        <EditableNumber
+          value={card.salesDocPrice}
+          disabled={saving}
+          onSave={(v) => onSaveField(card.category, 'docSalePrice', v)}
+        />
+      </Row>
+      <Row label="Sales Doc total">{formatCurrency(card.salesDocTotal)}</Row>
+      <Row label="Sales Real kg">
+        <span>
+          {formatNumber(card.salesRealKg)}
+          <span className="ml-2 text-xs text-muted-foreground">
+            (−{formatNumber(card.unrealSalesKg)} unreal · −{formatNumber(card.formalSalesKg)} formal)
+          </span>
+        </span>
+      </Row>
+      <Row label="Sales Real price">
+        <EditableNumber
+          value={card.salesRealPrice}
+          disabled={saving}
+          onSave={(v) => onSaveField(card.category, 'realSalePrice', v)}
+        />
+      </Row>
+      <Row label="Real product sales" emphasize>
+        {formatCurrency(card.realProductSales)}
+      </Row>
+      <Row label="Formal commission" emphasize>
+        <span className="text-emerald-600">{formatCurrency(card.formalCommission)}</span>
+      </Row>
+      <Row label="Sales Real total" emphasize>
+        {formatCurrency(card.salesRealTotal)}
+      </Row>
+    </Window>
+  )
+}
+
+function OnHandFooter({ card }: { card: UnifiedCategoryCard }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/30 px-4 py-3">
+      <div className="text-sm font-medium">On-Hand Inventory (doc)</div>
+      <div className="text-xs tabular-nums text-muted-foreground">
+        {formatNumber(card.startingInventoryKg)} starting + {formatNumber(card.netDocPurchaseKg)} net
+        purchases ({formatNumber(card.writeOffPercent)}% write-off) − {formatNumber(card.salesDocKg)} sold
+      </div>
+      <div
+        className={`text-lg font-semibold tabular-nums ${card.onHandDocKg < 0 ? 'text-destructive' : ''}`}
+      >
+        {formatNumber(card.onHandDocKg)} kg
+      </div>
+    </div>
+  )
+}
+
+// Bordered label/value list used for the Purchases and Sales windows.
+function Window({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string
+  subtitle?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="rounded-md border">
+      <div className="border-b bg-muted/50 px-3 py-2">
+        <div className="text-sm font-medium">{title}</div>
+        {subtitle ? <div className="text-xs text-muted-foreground">{subtitle}</div> : null}
+      </div>
+      <dl className="divide-y text-sm">{children}</dl>
+    </div>
+  )
+}
+
+function Row({
+  label,
+  emphasize,
+  children,
+}: {
+  label: string
+  emphasize?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2 px-3 py-1.5">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className={`text-right tabular-nums ${emphasize ? 'font-medium' : ''}`}>{children}</dd>
+    </div>
+  )
+}
+
+// Editable write-off percent (0–100), committed on blur / Enter.
+function PercentInput({
+  value,
+  disabled,
+  onSave,
+}: {
+  value: number
+  disabled?: boolean
+  onSave: (percent: number) => void
+}) {
+  const [draft, setDraft] = React.useState(String(value))
+
+  React.useEffect(() => {
+    setDraft(String(value))
+  }, [value])
+
+  const commit = () => {
+    const pct = Number(draft)
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+      setDraft(String(value)) // revert invalid input
+      return
+    }
+    if (pct !== value) onSave(pct)
+  }
+
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      <input
+        type="number"
+        min={0}
+        max={100}
+        step="0.1"
+        value={draft}
+        disabled={disabled}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+        }}
+        className="h-7 w-16 rounded border border-input bg-background px-1 text-right text-xs tabular-nums"
+        aria-label="Write-off percent of purchased"
+      />
+      <span className="text-xs text-muted-foreground">%</span>
+    </span>
+  )
+}
+
+// Formal-commission management, shown on the Reconciliation tab next to the
+// Formal checkboxes that add/remove customers.
+function FormalCommissionSection({ query }: { query: DualQuery }) {
+  if (query.isError || query.isLoading || !query.data) {
+    return null
+  }
+  return (
+    <FormalCommissionCard
+      commissions={query.data.formalCommissions}
+      total={query.data.totalFormalCommission}
+    />
   )
 }
 
@@ -381,6 +631,7 @@ function FormalCommissionCard({
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['audit-dual-ledger'] })
+    queryClient.invalidateQueries({ queryKey: ['formal-sales-customers'] })
   }
   const addMutation = useMutation({
     mutationFn: () =>
@@ -725,12 +976,6 @@ function EditableNumber({
   )
 }
 
-function gapClass(gap: number) {
-  if (gap < -0.005) return 'font-medium text-destructive'
-  if (gap > 0.005) return 'font-medium text-emerald-600'
-  return 'text-muted-foreground'
-}
-
 // ==================== Filter bar ====================
 
 function FilterBar(props: {
@@ -841,27 +1086,7 @@ function StatCard({ title, value, hint }: { title: string; value: string; hint?:
   )
 }
 
-// ==================== Inventory ====================
-
-function InventorySection({ ledgers }: { ledgers: InventoryLedger[] }) {
-  if (!ledgers.length) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Inventory & write-off ledger</CardTitle>
-          <CardDescription>No product movements found for the selected range.</CardDescription>
-        </CardHeader>
-      </Card>
-    )
-  }
-  return (
-    <div className="space-y-4">
-      {ledgers.map((ledger) => (
-        <LedgerCard key={ledger.parentCategory} ledger={ledger} />
-      ))}
-    </div>
-  )
-}
+// ==================== Daily ledger rows ====================
 
 const CATEGORY_LABELS: Record<string, string> = {
   BEEF: '🐄 Beef',
@@ -874,182 +1099,51 @@ const CATEGORY_LABELS: Record<string, string> = {
   OTHER: 'Other',
 }
 
-// Memoized (BOR-75): filter-input keystrokes re-render the page; ledger tables
-// with hundreds of daily rows must only re-render when their ledger changes.
-const LedgerCard = React.memo(function LedgerCard({ ledger }: { ledger: InventoryLedger }) {
-  const [open, setOpen] = React.useState(false)
-  const queryClient = useQueryClient()
-  const isTracked = ledger.parentCategory === 'BEEF' || ledger.parentCategory === 'PORK'
-  const label = CATEGORY_LABELS[ledger.parentCategory] ?? ledger.parentCategory
-
-  // Persist the per-category write-off % server-side, then refetch the dashboard
-  // so the whole ledger (box, daily rows, ending inventory, overage flags)
-  // recomputes at the new rate — single source of truth, shared across devices.
-  const rateMutation = useMutation({
-    mutationFn: (percent: number) =>
-      configApi.setWriteOffRate({ category: ledger.parentCategory, percent }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['audit-dashboard'] }),
-  })
+// Daily write-off ledger rows, expandable inside each category accordion.
+// Memoized (BOR-75): tables with hundreds of rows must only re-render when
+// their ledger changes.
+const DailyRowsTable = React.memo(function DailyRowsTable({ ledger }: { ledger: InventoryLedger }) {
   return (
-    <Card>
-      <CardHeader className="p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <CardTitle className="text-base">
-              {label}
-              {!isTracked ? (
-                <span className="ml-2 rounded bg-muted px-2 py-0.5 align-middle text-xs font-normal text-muted-foreground">
-                  passthrough · no write-off
-                </span>
-              ) : null}
-            </CardTitle>
-            <CardDescription>
-              {ledger.childProducts.length} child product(s) aggregated
-              {isTracked && ledger.overageDays > 0 ? (
-                <span className="ml-2 inline-flex items-center gap-1 text-destructive">
-                  <AlertTriangle className="h-3 w-3" /> {ledger.overageDays} overage day(s)
-                </span>
-              ) : null}
-            </CardDescription>
-          </div>
-          <Button variant="ghost" size="sm" onClick={() => setOpen((v) => !v)}>
-            {open ? 'Hide daily rows' : 'Show daily rows'}
-          </Button>
-        </div>
-        <div className="mt-2 grid grid-cols-2 gap-2 text-sm sm:grid-cols-5">
-          <Metric label="Opening kg" value={formatNumber(ledger.openingStockKg)} />
-          <Metric label="Purchased kg" value={formatNumber(ledger.totalPurchasedKg)} />
-          <Metric label="Sold kg" value={formatNumber(ledger.totalSoldKg)} />
-          {isTracked ? (
-            <WriteOffMetric
-              ratePercent={ledger.writeOffRatePercent ?? 28}
-              writeOffKg={ledger.totalWriteOffKg}
-              saving={rateMutation.isPending}
-              onSave={(pct) => rateMutation.mutate(pct)}
-            />
-          ) : (
-            <Metric label="posib Write-off kg" value={formatNumber(ledger.totalWriteOffKg)} />
-          )}
-          <Metric label="On hand kg" value={formatNumber(ledger.endingInventoryKg)} />
-        </div>
-      </CardHeader>
-      {open ? (
-        <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y text-sm">
-              <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
-                <tr>
-                  <Th>Date</Th>
-                  <Th right>Start</Th>
-                  <Th right>Purchased</Th>
-                  <Th right>Sold</Th>
-                  <Th right>posib Write-off</Th>
-                  <Th right>%</Th>
-                  <Th right>Ending</Th>
-                  <Th>Flag</Th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {ledger.dailyRows.map((r) => (
-                  <tr key={r.date} className={r.overage ? 'bg-destructive/5' : undefined}>
-                    <Td>{formatDate(r.date)}</Td>
-                    <Td right>{formatNumber(r.startingInventoryKg)}</Td>
-                    <Td right>{formatNumber(r.purchasedKg)}</Td>
-                    <Td right>{formatNumber(r.soldKg)}</Td>
-                    <Td right>{formatNumber(r.writeOffKg)}</Td>
-                    <Td right>{formatNumber(r.writeOffPercent)}%</Td>
-                    <Td right>{formatNumber(r.endingInventoryKg)}</Td>
-                    <Td>
-                      {r.overage ? (
-                        <span className="inline-flex items-center gap-1 text-destructive">
-                          <AlertTriangle className="h-3 w-3" /> overage
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground">ok</span>
-                      )}
-                    </Td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      ) : null}
-    </Card>
+    <div className="overflow-x-auto rounded-md border">
+      <table className="min-w-full divide-y text-sm">
+        <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
+          <tr>
+            <Th>Date</Th>
+            <Th right>Start</Th>
+            <Th right>Purchased</Th>
+            <Th right>Sold</Th>
+            <Th right>posib Write-off</Th>
+            <Th right>%</Th>
+            <Th right>Ending</Th>
+            <Th>Flag</Th>
+          </tr>
+        </thead>
+        <tbody className="divide-y">
+          {ledger.dailyRows.map((r) => (
+            <tr key={r.date} className={r.overage ? 'bg-destructive/5' : undefined}>
+              <Td>{formatDate(r.date)}</Td>
+              <Td right>{formatNumber(r.startingInventoryKg)}</Td>
+              <Td right>{formatNumber(r.purchasedKg)}</Td>
+              <Td right>{formatNumber(r.soldKg)}</Td>
+              <Td right>{formatNumber(r.writeOffKg)}</Td>
+              <Td right>{formatNumber(r.writeOffPercent)}%</Td>
+              <Td right>{formatNumber(r.endingInventoryKg)}</Td>
+              <Td>
+                {r.overage ? (
+                  <span className="inline-flex items-center gap-1 text-destructive">
+                    <AlertTriangle className="h-3 w-3" /> overage
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground">ok</span>
+                )}
+              </Td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   )
 })
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-md border bg-muted/30 px-3 py-2">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="font-medium">{value}</div>
-    </div>
-  )
-}
-
-// "posib Write-off kg" box with an editable % on top. Typing a new percentage and
-// blurring (or pressing Enter) persists it per category; the dashboard then
-// refetches and the write-off amount here — plus the daily rows below — recompute.
-function WriteOffMetric({
-  ratePercent,
-  writeOffKg,
-  saving,
-  onSave,
-}: {
-  ratePercent: number
-  writeOffKg: number
-  saving: boolean
-  onSave: (percent: number) => void
-}) {
-  const [draft, setDraft] = React.useState(String(ratePercent))
-
-  // Re-sync the input when the persisted rate changes (e.g. after refetch).
-  React.useEffect(() => {
-    setDraft(String(ratePercent))
-  }, [ratePercent])
-
-  const commit = () => {
-    const pct = Number(draft)
-    if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
-      setDraft(String(ratePercent)) // revert invalid input
-      return
-    }
-    if (pct !== ratePercent) {
-      onSave(pct)
-    }
-  }
-
-  return (
-    <div className="rounded-md border bg-muted/30 px-3 py-2">
-      <div className="flex items-center justify-between gap-1">
-        <span className="text-xs text-muted-foreground">posib Write-off kg</span>
-        <div className="flex items-center gap-0.5">
-          <input
-            type="number"
-            min={0}
-            max={100}
-            step="0.1"
-            value={draft}
-            disabled={saving}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={commit}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-            }}
-            className="h-6 w-14 rounded border border-input bg-background px-1 text-right text-xs tabular-nums"
-            aria-label="Write-off percent of purchased"
-            title="Write-off as % of purchased kg"
-          />
-          <span className="text-xs text-muted-foreground">%</span>
-        </div>
-      </div>
-      <div className="mt-0.5 font-medium tabular-nums">
-        {saving ? <span className="text-muted-foreground">…</span> : formatNumber(writeOffKg)}
-      </div>
-    </div>
-  )
-}
 
 // ==================== Reconciliation ====================
 
@@ -1060,12 +1154,18 @@ const ReconciliationSection = React.memo(function ReconciliationSection({
   togglingKey,
   onToggleUnreal,
   togglingUnrealKey,
+  formalIds,
+  onToggleFormal,
+  togglingFormalKey,
 }: {
   data: AuditDashboard
   onTogglePaid: (key: string, markedPaid: boolean) => void
   togglingKey?: string
   onToggleUnreal: (id: string, unreal: boolean) => void
   togglingUnrealKey?: string
+  formalIds: Set<string>
+  onToggleFormal: (id: string, name: string | null | undefined, formal: boolean) => void
+  togglingFormalKey?: string
 }) {
   const rows = data.reconciliation
   // Only show customers carrying a non-zero balance to keep the table focused.
@@ -1079,8 +1179,9 @@ const ReconciliationSection = React.memo(function ReconciliationSection({
         <CardTitle className="text-base">Debt reconciliation</CardTitle>
         <CardDescription>
           Real receivables vs documentation exceptions. Tick "Unreal" for customers RS.ge documents but who
-          aren't real partners (their sales leave Real Totals and their debt moves to Exception). Toggle "Paid"
-          to override API status.
+          aren't real partners (their sales leave Real Totals and their debt moves to Exception). Tick
+          "Formal" for documentation-only customers who earn a per-kg commission instead of paper AR. Toggle
+          "Paid" to override API status.
         </CardDescription>
       </CardHeader>
       <CardContent className="p-0">
@@ -1091,6 +1192,7 @@ const ReconciliationSection = React.memo(function ReconciliationSection({
                 <Th>Customer</Th>
                 <Th>Type</Th>
                 <Th>Unreal</Th>
+                <Th>Formal</Th>
                 <Th right>Sales</Th>
                 <Th right>Payments</Th>
                 <Th right>Real debt</Th>
@@ -1125,6 +1227,19 @@ const ReconciliationSection = React.memo(function ReconciliationSection({
                       onChange={() => onToggleUnreal(r.customerId, r.realEntity)}
                       aria-label="Mark customer unreal"
                       title="Mark this customer as unreal (documentation-only)"
+                    />
+                  </Td>
+                  <Td>
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 cursor-pointer accent-emerald-600"
+                      checked={formalIds.has(canonicalId(r.customerId))}
+                      disabled={togglingFormalKey === r.customerId}
+                      onChange={() =>
+                        onToggleFormal(r.customerId, r.customerName, !formalIds.has(canonicalId(r.customerId)))
+                      }
+                      aria-label="Mark customer formal"
+                      title="Formal sales customer: paper AR ignored, earns per-kg commission (default 0.50)"
                     />
                   </Td>
                   <Td right>{formatCurrency(r.totalSales)}</Td>
