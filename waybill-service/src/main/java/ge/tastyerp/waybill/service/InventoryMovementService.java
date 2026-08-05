@@ -18,6 +18,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
@@ -102,6 +103,10 @@ public class InventoryMovementService {
         Map<String, Map<String, Object>> rawGoodsMap = rsGeSoapClient.getWaybillGoodsMap(distinctIds);
 
         Map<String, List<WaybillGoodDto>> goodsByWaybillId = new HashMap<>();
+        Set<String> returnWaybillIds = rawGoodsMap.entrySet().stream()
+                .filter(entry -> isReturnWaybill(entry.getValue()))
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toSet());
         for (Map.Entry<String, Map<String, Object>> entry : rawGoodsMap.entrySet()) {
             List<WaybillGoodDto> goods = waybillProcessingService.extractGoods(entry.getValue());
             if (!goods.isEmpty()) {
@@ -111,8 +116,8 @@ public class InventoryMovementService {
         long tGoods = System.currentTimeMillis();
 
         List<ProductMovementDto> movements = new ArrayList<>();
-        movements.addAll(toMovements(sales, WaybillType.SALE, goodsByWaybillId));
-        movements.addAll(toMovements(purchases, WaybillType.PURCHASE, goodsByWaybillId));
+        movements.addAll(toMovements(sales, WaybillType.SALE, goodsByWaybillId, returnWaybillIds));
+        movements.addAll(toMovements(purchases, WaybillType.PURCHASE, goodsByWaybillId, returnWaybillIds));
 
         log.info("Produced {} product movements (lists {} ms, goods {} ms, total {} ms)",
                 movements.size(), tLists - t0, tGoods - tLists, System.currentTimeMillis() - t0);
@@ -129,7 +134,8 @@ public class InventoryMovementService {
     private List<ProductMovementDto> toMovements(
             List<WaybillDto> waybills,
             WaybillType type,
-            Map<String, List<WaybillGoodDto>> goodsByWaybillId) {
+            Map<String, List<WaybillGoodDto>> goodsByWaybillId,
+            Set<String> returnWaybillIds) {
 
         List<ProductMovementDto> result = new ArrayList<>();
         for (WaybillDto waybill : waybills) {
@@ -143,20 +149,31 @@ public class InventoryMovementService {
             for (WaybillGoodDto good : goods) {
                 BigDecimal qty = good.getQuantity();
                 if (good.getName() == null || qty == null) continue;
+                boolean returned = returnWaybillIds.contains(waybill.getWaybillId());
+                BigDecimal signedQuantity = returned ? qty.abs().negate() : qty;
+                BigDecimal totalPrice = good.getTotalPrice() != null ? good.getTotalPrice() : BigDecimal.ZERO;
+                BigDecimal signedAmount = returned ? totalPrice.abs().negate() : totalPrice;
 
                 result.add(ProductMovementDto.builder()
                         .date(waybill.getDate())
                         .type(type)
                         .productName(good.getName())
                         .parentCategory(ProductHierarchy.classify(good.getName()))
-                        .quantityKg(qty)
+                        .quantityKg(signedQuantity)
                         .unit(good.getUnit())
-                        .amount(good.getTotalPrice() != null ? good.getTotalPrice() : BigDecimal.ZERO)
+                        .amount(signedAmount)
                         .waybillId(waybill.getWaybillId())
                         .counterpartyId(counterpartyId)
                         .build());
             }
         }
         return result;
+    }
+
+    private boolean isReturnWaybill(Map<String, Object> rawWaybill) {
+        if (rawWaybill == null) return false;
+        Object type = rawWaybill.get("TYPE");
+        if (type == null) type = rawWaybill.get("type");
+        return type != null && "5".equals(type.toString().trim());
     }
 }

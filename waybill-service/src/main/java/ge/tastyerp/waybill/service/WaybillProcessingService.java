@@ -55,8 +55,8 @@ public class WaybillProcessingService {
     );
 
     private static final List<String> GOODS_QUANTITY_KEYS = List.of(
-            "QUANTITY_F", "quantity_f",  // Confirmed RS.ge field name
             "QUANTITY", "quantity", "Quantity",
+            "QUANTITY_F", "quantity_f",
             "QTY", "qty",
             "COUNT", "count",
             "AMOUNT_KG", "amount_kg",
