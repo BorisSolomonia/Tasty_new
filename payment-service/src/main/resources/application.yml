@@ -25,18 +25,26 @@ business:
   batch-size: ${BATCH_SIZE:100}
   max-date-range-months: ${MAX_DATE_RANGE_MONTHS:12}
 
-# Future: Banking API Configuration
+# Banking API Configuration
+# TBC connectivity is TBC DBI (SOAP + mutual TLS + WS-Security), not OAuth —
+# see TBC_INTEGRATION_ANALYSIS.md at the repo root.
 bank-api:
   tbc:
-    enabled: ${TBC_BANK_API_ENABLED:false}
-    base-url: ${TBC_BANK_API_URL:}
-    client-id: ${TBC_BANK_CLIENT_ID:}
-    client-secret: ${TBC_BANK_CLIENT_SECRET:}
-  bog:
-    enabled: ${BOG_BANK_API_ENABLED:false}
-    base-url: ${BOG_BANK_API_URL:}
-    api-key: ${BOG_BANK_API_KEY:}
+    enabled: ${TBC_DBI_ENABLED:false}
+    endpoint: ${TBC_DBI_ENDPOINT:https://secdbi.tbconline.ge/dbi/dbiService}
+    username: ${TBC_DBI_USERNAME:}
+    password: ${TBC_DBI_PASSWORD:}
+    certificate-path: ${TBC_DBI_CERTIFICATE_PATH:}
+    certificate-base64: ${TBC_DBI_CERTIFICATE_BASE64:}
+    certificate-password: ${TBC_DBI_CERTIFICATE_PASSWORD:}
+    account-number: ${TBC_DBI_ACCOUNT_NUMBER:}
+    currency: ${TBC_DBI_CURRENCY:GEL}
+    page-size: ${TBC_DBI_PAGE_SIZE:700}
+    timeout-seconds: ${TBC_DBI_TIMEOUT_SECONDS:120}
   sync-interval-minutes: ${BANK_SYNC_INTERVAL:60}
+  sync-overlap-days: ${BANK_SYNC_OVERLAP_DAYS:3}
+  min-sync-interval-seconds: ${BANK_SYNC_MIN_INTERVAL_SECONDS:120}
+  sync-start-date: ${BANK_SYNC_START_DATE:}
 
 # Actuator endpoints
 management:
