@@ -44,3 +44,9 @@ secrets/
 # Test coverage
 coverage/
 *.coverage
+
+# Real bank statements — NEVER commit (this repo is public).
+# example/example.xlsx predates this rule and is already published.
+example/account_statement*.xlsx
+**/account_statement*.xlsx
+*_statement_*.xlsx

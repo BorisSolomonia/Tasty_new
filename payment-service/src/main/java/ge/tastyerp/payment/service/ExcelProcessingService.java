@@ -44,6 +44,8 @@ public class ExcelProcessingService {
     private final PaymentRepository paymentRepository;
     private final PaymentReconciliationService reconciliationService;
     private final DebtService debtService;
+    /** BOR-89: mirrors the full statement (both directions) for the audit layer. */
+    private final ge.tastyerp.payment.audit.BankStatementMirrorService bankStatementMirrorService;
 
     private static final List<String> BANK_SOURCES = List.of("tbc", "bog");
     @Value("${business.payment-cutoff-date:2025-04-29}")
@@ -90,6 +92,19 @@ public class ExcelProcessingService {
                     requestId, sheet.getSheetName(), sheetIndex, sheet.getLastRowNum());
 
             ExcelUploadResponse response = processSheet(sheet, bank, false, requestId);
+
+            // BOR-89: mirror the WHOLE statement — money out as well as money in —
+            // into bankTransactions for the audit layer. Deliberately a separate
+            // pass: the customer-receipt logic above reads column E only and its
+            // behaviour is unchanged. A failure here must not fail the upload the
+            // user actually asked for, so it is logged rather than thrown.
+            try {
+                int mirrored = bankStatementMirrorService.mirror(sheet, bank);
+                log.info("[{}] 🧾 Mirrored {} statement rows for audit", requestId, mirrored);
+            } catch (Exception e) {
+                log.error("[{}] ⚠️ Audit mirror failed; payments were still imported: {}",
+                        requestId, e.getMessage(), e);
+            }
 
             long duration = System.currentTimeMillis() - startTime;
             log.info("[{}] ✅ Excel upload completed in {}ms - Added: {}, Duplicates: {}, Skipped: {}",

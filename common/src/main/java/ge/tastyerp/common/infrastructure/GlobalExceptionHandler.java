@@ -8,6 +8,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.RequestContextHolder;
@@ -89,6 +91,29 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.error(errors, "TASTY_ERR_400"));
+    }
+
+    /**
+     * A missing or unparseable request parameter is the caller's mistake, not a
+     * server fault. Without this it fell through to the catch-all below and
+     * returned 500 "An unexpected error occurred", which tells the caller nothing
+     * about what to fix.
+     */
+    @ExceptionHandler({MissingServletRequestParameterException.class,
+            MethodArgumentTypeMismatchException.class})
+    public ResponseEntity<ApiResponse<Void>> handleBadRequestParameter(Exception ex) {
+        if (isResponseCommitted()) {
+            log.warn("Response already committed, cannot write parameter error");
+            return null;
+        }
+        String message = ex instanceof MissingServletRequestParameterException missing
+                ? "Required parameter '" + missing.getParameterName() + "' is missing"
+                : "Parameter '" + ((MethodArgumentTypeMismatchException) ex).getName()
+                        + "' has an invalid value";
+        log.warn("Bad request parameter: {}", message);
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error(message, "TASTY_ERR_400"));
     }
 
     @ExceptionHandler(TastyErpException.class)

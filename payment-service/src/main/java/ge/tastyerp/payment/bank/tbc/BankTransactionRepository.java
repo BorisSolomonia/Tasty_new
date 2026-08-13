@@ -10,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
@@ -62,6 +63,44 @@ public class BankTransactionRepository {
                 Thread.currentThread().interrupt();
             }
             throw new RuntimeException("Failed to write bank transactions for source " + source, e);
+        }
+        return written;
+    }
+
+    /**
+     * Upserts rows under caller-supplied document ids.
+     *
+     * <p>Used by the Excel statement importer, which has a natural key per row
+     * (the bank's own transaction id) and so can be re-run over an overlapping
+     * file without creating duplicates — unlike the API sync, whose window
+     * replacement is the right tool when rows have no stable id.</p>
+     *
+     * @param rowsById document id -> document body
+     * @return the number of rows written
+     */
+    public int upsertAll(Map<String, Map<String, Object>> rowsById) {
+        if (rowsById == null || rowsById.isEmpty()) {
+            return 0;
+        }
+        List<Map.Entry<String, Map<String, Object>>> entries = new ArrayList<>(rowsById.entrySet());
+        int written = 0;
+        try {
+            for (int i = 0; i < entries.size(); i += FIRESTORE_BATCH_LIMIT) {
+                WriteBatch batch = firestore.batch();
+                List<Map.Entry<String, Map<String, Object>>> chunk =
+                        entries.subList(i, Math.min(i + FIRESTORE_BATCH_LIMIT, entries.size()));
+                for (Map.Entry<String, Map<String, Object>> entry : chunk) {
+                    batch.set(firestore.collection(COLLECTION_TRANSACTIONS).document(entry.getKey()),
+                            entry.getValue());
+                }
+                batch.commit().get();
+                written += chunk.size();
+            }
+        } catch (InterruptedException | ExecutionException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new RuntimeException("Failed to upsert bank transactions", e);
         }
         return written;
     }

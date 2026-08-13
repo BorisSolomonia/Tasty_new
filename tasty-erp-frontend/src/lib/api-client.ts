@@ -33,7 +33,7 @@ class ApiError extends Error {
   }
 }
 
-async function fetchWithAuth(endpoint: string, options: FetchOptions = {}): Promise<Response> {
+export async function fetchWithAuth(endpoint: string, options: FetchOptions = {}): Promise<Response> {
   const { params, ...fetchOptions } = options
 
   let url = `${API_URL}${endpoint}`
@@ -67,7 +67,7 @@ async function fetchWithAuth(endpoint: string, options: FetchOptions = {}): Prom
   return response
 }
 
-async function jsonData<T>(response: Response): Promise<T> {
+export async function jsonData<T>(response: Response): Promise<T> {
   const body = (await response.json()) as ApiResponse<T> | T
   if (body && typeof body === 'object' && 'success' in body && 'data' in body) {
     const wrapped = body as ApiResponse<T>
@@ -540,6 +540,38 @@ export const auditApi = {
       params: { markedPaid, note },
     })
   },
+}
+
+/**
+ * The message the server actually sent.
+ *
+ * `ApiError.message` is only ever "API Error: 400 Bad Request", which tells a
+ * reader nothing. The standard envelope carries the real explanation — e.g.
+ * "Required parameter 'startDate' is missing" or "Unknown drill-down key" — so
+ * that is what gets surfaced, falling back to the status line when the body
+ * carries nothing useful.
+ */
+export function apiErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    const data = error.data as
+      | { message?: unknown; error?: { message?: unknown } | string }
+      | null
+      | undefined
+
+    const envelope = typeof data?.message === 'string' ? data.message.trim() : ''
+    if (envelope) return envelope
+
+    const nested = data?.error
+    if (typeof nested === 'string' && nested.trim()) return nested.trim()
+    if (nested && typeof nested === 'object' && typeof nested.message === 'string') {
+      const nestedMessage = nested.message.trim()
+      if (nestedMessage) return nestedMessage
+    }
+
+    return `${error.status} ${error.statusText}`.trim()
+  }
+  if (error instanceof Error) return error.message
+  return 'Unknown error'
 }
 
 export { ApiError }

@@ -45,13 +45,20 @@ const auditControlRoute = createRoute({
   component: lazyRouteComponent(() => import('@/pages/audit-control-page'), 'AuditControlPage'),
 })
 
+// BOR-89 audit layer — eight UX variants over one payload.
+const auditRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'audit',
+  component: lazyRouteComponent(() => import('@/pages/audit-page'), 'AuditPage'),
+})
+
 const productCategoriesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'product-categories',
   component: lazyRouteComponent(() => import('@/pages/product-categories-page'), 'ProductCategoriesPage'),
 })
 
-const routeTree = rootRoute.addChildren([indexRoute, waybillsRoute, paymentsRoute, settingsRoute, productSalesRoute, auditControlRoute, productCategoriesRoute])
+const routeTree = rootRoute.addChildren([indexRoute, waybillsRoute, paymentsRoute, settingsRoute, productSalesRoute, auditControlRoute, auditRoute, productCategoriesRoute])
 
 export const router = createRouter({
   routeTree,

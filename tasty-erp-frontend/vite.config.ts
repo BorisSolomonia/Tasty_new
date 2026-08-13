@@ -37,6 +37,12 @@ export default defineConfig(({ mode }) => {
                 target: paymentTarget,
                 changeOrigin: true,
               },
+              // BOR-74/79 audit control and the BOR-89 audit layer both live in
+              // the payments service.
+              '/api/audit-control': {
+                target: paymentTarget,
+                changeOrigin: true,
+              },
               '/api/config': {
                 target: configTarget,
                 changeOrigin: true,
