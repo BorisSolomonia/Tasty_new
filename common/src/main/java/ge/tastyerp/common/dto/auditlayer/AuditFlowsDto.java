@@ -174,9 +174,21 @@ public class AuditFlowsDto {
         private int unpaidDocumentedSupplierCount;
         private BigDecimal unpaidDocumentedSupplierPurchases;
 
-        /** Outflow that left with no counterparty tax code at all. */
+        /** Outflow whose counterparty could not be identified at all. */
         private BigDecimal outflowWithoutCounterpartyId;
         private int outflowWithoutCounterpartyIdCount;
+
+        /**
+         * Outflow whose tax code was blank on the statement but recovered from
+         * the counterparty name. Counted toward suppliers, but reported apart so
+         * an inferred identity is never mistaken for a printed one.
+         */
+        private BigDecimal outflowIdentifiedByName;
+        private int outflowIdentifiedByNameCount;
+
+        /** Outflow left unresolved because its name maps to several tax codes. */
+        private BigDecimal outflowAmbiguousCounterparty;
+        private int outflowAmbiguousCounterpartyCount;
 
         @Data
         @Builder

@@ -87,7 +87,10 @@ public class AuditSuggestionEngine {
         boolean outflow = "DEBIT".equalsIgnoreCase(trim(row.getDirection()));
         String type = trim(row.getTransactionType());
         String counterparty = trim(row.getCounterpartyName());
-        String tin = trim(row.getCounterpartyTin());
+        // Prefer the resolved code: a supplier the bank named but did not
+        // number is still that supplier.
+        String tin = trim(row.getResolvedCounterpartyTin() != null
+                ? row.getResolvedCounterpartyTin() : row.getCounterpartyTin());
         String description = trim(row.getDescription());
 
         // --- automatic: the bank's own classification ---

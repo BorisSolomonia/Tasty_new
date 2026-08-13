@@ -62,6 +62,19 @@ public class AuditSourceRowDto {
      */
     private String transactionType;
 
+    /**
+     * The counterparty tax code after audit-layer resolution. Equals
+     * {@link #counterpartyTin} when the statement printed one; otherwise it may
+     * be inferred from the name. Null when identity could not be established.
+     */
+    private String resolvedCounterpartyTin;
+
+    /** How {@link #resolvedCounterpartyTin} was established. */
+    private CounterpartyIdentitySource counterpartyIdentitySource;
+
+    /** Plain-language basis for the identity, so an inference can be checked. */
+    private String counterpartyIdentityBasis;
+
     private AuditMappingStatus status;
 
     /** Current mapping, if any. */

@@ -10,6 +10,7 @@ import ge.tastyerp.common.dto.auditlayer.AuditMappingStatus;
 import ge.tastyerp.common.dto.auditlayer.AuditSourceRowPageDto;
 import ge.tastyerp.common.dto.auditlayer.AuditSourceType;
 import ge.tastyerp.common.dto.auditlayer.CheckEvidenceDto;
+import ge.tastyerp.common.dto.auditlayer.CounterpartyAliasDto;
 import ge.tastyerp.common.dto.auditlayer.RealInventoryOverrideDto;
 import ge.tastyerp.common.dto.auditlayer.RealSupplierDebtDto;
 import io.swagger.v3.oas.annotations.Operation;
@@ -200,6 +201,32 @@ public class AuditLayerController {
             @RequestParam(required = false) String reason) {
         overrideService.deleteRealInventory(id, operator, reason);
         return ResponseEntity.ok(ApiResponse.success(null, "Real-inventory confirmation withdrawn"));
+    }
+
+    @GetMapping("/counterparty-aliases")
+    @Operation(summary = "Name-to-tax-code links used when a statement names a "
+            + "counterparty without numbering it")
+    public ResponseEntity<ApiResponse<List<CounterpartyAliasDto>>> getCounterpartyAliases() {
+        return ResponseEntity.ok(ApiResponse.success(overrideService.getCounterpartyAliases()));
+    }
+
+    @PutMapping("/counterparty-aliases")
+    @Operation(summary = "Teach the audit layer that a counterparty name belongs to a tax code")
+    public ResponseEntity<ApiResponse<CounterpartyAliasDto>> saveCounterpartyAlias(
+            @RequestBody CounterpartyAliasDto alias,
+            @RequestParam String operator) {
+        return ResponseEntity.ok(ApiResponse.success(
+                overrideService.saveCounterpartyAlias(alias, operator), "Alias saved"));
+    }
+
+    @DeleteMapping("/counterparty-aliases/{id}")
+    @Operation(summary = "Remove a counterparty alias")
+    public ResponseEntity<ApiResponse<Void>> deleteCounterpartyAlias(
+            @PathVariable String id,
+            @RequestParam String operator,
+            @RequestParam(required = false) String reason) {
+        overrideService.deleteCounterpartyAlias(id, operator, reason);
+        return ResponseEntity.ok(ApiResponse.success(null, "Alias removed"));
     }
 
     @GetMapping("/supplier-debt")

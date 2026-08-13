@@ -1,6 +1,7 @@
 package ge.tastyerp.payment.audit;
 
 import ge.tastyerp.common.dto.auditlayer.CheckEvidenceDto;
+import ge.tastyerp.common.dto.auditlayer.CounterpartyAliasDto;
 import ge.tastyerp.common.dto.auditlayer.RealInventoryOverrideDto;
 import ge.tastyerp.common.dto.auditlayer.RealSupplierDebtDto;
 import ge.tastyerp.common.exception.ValidationException;
@@ -95,6 +96,61 @@ public class AuditOverrideService {
         repository.deleteRealInventory(id);
         mappingService.log(operator, "REAL_INVENTORY", id, "withdrawn",
                 String.valueOf(previous.getRealKg()), null, reason);
+    }
+
+    // ==================== counterparty aliases ====================
+
+    public List<CounterpartyAliasDto> getCounterpartyAliases() {
+        return repository.findCounterpartyAliases();
+    }
+
+    /**
+     * Teaches the audit layer that a counterparty name belongs to a tax code.
+     *
+     * <p>Needed because statements name counterparties without numbering them.
+     * The link is stored as an overlay — the statement row keeps its blank, and
+     * anything computed from the inferred identity says so.</p>
+     */
+    public CounterpartyAliasDto saveCounterpartyAlias(CounterpartyAliasDto dto, String operator) {
+        requireOperator(operator);
+        if (dto.getRawName() == null || dto.getRawName().isBlank()) {
+            throw new ValidationException("rawName", "A counterparty name is required");
+        }
+        if (dto.getCounterpartyTin() == null || dto.getCounterpartyTin().isBlank()) {
+            throw new ValidationException("counterpartyTin", "A tax code is required");
+        }
+        String normalized = AuditCounterpartyResolver.normalize(dto.getRawName());
+        if (normalized == null) {
+            throw new ValidationException("rawName", "That name normalises to nothing");
+        }
+        CounterpartyAliasDto previous = getCounterpartyAliases().stream()
+                .filter(a -> normalized.equals(a.getNormalizedName()))
+                .findFirst().orElse(null);
+
+        dto.setId(normalized);
+        dto.setNormalizedName(normalized);
+        dto.setCounterpartyTin(dto.getCounterpartyTin().trim());
+        dto.setCreatedBy(operator);
+        dto.setCreatedAt(LocalDateTime.now());
+        repository.saveCounterpartyAlias(dto);
+
+        mappingService.log(operator, "COUNTERPARTY_ALIAS", normalized, "counterpartyTin",
+                previous == null ? null : previous.getCounterpartyTin(),
+                dto.getCounterpartyTin(), dto.getNote());
+        return dto;
+    }
+
+    public void deleteCounterpartyAlias(String id, String operator, String reason) {
+        requireOperator(operator);
+        CounterpartyAliasDto previous = getCounterpartyAliases().stream()
+                .filter(a -> id.equals(a.getId()))
+                .findFirst().orElse(null);
+        if (previous == null) {
+            throw new ValidationException("id", "No counterparty alias exists with id " + id);
+        }
+        repository.deleteCounterpartyAlias(id);
+        mappingService.log(operator, "COUNTERPARTY_ALIAS", id, "deleted",
+                previous.getCounterpartyTin(), null, reason);
     }
 
     // ==================== supplier debt ====================

@@ -12,6 +12,7 @@ import ge.tastyerp.common.dto.auditlayer.AuditMappingSplitDto;
 import ge.tastyerp.common.dto.auditlayer.AuditMappingStatus;
 import ge.tastyerp.common.dto.auditlayer.AuditSourceType;
 import ge.tastyerp.common.dto.auditlayer.CheckEvidenceDto;
+import ge.tastyerp.common.dto.auditlayer.CounterpartyAliasDto;
 import ge.tastyerp.common.dto.auditlayer.RealInventoryOverrideDto;
 import ge.tastyerp.common.dto.auditlayer.RealSupplierDebtDto;
 import lombok.RequiredArgsConstructor;
@@ -57,6 +58,7 @@ public class AuditLayerRepository {
     static final String COLLECTION_SUPPLIER_DEBT = "audit_supplier_debt";
     static final String COLLECTION_CHECK_EVIDENCE = "audit_check_evidence";
     static final String COLLECTION_CHANGE_LOG = "audit_change_log";
+    static final String COLLECTION_COUNTERPARTY_ALIAS = "audit_counterparty_alias";
 
     /** Firestore hard limit on operations per WriteBatch. */
     private static final int FIRESTORE_BATCH_LIMIT = 500;
@@ -213,6 +215,45 @@ public class AuditLayerRepository {
 
     public void deleteCategory(String code) {
         delete(COLLECTION_CATEGORIES, code);
+    }
+
+    // ==================== counterparty aliases ====================
+
+    public List<CounterpartyAliasDto> findCounterpartyAliases() {
+        List<CounterpartyAliasDto> result = new ArrayList<>();
+        try {
+            QuerySnapshot snapshot = firestore.collection(COLLECTION_COUNTERPARTY_ALIAS).get().get();
+            for (QueryDocumentSnapshot doc : snapshot.getDocuments()) {
+                result.add(CounterpartyAliasDto.builder()
+                        .id(doc.getId())
+                        .rawName(doc.getString("rawName"))
+                        .normalizedName(doc.getString("normalizedName"))
+                        .counterpartyTin(doc.getString("counterpartyTin"))
+                        .note(doc.getString("note"))
+                        .createdBy(doc.getString("createdBy"))
+                        .createdAt(parseDateTime(doc.getString("createdAt")))
+                        .build());
+            }
+        } catch (InterruptedException | ExecutionException e) {
+            log.error("Error loading counterparty aliases: {}", e.getMessage());
+            Thread.currentThread().interrupt();
+        }
+        return result;
+    }
+
+    public void saveCounterpartyAlias(CounterpartyAliasDto alias) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("rawName", alias.getRawName());
+        data.put("normalizedName", alias.getNormalizedName());
+        data.put("counterpartyTin", alias.getCounterpartyTin());
+        data.put("note", alias.getNote());
+        data.put("createdBy", alias.getCreatedBy());
+        data.put("createdAt", alias.getCreatedAt() == null ? null : alias.getCreatedAt().toString());
+        write(COLLECTION_COUNTERPARTY_ALIAS, alias.getId(), data);
+    }
+
+    public void deleteCounterpartyAlias(String id) {
+        delete(COLLECTION_COUNTERPARTY_ALIAS, id);
     }
 
     // ==================== real inventory ====================

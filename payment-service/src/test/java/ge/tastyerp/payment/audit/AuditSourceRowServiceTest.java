@@ -29,6 +29,7 @@ class AuditSourceRowServiceTest {
     private final AuditSourceRowService service = new AuditSourceRowService(
             mock(com.google.cloud.firestore.Firestore.class),
             mock(AuditMappingService.class),
+            mock(AuditLayerRepository.class),
             mock(org.springframework.web.client.RestTemplate.class));
 
     private static ProductMovementDto line(String waybillId, String product,

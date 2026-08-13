@@ -55,6 +55,7 @@ public class AuditSourceRowService {
 
     private final Firestore firestore;
     private final AuditMappingService mappingService;
+    private final AuditLayerRepository auditLayerRepository;
 
     /** Field name matches the bean name "internalRestTemplate" for by-name resolution. */
     private final RestTemplate internalRestTemplate;
@@ -70,6 +71,17 @@ public class AuditSourceRowService {
      */
     public List<AuditSourceRowDto> loadBankRows(LocalDate startDate, LocalDate endDate,
                                                 Map<String, AuditMappingDto> mappings) {
+        return loadBankRows(startDate, endDate, mappings, null);
+    }
+
+    /**
+     * @param resolver establishes identity for rows whose tax-code column is
+     *                 blank. Null builds one from these rows alone, which is the
+     *                 useful default: the statement teaches the names itself.
+     */
+    public List<AuditSourceRowDto> loadBankRows(LocalDate startDate, LocalDate endDate,
+                                                Map<String, AuditMappingDto> mappings,
+                                                AuditCounterpartyResolver resolver) {
         List<AuditSourceRowDto> rows = new ArrayList<>();
         try {
             QuerySnapshot snapshot = firestore.collection(COLLECTION_BANK)
@@ -95,7 +107,33 @@ public class AuditSourceRowService {
             log.error("Error loading bank transactions: {}", e.getMessage());
             Thread.currentThread().interrupt();
         }
+
+        // Identity is resolved after the whole window is loaded, because the
+        // rows that DO carry a tax code are what teach the ones that do not.
+        AuditCounterpartyResolver effective = resolver != null ? resolver
+                : AuditCounterpartyResolver.build(observedNameTins(rows),
+                        auditLayerRepository.findCounterpartyAliases());
+        for (AuditSourceRowDto row : rows) {
+            AuditCounterpartyResolver.Resolution r =
+                    effective.resolve(row.getCounterpartyTin(), row.getCounterpartyName());
+            row.setResolvedCounterpartyTin(r.tin());
+            row.setCounterpartyIdentitySource(r.source());
+            row.setCounterpartyIdentityBasis(r.basis());
+        }
         return rows;
+    }
+
+    /** The (name, tax code) pairs a set of rows can teach. */
+    public static List<AuditCounterpartyResolver.NameTin> observedNameTins(List<AuditSourceRowDto> rows) {
+        List<AuditCounterpartyResolver.NameTin> observed = new ArrayList<>();
+        for (AuditSourceRowDto row : rows) {
+            if (row.getCounterpartyName() != null && row.getCounterpartyTin() != null
+                    && !row.getCounterpartyTin().isBlank()) {
+                observed.add(new AuditCounterpartyResolver.NameTin(
+                        row.getCounterpartyName(), row.getCounterpartyTin()));
+            }
+        }
+        return observed;
     }
 
     // ==================== RS.ge document rows ====================

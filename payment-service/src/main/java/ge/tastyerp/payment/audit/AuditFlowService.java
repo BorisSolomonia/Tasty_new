@@ -9,6 +9,7 @@ import ge.tastyerp.common.dto.auditlayer.AuditMappingStatus;
 import ge.tastyerp.common.dto.auditlayer.AuditSourceRowDto;
 import ge.tastyerp.common.dto.auditlayer.AuditSourceType;
 import ge.tastyerp.common.dto.auditlayer.CheckEvidenceDto;
+import ge.tastyerp.common.dto.auditlayer.CounterpartyIdentitySource;
 import ge.tastyerp.common.dto.auditlayer.RealInventoryOverrideDto;
 import ge.tastyerp.common.dto.auditlayer.RealSupplierDebtDto;
 import ge.tastyerp.common.dto.waybill.WaybillType;
@@ -384,12 +385,28 @@ public class AuditFlowService {
         Map<String, Integer> rowsByTin = new LinkedHashMap<>();
         BigDecimal outflowNoCounterparty = BigDecimal.ZERO;
         int outflowNoCounterpartyRows = 0;
+        BigDecimal outflowByName = BigDecimal.ZERO;
+        int outflowByNameRows = 0;
+        BigDecimal outflowAmbiguous = BigDecimal.ZERO;
+        int outflowAmbiguousRows = 0;
         for (AuditSourceRowDto r : bankRows) {
             if (!isDebit(r)) {
                 continue;
             }
-            String tin = r.getCounterpartyTin() == null ? null : r.getCounterpartyTin().trim();
+            // Resolved identity: the printed tax code where there is one, else
+            // the one inferred from the counterparty name. Using the printed
+            // column alone understated payments to real suppliers by millions.
+            String tin = r.getResolvedCounterpartyTin() == null
+                    ? null : r.getResolvedCounterpartyTin().trim();
             BigDecimal amt = nz(r.getAmount()).abs();
+            if (r.getCounterpartyIdentitySource() == CounterpartyIdentitySource.RESOLVED_BY_NAME
+                    || r.getCounterpartyIdentitySource() == CounterpartyIdentitySource.MANUAL_ALIAS) {
+                outflowByName = outflowByName.add(amt);
+                outflowByNameRows++;
+            } else if (r.getCounterpartyIdentitySource() == CounterpartyIdentitySource.AMBIGUOUS) {
+                outflowAmbiguous = outflowAmbiguous.add(amt);
+                outflowAmbiguousRows++;
+            }
             if (tin == null || tin.isEmpty()) {
                 outflowNoCounterparty = outflowNoCounterparty.add(amt);
                 outflowNoCounterpartyRows++;
@@ -501,6 +518,10 @@ public class AuditFlowService {
                 .unpaidDocumentedSupplierPurchases(money(unpaidDocumentedValue))
                 .outflowWithoutCounterpartyId(money(outflowNoCounterparty))
                 .outflowWithoutCounterpartyIdCount(outflowNoCounterpartyRows)
+                .outflowIdentifiedByName(money(outflowByName))
+                .outflowIdentifiedByNameCount(outflowByNameRows)
+                .outflowAmbiguousCounterparty(money(outflowAmbiguous))
+                .outflowAmbiguousCounterpartyCount(outflowAmbiguousRows)
                 .build();
     }
 
