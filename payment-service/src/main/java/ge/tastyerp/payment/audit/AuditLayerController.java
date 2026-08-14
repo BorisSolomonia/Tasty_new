@@ -50,6 +50,7 @@ public class AuditLayerController {
     private final BankStatementMirrorService bankStatementMirrorService;
     private final AuditSuggestionEngine suggestionEngine;
     private final AuditMappingRuleService mappingRuleService;
+    private final AuditConfigClient configClient;
 
     // ==================== canonical payload ====================
 
@@ -161,6 +162,30 @@ public class AuditLayerController {
         int undone = mappingRuleService.revokeRule(id, operator, reason);
         return ResponseEntity.ok(ApiResponse.success(undone,
                 "Rule withdrawn; " + undone + " mappings un-mapped"));
+    }
+
+    @GetMapping("/product-categories")
+    @Operation(summary = "Categories a product line can belong to (the inventory vocabulary)")
+    public ResponseEntity<ApiResponse<List<String>>> getProductCategories() {
+        return ResponseEntity.ok(ApiResponse.success(configClient.productCategories()));
+    }
+
+    @PutMapping("/product-categories")
+    @Operation(summary = "Set a product's category in the shared store /audit-control uses. "
+            + "Applies to the product everywhere, not to one document row.")
+    public ResponseEntity<ApiResponse<Void>> setProductCategory(
+            @RequestParam String productName,
+            @RequestParam String category,
+            @RequestParam String operator) {
+        if (!ge.tastyerp.common.dto.audit.ProductHierarchy.isValidCategory(category)) {
+            throw new ge.tastyerp.common.exception.ValidationException("category",
+                    "Unknown product category '" + category + "'");
+        }
+        configClient.setProductCategory(productName, category);
+        mappingService.log(operator, "PRODUCT_CATEGORY", productName, "category",
+                null, category, "Applies to this product everywhere");
+        return ResponseEntity.ok(ApiResponse.success(null,
+                "'" + productName + "' is now " + category + " everywhere"));
     }
 
     // ==================== categories ====================

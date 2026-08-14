@@ -11,6 +11,7 @@ import ge.tastyerp.common.dto.auditlayer.AuditSourceRowPageDto;
 import ge.tastyerp.common.dto.auditlayer.AuditSourceType;
 import ge.tastyerp.common.dto.waybill.WaybillType;
 import ge.tastyerp.common.exception.ExternalServiceException;
+import ge.tastyerp.common.util.SimpleTtlCache;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -62,6 +63,12 @@ public class AuditSourceRowService {
 
     @Value("${waybill.service.url:http://waybill-service:8081}")
     private String waybillServiceUrl;
+
+    /** TTL for the per-range document-movement cache (ms). Default 3 minutes. */
+    @Value("${audit.layer-movements-cache-ttl-ms:180000}")
+    private long movementsCacheTtlMs;
+
+    private volatile SimpleTtlCache<String, List<ProductMovementDto>> movementsCache;
 
     // ==================== bank rows ====================
 
@@ -172,7 +179,35 @@ public class AuditSourceRowService {
         return occurrence == 0 ? key : key + "#" + occurrence;
     }
 
+    /**
+     * Movements for a range, cached briefly.
+     *
+     * <p>A single audit page load asks for the same range many times over: the
+     * flows payload, the supplier registry, and every problem drill-down. Each
+     * was a fresh HTTP round trip pulling tens of thousands of document lines,
+     * which is why expanding a problem's evidence took over a minute. The window
+     * is deliberately short — user-editable data is never cached, only the
+     * immutable document feed.</p>
+     */
     public List<ProductMovementDto> loadProductMovements(LocalDate startDate, LocalDate endDate) {
+        return movementsCache().getOrCompute(startDate + "|" + endDate,
+                () -> fetchProductMovements(startDate, endDate));
+    }
+
+    private SimpleTtlCache<String, List<ProductMovementDto>> movementsCache() {
+        SimpleTtlCache<String, List<ProductMovementDto>> local = movementsCache;
+        if (local == null) {
+            synchronized (this) {
+                if (movementsCache == null) {
+                    movementsCache = new SimpleTtlCache<>(movementsCacheTtlMs, 16);
+                }
+                local = movementsCache;
+            }
+        }
+        return local;
+    }
+
+    private List<ProductMovementDto> fetchProductMovements(LocalDate startDate, LocalDate endDate) {
         try {
             String url = String.format("%s/api/waybills/product-movements?startDate=%s&endDate=%s",
                     waybillServiceUrl, startDate, endDate);

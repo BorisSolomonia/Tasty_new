@@ -23,6 +23,7 @@ import {
   type AuditMapping,
   type AuditMappingRule,
   type AuditPeriodParams,
+  type AuditSourceRowPage,
   type AuditSourceRowParams,
   type AuditSourceType,
   type CheckEvidence,
@@ -224,9 +225,35 @@ export function useInvalidateAuditLayer() {
 
 export function useSaveMapping(operator: string) {
   const invalidate = useInvalidateAuditLayer()
+  const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (mapping: AuditMapping) => auditLayerApi.saveMapping(mapping, operator),
-    onSuccess: invalidate,
+    onSuccess: (saved) => {
+      // The refetch this triggers can take ten to twenty seconds on a wide date
+      // range, and until it lands the row still reads UNMAPPED — which looks
+      // exactly like the save having failed. Patch the row in place first so the
+      // result is visible immediately; the refetch then confirms it.
+      queryClient.setQueriesData<AuditSourceRowPage>(
+        { queryKey: [AUDIT_LAYER_KEY, 'source-rows'] },
+        (page) => {
+          if (!page?.rows) return page
+          return {
+            ...page,
+            rows: page.rows.map((row) =>
+              row.sourceType === saved.sourceType && row.sourceRowId === saved.sourceRowId
+                ? {
+                    ...row,
+                    mapping: saved,
+                    status: saved.status ?? row.status,
+                    unresolvedAmount: saved.unresolvedAmount ?? row.unresolvedAmount,
+                  }
+                : row
+            ),
+          }
+        }
+      )
+      invalidate()
+    },
   })
 }
 

@@ -123,6 +123,11 @@ public class AuditFlowService {
 
     private AuditFlowsDto.Inventory buildInventory(List<ProductMovementDto> movements, LocalDate asOf) {
         Map<String, BigDecimal> rates = configClient.writeOffRates();
+        // The operator's product-category overrides, from the same config-service
+        // store /audit-control reads. Without these the two pages disagree about
+        // which category a product is in — and write-off rates are keyed by
+        // category, so they disagree about inventory too.
+        Map<String, String> categoryOverrides = configClient.categoryOverrides();
         Map<String, BigDecimal> realByProduct = latestRealInventory(asOf);
 
         Map<String, ProductAccumulator> byProduct = new LinkedHashMap<>();
@@ -131,8 +136,10 @@ public class AuditFlowService {
                 // Non-kg lines cannot participate in a kg conservation check.
                 continue;
             }
+            String resolvedCategory = ProductCategoryResolver.resolve(
+                    movement.getProductName(), movement.getParentCategory(), categoryOverrides);
             ProductAccumulator acc = byProduct.computeIfAbsent(
-                    movement.getProductName(), k -> new ProductAccumulator(k, movement.getParentCategory()));
+                    movement.getProductName(), k -> new ProductAccumulator(k, resolvedCategory));
             BigDecimal qty = nz(movement.getQuantityKg());
             if (movement.getType() == WaybillType.PURCHASE) {
                 acc.purchaseKg = acc.purchaseKg.add(qty);

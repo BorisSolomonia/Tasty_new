@@ -172,14 +172,15 @@ public class AuditControlService {
         return rows;
     }
 
+    /** Delegates to the shared resolver so this page and the audit layer cannot drift. */
     private String resolveCategory(String productName, String autoCategory, Map<String, String> overrides) {
-        if (productName == null) return autoCategory;
-        return overrides.getOrDefault(overrideKey(productName), autoCategory);
+        return ge.tastyerp.payment.audit.ProductCategoryResolver.resolve(
+                productName, autoCategory, overrides);
     }
 
     /** Case-insensitive, trimmed key used to match a product name to its override. */
     private String overrideKey(String name) {
-        return name == null ? "" : name.trim().toLowerCase();
+        return ge.tastyerp.payment.audit.ProductCategoryResolver.overrideKey(name);
     }
 
     // ==================== INVENTORY LEDGER ====================

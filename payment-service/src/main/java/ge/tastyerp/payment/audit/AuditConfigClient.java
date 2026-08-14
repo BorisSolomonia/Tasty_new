@@ -56,6 +56,23 @@ public class AuditConfigClient {
         return rates;
     }
 
+    /** Available product categories, so the UI offers exactly what the ledger understands. */
+    public java.util.List<String> productCategories() {
+        return ge.tastyerp.common.dto.audit.ProductHierarchy.allCategories();
+    }
+
+    /**
+     * Sets a product's category in the SHARED config-service store — the same
+     * record {@code /audit-control} reads and writes. A product carries one
+     * category globally, so this is not a per-row classification.
+     */
+    public void setProductCategory(String productName, String category) {
+        java.util.Map<String, Object> body = new HashMap<>();
+        body.put("name", productName);
+        body.put("category", category);
+        internalRestTemplate.put(configServiceUrl + "/api/config/product-categories", body);
+    }
+
     /** Product name -> user-assigned category override. */
     @SuppressWarnings("unchecked")
     public Map<String, String> categoryOverrides() {
