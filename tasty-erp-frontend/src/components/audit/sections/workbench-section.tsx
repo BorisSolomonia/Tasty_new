@@ -160,7 +160,11 @@ export function WorkbenchSection() {
         />
       </div>
 
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+      {/* Stacked, not side by side. The queue table is ~1,400px of columns; in a
+          two-column split it was squeezed into a 528px scroll box at 1280px —
+          the widest table on the page in the narrowest container. It now gets
+          the full section width and the editor sits beneath it. */}
+      <div className="grid grid-cols-1 gap-3">
         <CollapsiblePanel
           title="Source rows"
           summary={`${fmtCount(rows.length)} of ${fmtCount(sourceRows.length)} · ${fmtGel(

@@ -230,10 +230,53 @@ export function MappingEditor({
       {/* Splits.                                                           */}
       {/* ---------------------------------------------------------------- */}
       <div className="space-y-3">
+        {/* An unmapped row previously showed only this sentence, so the category
+            list — the whole point of opening a row — was one unexplained click
+            away behind "Add split". The picker is now present immediately, and
+            names how many categories exist so the built-in set is visibly
+            there rather than looking absent. */}
         {splits.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No allocation yet — the row&apos;s full amount is unresolved.
-          </p>
+          <div className="rounded-md border border-dashed border-border p-3">
+            <p className="text-sm text-muted-foreground">
+              No allocation yet — the row&apos;s full amount is unresolved. Choose a category to
+              allocate all of it, or use “Add split” to divide it between several.
+            </p>
+            <div className="mt-2 flex flex-wrap items-end gap-3">
+              <div className="min-w-[16rem] flex-1">
+                <Label className="text-[11px] text-muted-foreground">Category</Label>
+                <select
+                  className={inputClass}
+                  value=""
+                  onChange={(event) => {
+                    if (!event.target.value) return
+                    setSplits([
+                      {
+                        ...emptySplit(),
+                        categoryCode: event.target.value,
+                        counterpartyName: row.counterpartyName ?? null,
+                        counterpartyTin: row.resolvedCounterpartyTin ?? row.counterpartyTin ?? null,
+                        amount: allocatable,
+                      },
+                    ])
+                  }}
+                >
+                  <option value="">Select category…</option>
+                  {categories.map((category) => (
+                    <option key={category.code} value={category.code}>
+                      {category.label ?? category.code}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                {categories.length} categories available
+                {categories.some((category) => !category.builtIn)
+                  ? ` — ${categories.filter((category) => !category.builtIn).length} added by you`
+                  : ' — add your own in Categories'}
+                .
+              </p>
+            </div>
+          </div>
         ) : null}
 
         {splits.map((split, index) => (
