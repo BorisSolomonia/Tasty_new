@@ -10,12 +10,13 @@ import * as React from 'react'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'
-import type { AuditSourceRow } from '@/lib/audit-api'
+import type { AuditMapping, AuditSourceRow } from '@/lib/audit-api'
 import { useAudit } from '../audit-context'
 import { CollapsiblePanel } from '../collapsible-panel'
 import { SectionEvidence } from '../evidence-panel'
 import { MetricCard, SectionCard } from '../metric'
 import { MappingEditor } from '../mapping-editor'
+import { RuleScopeStep } from '../rule-scope-step'
 import { SourceRowTable, sourceRowKey } from '../source-row-table'
 import { isUnresolved } from '../cross-flow'
 import { fmtCount, fmtGel } from '../format'
@@ -63,6 +64,8 @@ export function WorkbenchSection() {
   const [filter, setFilter] = React.useState<QueueFilter>('ALL')
   const [search, setSearch] = React.useState('')
   const [selectedKey, setSelectedKey] = React.useState<string | null>(null)
+  /** A mapping built but not yet written, awaiting the scope decision. */
+  const [proposed, setProposed] = React.useState<AuditMapping | null>(null)
 
   const rows = React.useMemo(() => {
     const term = search.trim().toLowerCase()
@@ -189,11 +192,32 @@ export function WorkbenchSection() {
         </CollapsiblePanel>
 
         <SectionCard
-          title="Selected row — split mapping"
-          subtitle="Splits are allocations of the source amount. The remainder is derived, shown and enforced."
+          title={proposed ? 'How far does this apply?' : 'Selected row — split mapping'}
+          subtitle={
+            proposed
+              ? 'Nothing has been saved yet. Choose the scope, then confirm.'
+              : 'Splits are allocations of the source amount. The remainder is derived, shown and enforced.'
+          }
         >
-          {selected ? (
-            <MappingEditor row={selected} />
+          {/* The scope step is interposed here, not only in the dialog. Saving
+              straight from this panel used to write the mapping without ever
+              asking whether it should apply to similar transactions — the one
+              question BOR-91 exists to force. */}
+          {selected && proposed ? (
+            <RuleScopeStep
+              row={selected}
+              payload={proposed}
+              onBack={() => setProposed(null)}
+              onDone={() => setProposed(null)}
+            />
+          ) : selected ? (
+            <MappingEditor
+              row={selected}
+              onProposeMapping={selected.sourceType === 'BANK' ? setProposed : undefined}
+              submitLabel={
+                selected.sourceType === 'BANK' ? 'Continue — choose scope' : undefined
+              }
+            />
           ) : (
             <p className="text-sm text-muted-foreground">
               Select a row from the queue to open its mapping.

@@ -48,67 +48,77 @@ export function SourceRowTable({
   const [sorting, setSorting] = React.useState<SortingState>([{ id: 'date', desc: true }])
 
   const columns = React.useMemo(() => {
+    // Eleven columns needed ~1,428px and never fitted a 950px container, so the
+    // queue scrolled sideways to read a counterparty. Merged to six: the fields
+    // that identify a row stack inside one cell, and the ones that only apply to
+    // document rows (product, quantity) ride along with it. Nothing is lost —
+    // selecting the row shows every field in the editor below.
     const base = [
       columnHelper.accessor('date', {
         header: 'Date',
-        cell: (info) => <span className="whitespace-nowrap">{fmtDate(info.getValue())}</span>,
-      }),
-      columnHelper.display({
-        id: 'source',
-        header: 'Source',
-        cell: ({ row }) => (
-          <div className="min-w-0">
-            <div className="font-medium">{row.original.sourceType ?? EM_DASH}</div>
-            <div className="truncate text-[11px] text-muted-foreground">
-              {fmtText(row.original.reference)}
-            </div>
-          </div>
+        cell: (info) => (
+          <span className="whitespace-nowrap text-[11px]">{fmtDate(info.getValue())}</span>
         ),
       }),
       columnHelper.accessor('direction', {
-        header: 'Direction',
-        cell: (info) => <span className="whitespace-nowrap">{fmtText(info.getValue())}</span>,
-      }),
-      columnHelper.accessor('counterpartyName', {
-        header: 'Counterparty',
+        header: 'Row',
         cell: ({ row }) => (
-          <div className="min-w-0 max-w-[16rem]">
-            <div className="truncate" title={row.original.counterpartyName ?? undefined}>
-              {fmtText(row.original.counterpartyName)}
+          <div className="min-w-0 leading-tight">
+            <div className="whitespace-nowrap text-[11px] font-medium">
+              {fmtText(row.original.direction)}
             </div>
-            {row.original.counterpartyTin ? (
-              <div className="truncate text-[11px] text-muted-foreground">
-                {row.original.counterpartyTin}
-              </div>
-            ) : null}
+            <div className="truncate text-[10px] text-muted-foreground">
+              {row.original.sourceType ?? EM_DASH}
+              {row.original.reference ? ` · ${row.original.reference}` : ''}
+            </div>
           </div>
         ),
       }),
-      columnHelper.accessor('productName', {
-        header: 'Product',
-        cell: (info) => (
-          <span className="block max-w-[12rem] truncate" title={info.getValue() ?? undefined}>
-            {fmtText(info.getValue())}
-          </span>
-        ),
-      }),
-      columnHelper.accessor('quantityKg', {
-        header: () => <span className="block text-right">Qty</span>,
-        cell: (info) => (
-          <span className="block text-right tabular-nums">{fmtKgSigned(info.getValue())}</span>
-        ),
+      columnHelper.accessor('counterpartyName', {
+        header: 'Counterparty / description',
+        cell: ({ row }) => {
+          const product = row.original.productName
+          const qty = fmtKgSigned(row.original.quantityKg)
+          return (
+            <div className="min-w-0 leading-tight">
+              <div
+                className="truncate text-[11px] font-medium"
+                title={row.original.counterpartyName ?? undefined}
+              >
+                {fmtText(row.original.counterpartyName)}
+                {row.original.counterpartyTin ? (
+                  <span className="ml-1 font-normal text-muted-foreground">
+                    {row.original.counterpartyTin}
+                  </span>
+                ) : null}
+              </div>
+              <div
+                className="truncate text-[10px] text-muted-foreground"
+                title={row.original.description ?? undefined}
+              >
+                {product ? `${product}${qty !== EM_DASH ? ` · ${qty}` : ''} — ` : ''}
+                {fmtText(row.original.description)}
+              </div>
+            </div>
+          )
+        },
       }),
       columnHelper.accessor('amount', {
         header: () => <span className="block text-right">Amount</span>,
         cell: (info) => (
-          <span className="block text-right font-medium tabular-nums">{fmtGel(info.getValue())}</span>
+          <span className="block whitespace-nowrap text-right text-[11px] font-medium tabular-nums">
+            {fmtGel(info.getValue())}
+          </span>
         ),
       }),
       columnHelper.accessor('unresolvedAmount', {
         header: () => <span className="block text-right">Unresolved</span>,
         cell: (info) => (
           <span
-            className={cn('block text-right tabular-nums', toneClass[gapTone(info.getValue())])}
+            className={cn(
+              'block whitespace-nowrap text-right text-[11px] tabular-nums',
+              toneClass[gapTone(info.getValue())]
+            )}
           >
             {fmtGel(info.getValue())}
           </span>
@@ -117,29 +127,10 @@ export function SourceRowTable({
       columnHelper.accessor('status', {
         header: 'Status',
         cell: ({ row }) => (
-          <div className="flex flex-col items-start gap-1">
+          <div className="flex flex-col items-start gap-0.5">
             <StatusBadge status={row.original.status} />
             {/* Why this row says what it says, when a rule and not a person said it. */}
             <RuleBadge mapping={row.original.mapping} />
-          </div>
-        ),
-      }),
-      columnHelper.accessor('description', {
-        header: 'Raw description',
-        enableSorting: false,
-        cell: ({ row }) => (
-          <div className="max-w-[20rem]">
-            <div className="truncate" title={row.original.description ?? undefined}>
-              {fmtText(row.original.description)}
-            </div>
-            {row.original.additionalInformation ? (
-              <div
-                className="truncate text-[11px] text-muted-foreground"
-                title={row.original.additionalInformation}
-              >
-                {row.original.additionalInformation}
-              </div>
-            ) : null}
           </div>
         ),
       }),
@@ -185,7 +176,19 @@ export function SourceRowTable({
 
   return (
     <div className={cn('overflow-x-auto', className)}>
-      <table className="w-full border-collapse text-[11px]">
+      {/* table-fixed with an explicit colgroup: the identity column absorbs
+          whatever is left, so the queue fits its container instead of forcing a
+          sideways scroll to read a counterparty. */}
+      <table className="w-full table-fixed border-collapse text-[11px]">
+        <colgroup>
+          <col className="w-[74px]" />
+          <col className="w-[86px]" />
+          <col />
+          <col className="w-[96px]" />
+          <col className="w-[96px]" />
+          <col className="w-[104px]" />
+          {onMap ? <col className="w-[62px]" /> : null}
+        </colgroup>
         <thead>
           {table.getHeaderGroups().map((headerGroup) => (
             <tr key={headerGroup.id} className="border-b border-border">
