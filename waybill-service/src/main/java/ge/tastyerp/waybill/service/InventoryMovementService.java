@@ -6,6 +6,7 @@ import ge.tastyerp.common.dto.waybill.WaybillDto;
 import ge.tastyerp.common.dto.waybill.WaybillGoodDto;
 import ge.tastyerp.common.dto.waybill.WaybillType;
 import ge.tastyerp.common.util.SimpleTtlCache;
+import ge.tastyerp.waybill.repository.WaybillGoodsRepository;
 import ge.tastyerp.waybill.service.rsge.RsGeSoapClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -38,12 +40,13 @@ import java.util.stream.Collectors;
  * <ul>
  *   <li>SALE and PURCHASE list fetches run in parallel (they are independent
  *       RS.ge operations; each is already internally chunk-parallel).</li>
- *   <li>Results are cached per exact date range for a short TTL. RS.ge waybill
- *       history is immutable-in-practice within minutes, and the dashboard +
- *       product-catalog pages request identical ranges back-to-back — the
- *       second call is served from memory. User-editable data (category
- *       overrides etc.) is NOT cached anywhere; it is applied downstream on
- *       every request.</li>
+ *   <li>Results are cached per exact date range for a short TTL. User-editable
+ *       data (category overrides etc.) is NOT cached anywhere; it is applied
+ *       downstream on every request.</li>
+ *   <li>Goods lines are <b>persisted</b> (see {@link WaybillGoodsRepository}) and
+ *       only ever fetched from RS.ge once per waybill. Before this, a cold cache
+ *       meant one get_waybill call per waybill on every request: 147s for eight
+ *       months on the deployed VM, and a proxy timeout over three years.</li>
  * </ul>
  */
 @Slf4j
@@ -54,6 +57,7 @@ public class InventoryMovementService {
     private final WaybillService waybillService;
     private final RsGeSoapClient rsGeSoapClient;
     private final WaybillProcessingService waybillProcessingService;
+    private final WaybillGoodsRepository waybillGoodsRepository;
 
     /** TTL for the per-range movements cache (ms). Default 3 minutes. */
     @Value("${audit.movements-cache-ttl-ms:180000}")
@@ -100,18 +104,45 @@ public class InventoryMovementService {
         waybillIds.addAll(idsOf(purchases));
         List<String> distinctIds = waybillIds.stream().distinct().collect(Collectors.toList());
 
-        Map<String, Map<String, Object>> rawGoodsMap = rsGeSoapClient.getWaybillGoodsMap(distinctIds);
+        // Goods lines of a historical waybill never change, so they are read once
+        // and kept. Only ids we have never seen go to RS.ge — which is the
+        // difference between a 147s cold request and a sub-second one.
+        Map<String, WaybillGoodsRepository.StoredGoods> stored =
+                waybillGoodsRepository.findByWaybillIds(distinctIds);
+        List<String> missingIds = distinctIds.stream()
+                .filter(id -> !stored.containsKey(id))
+                .collect(Collectors.toList());
+        log.info("Goods for {} waybills: {} already stored, {} to fetch from RS.ge",
+                distinctIds.size(), stored.size(), missingIds.size());
 
         Map<String, List<WaybillGoodDto>> goodsByWaybillId = new HashMap<>();
-        Set<String> returnWaybillIds = rawGoodsMap.entrySet().stream()
-                .filter(entry -> isReturnWaybill(entry.getValue()))
-                .map(Map.Entry::getKey)
-                .collect(Collectors.toSet());
-        for (Map.Entry<String, Map<String, Object>> entry : rawGoodsMap.entrySet()) {
-            List<WaybillGoodDto> goods = waybillProcessingService.extractGoods(entry.getValue());
-            if (!goods.isEmpty()) {
-                goodsByWaybillId.put(entry.getKey(), goods);
+        Set<String> returnWaybillIds = new HashSet<>();
+        stored.forEach((waybillId, s) -> {
+            if (s.goods() != null && !s.goods().isEmpty()) {
+                goodsByWaybillId.put(waybillId, s.goods());
             }
+            if (s.returnWaybill()) {
+                returnWaybillIds.add(waybillId);
+            }
+        });
+
+        if (!missingIds.isEmpty()) {
+            Map<String, Map<String, Object>> rawGoodsMap = rsGeSoapClient.getWaybillGoodsMap(missingIds);
+            Map<String, WaybillGoodsRepository.StoredGoods> toStore = new HashMap<>();
+            for (Map.Entry<String, Map<String, Object>> entry : rawGoodsMap.entrySet()) {
+                List<WaybillGoodDto> goods = waybillProcessingService.extractGoods(entry.getValue());
+                boolean isReturn = isReturnWaybill(entry.getValue());
+                if (!goods.isEmpty()) {
+                    goodsByWaybillId.put(entry.getKey(), goods);
+                }
+                if (isReturn) {
+                    returnWaybillIds.add(entry.getKey());
+                }
+                // Stored even when empty, so a waybill with no goods is not
+                // re-fetched on every future request.
+                toStore.put(entry.getKey(), new WaybillGoodsRepository.StoredGoods(goods, isReturn));
+            }
+            waybillGoodsRepository.saveAll(toStore);
         }
         long tGoods = System.currentTimeMillis();
 

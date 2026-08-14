@@ -3,6 +3,7 @@ package ge.tastyerp.waybill.service;
 import ge.tastyerp.common.dto.audit.ProductMovementDto;
 import ge.tastyerp.common.dto.waybill.WaybillDto;
 import ge.tastyerp.common.dto.waybill.WaybillType;
+import ge.tastyerp.waybill.repository.WaybillGoodsRepository;
 import ge.tastyerp.waybill.service.rsge.RsGeSoapClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,13 +24,19 @@ class InventoryMovementServiceTest {
 
     private WaybillService waybillService;
     private RsGeSoapClient rsGeSoapClient;
+    private WaybillGoodsRepository goodsRepository;
     private InventoryMovementService service;
 
     @BeforeEach
     void setUp() {
         waybillService = mock(WaybillService.class);
         rsGeSoapClient = mock(RsGeSoapClient.class);
-        service = new InventoryMovementService(waybillService, rsGeSoapClient, new WaybillProcessingService());
+        goodsRepository = mock(WaybillGoodsRepository.class);
+        // Nothing stored, so every waybill still goes to RS.ge — the behaviour
+        // these tests assert is unchanged by the persistence layer.
+        when(goodsRepository.findByWaybillIds(any())).thenReturn(java.util.Map.of());
+        service = new InventoryMovementService(waybillService, rsGeSoapClient,
+                new WaybillProcessingService(), goodsRepository);
         ReflectionTestUtils.setField(service, "cacheTtlMs", 180_000L);
         when(waybillService.getWaybills(any(), any(), any(), any(Boolean.class), any(WaybillType.class)))
                 .thenReturn(List.of());
