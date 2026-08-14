@@ -35,9 +35,20 @@
  *                                  concentration, cross-flow clusters)
  *  - 08 Reconciliation Workbench → Workbench section
  *
- * The period and product filters, the operator name and the drill-down dialog
- * stay owned by this page, and every section renders the one `AuditFlowsDto`
- * that `AuditProvider` fetches once.
+ * The period and product filters and the operator name stay owned by this page,
+ * and every section renders the one `AuditFlowsDto` that `AuditProvider`
+ * fetches once.
+ *
+ * Two later corrections, both about height and where evidence lands:
+ *
+ *  - every table-bearing block is a `CollapsiblePanel`, shut on load with its
+ *    count and headline figure on the header. The page was ~133,000px tall on
+ *    a 1280px viewport; the summaries it exists to show were separated by tens
+ *    of thousands of pixels of rows nobody had asked for.
+ *  - a problem's evidence no longer opens in a dialog. It scrolls to the
+ *    section that browses that kind of row and renders there, under a chip
+ *    naming the problem, with a Clear that restores the section. See
+ *    `evidence.ts` for the key → section routing.
  */
 import * as React from 'react'
 import { RefreshCw } from 'lucide-react'
@@ -154,7 +165,7 @@ function AuditWorkspace() {
           <RefreshCw className={cn('mr-2 h-4 w-4', flowsQuery.isFetching && 'animate-spin')} />
           {flowsQuery.isFetching ? 'Refreshing…' : 'Refresh'}
         </Button>
-        <p className="ml-auto max-w-sm text-[11px] leading-snug text-muted-foreground">
+        <p className="ml-auto max-w-md self-center text-[10px] leading-snug text-muted-foreground">
           Changing the period or product refetches the one shared payload. Real inventory is a
           manual input, source rows stay individually mappable, and every manual mapping or override
           is logged against a self-declared operator name.
