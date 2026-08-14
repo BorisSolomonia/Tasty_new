@@ -21,6 +21,7 @@ import {
   auditLayerApi,
   type AuditCategory,
   type AuditMapping,
+  type AuditMappingRule,
   type AuditPeriodParams,
   type AuditSourceRowParams,
   type AuditSourceType,
@@ -94,6 +95,70 @@ export function useAuditDrilldown(
     // Same reasoning as the flows query: never pay a long scan twice silently.
     retry: false,
     enabled,
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Mapping rules (BOR-91)
+// ---------------------------------------------------------------------------
+
+/**
+ * Every saved rule, active or revoked.
+ *
+ * `retry: false` on purpose. This endpoint is the newest part of the layer, and
+ * a build whose backend predates it answers 404 — retrying would only delay the
+ * same answer. Callers render the failure as "the rules endpoint did not
+ * answer", never as "there are no rules".
+ */
+export function useMappingRules(enabled = true) {
+  return useQuery({
+    queryKey: [AUDIT_LAYER_KEY, 'mapping-rules'],
+    queryFn: () => auditLayerApi.getMappingRules(),
+    staleTime: STALE,
+    retry: false,
+    enabled,
+  })
+}
+
+/**
+ * What each applicable criterion would catch for one source row.
+ *
+ * Fetched only while the scope step is open — this is a scan over the period,
+ * and nothing should pay for it before the user has asked to widen a mapping.
+ */
+export function useMappingRulePreview(
+  params: { sourceRowId: string; startDate: string; endDate: string },
+  enabled: boolean
+) {
+  return useQuery({
+    queryKey: [
+      AUDIT_LAYER_KEY,
+      'mapping-rule-preview',
+      params.sourceRowId,
+      params.startDate,
+      params.endDate,
+    ],
+    queryFn: () => auditLayerApi.previewMappingRules(params),
+    staleTime: STALE,
+    retry: false,
+    enabled: enabled && Boolean(params.sourceRowId),
+  })
+}
+
+export function useSaveMappingRule(operator: string) {
+  const invalidate = useInvalidateAuditLayer()
+  return useMutation({
+    mutationFn: (rule: AuditMappingRule) => auditLayerApi.saveMappingRule(rule, operator),
+    onSuccess: invalidate,
+  })
+}
+
+export function useRevokeMappingRule(operator: string) {
+  const invalidate = useInvalidateAuditLayer()
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      auditLayerApi.revokeMappingRule(id, operator, reason),
+    onSuccess: invalidate,
   })
 }
 

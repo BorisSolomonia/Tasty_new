@@ -9,6 +9,7 @@ import { ArrowUpRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/cn'
 import type { AuditAlert } from '@/lib/audit-api'
+import { isKnownDrilldownKey, type DrilldownKey } from './drilldown-keys'
 import { SeverityBadge } from './status-badge'
 import {
   fmtCount,
@@ -20,6 +21,31 @@ import {
   formatInput,
 } from './format'
 import { useAudit } from './audit-context'
+
+/**
+ * The rows behind one alert.
+ *
+ * An alert expands into its own `drilldownKey` and nothing else. Substituting a
+ * broader key — "every bank row" for a rule about four withdrawals — would show
+ * the reader a different set under the alert's title, which is the one thing a
+ * drill-down must never do. So an unknown key disables the button and says why
+ * rather than falling back to something wider.
+ */
+export function alertEvidenceKey(alert: AuditAlert): {
+  key: DrilldownKey | null
+  blockedReason: string | undefined
+} {
+  if (!alert.drilldownKey) {
+    return { key: null, blockedReason: 'This rule returned no drill-down key.' }
+  }
+  if (!isKnownDrilldownKey(alert.drilldownKey)) {
+    return {
+      key: null,
+      blockedReason: `The backend sent the drill-down key "${alert.drilldownKey}", which this build does not know how to open.`,
+    }
+  }
+  return { key: alert.drilldownKey, blockedReason: undefined }
+}
 
 export function sortAlerts(alerts: AuditAlert[] | null | undefined): AuditAlert[] {
   return [...(alerts ?? [])].sort((a, b) => {
@@ -81,6 +107,10 @@ function AlertRow({
 }) {
   const { openDrilldown } = useAudit()
   const inputs = Object.entries(alert.inputs ?? {})
+  // The alert's own key, never a hand-picked wider one (BOR-91). The guard is
+  // kept because a key this build does not know would fail server-side as
+  // "Unknown drill-down key" — better to say so on the button.
+  const evidence = alertEvidenceKey(alert)
 
   const headline = hasValue(alert.amount)
     ? fmtGel(alert.amount)
@@ -140,13 +170,13 @@ function AlertRow({
           size="sm"
           variant="outline"
           className="ml-auto h-7"
-          disabled={!alert.drilldownKey}
-          title={alert.drilldownKey ? undefined : 'This rule returned no drill-down key.'}
+          disabled={!evidence.key}
+          title={evidence.blockedReason}
           onClick={(event) => {
             event.stopPropagation()
-            if (!alert.drilldownKey) return
+            if (!evidence.key) return
             openDrilldown({
-              key: alert.drilldownKey,
+              key: evidence.key,
               subject: alert.subjects?.length === 1 ? alert.subjects[0] : undefined,
               label: alert.title ?? alert.ruleId ?? undefined,
             })

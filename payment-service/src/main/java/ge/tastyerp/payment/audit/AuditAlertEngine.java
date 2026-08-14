@@ -15,6 +15,13 @@ import java.util.Map;
 /**
  * Transparent audit rules (BOR-89 §9).
  *
+ * <p><b>Every rule owns its drill-down.</b> Three rules once shared
+ * {@code cash.supplierSettlement}, which was the record set of none of them, so
+ * clicking a problem answered a different question than the one asked. A
+ * drill-down that shows unrelated records is worse than none: it invites the
+ * reader to reconcile a number against evidence that never produced it
+ * (BOR-91).</p>
+ *
  * <p>Every rule returns the inputs it was evaluated on, so the UI can show the
  * arithmetic instead of an unexplained red number. That is the ticket's
  * "implement transparent rules first, each alert explains the formula" — a rule
@@ -79,7 +86,7 @@ public class AuditAlertEngine {
                             "documentedSupplierPurchases", cash.getDocumentedSupplierPurchases(),
                             "settlementAndDebt", cash.getSupplierSettlementAndDebt()))
                     .amount(cash.getUncoveredPurchaseBalance())
-                    .drilldownKey("cash.supplierSettlement")
+                    .drilldownKey("cash.uncoveredPurchase")
                     .build());
         }
 
@@ -107,7 +114,7 @@ public class AuditAlertEngine {
                     .amount(cash.getPaidToUndocumentedCounterparties())
                     .affectedRowCount(cash.getUndocumentedCounterpartyCount())
                     .subjects(subjects)
-                    .drilldownKey("cash.supplierSettlement")
+                    .drilldownKey("cash.paidWithoutDocumentation")
                     .build());
         }
 
@@ -124,7 +131,7 @@ public class AuditAlertEngine {
                             "documentedSupplierPurchases", cash.getDocumentedSupplierPurchases()))
                     .amount(cash.getUnpaidDocumentedSupplierPurchases())
                     .affectedRowCount(cash.getUnpaidDocumentedSupplierCount())
-                    .drilldownKey("cash.supplierSettlement")
+                    .drilldownKey("cash.supplierNeverPaid")
                     .build());
         }
 
@@ -141,7 +148,7 @@ public class AuditAlertEngine {
                             "bankOutflow", cash.getBankOutflow()))
                     .amount(cash.getOutflowWithoutCounterpartyId())
                     .affectedRowCount(cash.getOutflowWithoutCounterpartyIdCount())
-                    .drilldownKey("cash.unresolvedWithdrawals")
+                    .drilldownKey("cash.outflowWithoutCounterparty")
                     .build());
         }
 
@@ -208,7 +215,7 @@ public class AuditAlertEngine {
                     .formula("count of checks where unsupported > 0 and classified = false")
                     .inputs(inputs("unsupportedChecks", cash.getUnsupportedChecks()))
                     .affectedRowCount(cash.getUnclassifiedCheckCount())
-                    .drilldownKey("cash.unsupportedChecks")
+                    .drilldownKey("cash.checksUnclassified")
                     .build());
         }
 

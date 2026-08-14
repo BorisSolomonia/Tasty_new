@@ -6,6 +6,7 @@ import ge.tastyerp.common.dto.auditlayer.AuditChangeLogDto;
 import ge.tastyerp.common.dto.auditlayer.AuditDrilldownDto;
 import ge.tastyerp.common.dto.auditlayer.AuditFlowsDto;
 import ge.tastyerp.common.dto.auditlayer.AuditMappingDto;
+import ge.tastyerp.common.dto.auditlayer.AuditMappingRuleDto;
 import ge.tastyerp.common.dto.auditlayer.AuditMappingStatus;
 import ge.tastyerp.common.dto.auditlayer.AuditSourceRowPageDto;
 import ge.tastyerp.common.dto.auditlayer.AuditSourceType;
@@ -48,6 +49,7 @@ public class AuditLayerController {
     private final AuditSourceRowService sourceRowService;
     private final BankStatementMirrorService bankStatementMirrorService;
     private final AuditSuggestionEngine suggestionEngine;
+    private final AuditMappingRuleService mappingRuleService;
 
     // ==================== canonical payload ====================
 
@@ -117,6 +119,48 @@ public class AuditLayerController {
                 sourceRowService.loadBankRows(startDate, endDate, index),
                 suggestionEngine, suppliers, operator, replaceAutomatic);
         return ResponseEntity.ok(ApiResponse.success(counts, "Suggestions applied"));
+    }
+
+    // ==================== reusable mapping rules (BOR-91) ====================
+
+    @GetMapping("/mappings/rules/preview")
+    @Operation(summary = "What each similarity criterion would catch, shown before the "
+            + "user commits to a reusable mapping")
+    public ResponseEntity<ApiResponse<List<AuditMappingRuleDto.Preview>>> previewRule(
+            @RequestParam String sourceRowId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate) {
+        return ResponseEntity.ok(ApiResponse.success(
+                mappingRuleService.preview(sourceRowId, startDate, endDate)));
+    }
+
+    @GetMapping("/mappings/rules")
+    @Operation(summary = "Saved reusable mappings, so they can be reviewed and changed later")
+    public ResponseEntity<ApiResponse<List<AuditMappingRuleDto>>> getRules() {
+        return ResponseEntity.ok(ApiResponse.success(mappingRuleService.getRules()));
+    }
+
+    @PutMapping("/mappings/rules")
+    @Operation(summary = "Create or edit a reusable mapping and apply it to matching rows")
+    public ResponseEntity<ApiResponse<AuditMappingRuleDto>> saveRule(
+            @RequestBody AuditMappingRuleDto rule,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam String operator) {
+        AuditMappingRuleDto saved = mappingRuleService.saveRule(rule, startDate, endDate, operator);
+        return ResponseEntity.ok(ApiResponse.success(saved,
+                "Rule saved and applied to " + saved.getAppliedCount() + " transactions"));
+    }
+
+    @DeleteMapping("/mappings/rules/{id}")
+    @Operation(summary = "Withdraw a reusable mapping and un-map exactly what it created")
+    public ResponseEntity<ApiResponse<Integer>> revokeRule(
+            @PathVariable String id,
+            @RequestParam String operator,
+            @RequestParam(required = false) String reason) {
+        int undone = mappingRuleService.revokeRule(id, operator, reason);
+        return ResponseEntity.ok(ApiResponse.success(undone,
+                "Rule withdrawn; " + undone + " mappings un-mapped"));
     }
 
     // ==================== categories ====================

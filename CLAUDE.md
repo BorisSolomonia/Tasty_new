@@ -532,3 +532,56 @@ public class PaymentReconciliationService {
 - Spring Boot Actuator endpoints: `/actuator/health`, `/actuator/metrics`
 - Container health checks configured
 - Structured JSON logging for GCP Cloud Logging
+
+---
+
+## Product rules for audit & data-classification features
+
+Binding on any implementer — PAI, Claude, Codex or a human. Established in BOR-91
+after each was violated in practice. They exist because this system's job is to
+expose things that were quietly attributed to the wrong place; a tool that does
+that itself is worse than no tool.
+
+### Mappings and classifications
+
+- **User-created mappings are editable and extensible by default.** Do not ship a
+  fixed enumeration of categories or rules unless the domain genuinely forbids
+  extension. If a user meets a case the model cannot express, the model is wrong.
+- **When classifying one record could reasonably affect similar records, require
+  an explicit choice** between "only this record" and "similar records too".
+  "Only this record" is always the default selection.
+- **Never silently generalise a one-record decision into a rule.** Before a
+  reusable rule is created the user must see, in plain language, what counts as
+  similar and how many records it would catch — with a sample of them.
+- **Similarity is exact matching on fields the source supplied.** No fuzzy or
+  substring matching. A rule whose reach a user cannot predict will eventually
+  classify something nobody chose.
+- **A rule never overrides a decision a person made.** It applies to records that
+  are unmapped or were classified by automation.
+- **Every automated classification records what produced it**, and withdrawing
+  that rule undoes exactly what it created and nothing else.
+
+### Drill-downs
+
+- **A drill-down from a highlighted problem shows the records that caused *that*
+  problem** — not a wider or adjacent set. Clicking "unmapped transactions" shows
+  unmapped transactions only.
+- **Each rule owns its own record set.** Two problems must not share a drill-down
+  key unless their record sets are genuinely identical. Showing a number next to
+  evidence that did not produce it invites a false reconciliation.
+- Deliberately broad views ("All rows") are legitimate, but only behind a control
+  that says so — never behind a problem.
+
+### Detailed-data windows
+
+- **Size the window to the data.** Modals, drawers and detail panes showing
+  tables must be wide enough for their important fields without compressing them
+  to unreadability, and must stay usable on smaller screens — the table scrolls
+  inside its own container, the page does not.
+
+### Reporting numbers
+
+- **Never present a figure whose inputs are missing as if it were zero risk.** If
+  data is absent, say so where the figure is shown.
+- **Say how an identity or value was established** when it was inferred rather
+  than stated by the source.

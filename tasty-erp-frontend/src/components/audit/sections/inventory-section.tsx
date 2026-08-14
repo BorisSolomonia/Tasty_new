@@ -1,9 +1,16 @@
 /**
- * 04 — Inventory-First Matrix.
+ * Inventory — the product reconciliation matrix (old view 04), unchanged in
+ * substance: documented movement per product, the confirmed reality beside it,
+ * and the cash and document consequences the backend attributes to it.
  *
- * Inventory dominates the screen, but cash and documentation stay present and
- * reconcilable: the matrix carries the cash gap and flagged-document count that
- * each product is responsible for, so the other two flows are never off-screen.
+ * Its two "linked" cards are kept, but as links rather than as copies. The
+ * figures they used to reprint — unresolved withdrawals, unsupported checks,
+ * net unexplained paper cash, document purchases and sales — each have exactly
+ * one home elsewhere on this page, and the whole point of the consolidation is
+ * that the reader can be sent there instead of shown a second instance.
+ *
+ * The one number computed here rather than copied is Σ related cash gap, which
+ * is the sum of the matrix's own column and exists nowhere else.
  */
 import * as React from 'react'
 import { ArrowDown, ArrowUp } from 'lucide-react'
@@ -12,23 +19,29 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'
 import type { AuditProductRow } from '@/lib/audit-api'
 import { useAudit } from '../audit-context'
-import { ThreeFlowStrip } from '../three-flow-strip'
 import { MetricRow, SectionCard, FormulaNote } from '../metric'
 import { RealStockCell } from '../real-stock-cell'
 import { inventoryGapKey } from '../drilldown-keys'
+import { JumpLink } from '../section-nav'
 import { fmtCount, fmtGel, fmtKgSigned, fmtPercent, gapTone, toneClass } from '../format'
 
-type SortKey = 'productName' | 'purchaseKg' | 'saleKg' | 'writeOffKg' | 'documentStockKg' | 'gapKg' | 'relatedCashGap' | 'flaggedDocumentCount'
+type SortKey =
+  | 'productName'
+  | 'purchaseKg'
+  | 'saleKg'
+  | 'writeOffKg'
+  | 'documentStockKg'
+  | 'gapKg'
+  | 'relatedCashGap'
+  | 'flaggedDocumentCount'
 
-export function InventoryFirstMatrix() {
+export function InventorySection() {
   const { flows, flowsQuery, openDrilldown } = useAudit()
   const [search, setSearch] = React.useState('')
   const [sortKey, setSortKey] = React.useState<SortKey>('gapKg')
   const [descending, setDescending] = React.useState(true)
 
   const inventory = flows?.inventory ?? null
-  const cash = flows?.cash ?? null
-  const documentation = flows?.documentation ?? null
 
   const rows = React.useMemo(() => {
     const products = inventory?.products ?? []
@@ -73,8 +86,6 @@ export function InventoryFirstMatrix() {
 
   return (
     <div className="space-y-4">
-      <ThreeFlowStrip />
-
       <SectionCard
         title="Product reconciliation matrix"
         subtitle="Documented movement per product, the confirmed reality beside it, and the cash and document consequences attributed to it."
@@ -127,81 +138,89 @@ export function InventoryFirstMatrix() {
         )}
       </SectionCard>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <SectionCard
-          title="Cash linked to inventory anomalies"
-          subtitle="The money side of the same period. Present, not hidden behind the matrix."
+          title="Period totals"
+          subtitle="The stock side of this period, summed across every product above."
         >
+          <MetricRow label="Document purchases" value={fmtKgSigned(inventory?.documentPurchaseKg)} />
+          <MetricRow label="Document sales" value={fmtKgSigned(inventory?.documentSaleKg)} />
+          <MetricRow label="Write-offs" value={fmtKgSigned(inventory?.documentWriteOffKg)} />
+          <MetricRow label="Document stock" value={fmtKgSigned(inventory?.documentStockKg)} />
+          <MetricRow label="Real stock (confirmed)" value={fmtKgSigned(inventory?.realStockKg)} />
           <MetricRow
-            label="Σ related cash gap across products"
-            value={fmtGel(
-              (inventory?.products ?? []).reduce((sum, product) => sum + (product.relatedCashGap ?? 0), 0)
-            )}
-            hint="Sum of the per-product attribution in the matrix above"
+            label="Gap"
+            value={fmtKgSigned(inventory?.gapKg)}
+            tone={gapTone(inventory?.gapKg)}
           />
           <MetricRow
-            label="Unresolved withdrawals"
-            value={fmtGel(cash?.unresolvedWithdrawalAmount)}
-            tone={gapTone(cash?.unresolvedWithdrawalAmount)}
-            drilldownKey="cash.unresolvedWithdrawals"
+            label="Products with a positive gap"
+            value={fmtCount(inventory?.positiveGapProducts)}
           />
           <MetricRow
-            label="Supplier-allocated cash settlements"
-            value={fmtGel(cash?.supplierAllocatedCashSettlements)}
-            drilldownKey="cash.supplierSettlement"
-          />
-          <MetricRow
-            label="Unsupported checks"
-            value={fmtGel(cash?.unsupportedChecks)}
-            tone={gapTone(cash?.unsupportedChecks)}
-            drilldownKey="cash.unsupportedChecks"
-          />
-          <MetricRow
-            label="Net unexplained paper cash"
-            value={fmtGel(cash?.netUnexplainedPaperCash)}
-            tone={gapTone(cash?.netUnexplainedPaperCash)}
-            drilldownKey="cash.paperCash"
+            label="Products with a negative gap"
+            value={fmtCount(inventory?.negativeGapProducts)}
           />
         </SectionCard>
 
         <SectionCard
-          title="Documentation linked to inventory anomalies"
-          subtitle="Which documents produced the stock the matrix is arguing about."
+          title="Cash linked to inventory anomalies"
+          subtitle="The money side of the same period. Linked rather than reprinted — each figure has one home."
         >
           <MetricRow
-            label="Document purchases"
-            value={fmtKgSigned(documentation?.documentPurchaseKg)}
-            hint={fmtGel(documentation?.documentPurchaseValue)}
+            label="Σ related cash gap across products"
+            value={fmtGel(
+              (inventory?.products ?? []).reduce(
+                (sum, product) => sum + (product.relatedCashGap ?? 0),
+                0
+              )
+            )}
+            hint="Sum of the per-product attribution in the matrix above"
           />
-          <MetricRow
-            label="Document sales"
-            value={fmtKgSigned(documentation?.documentSalesKg)}
-            hint={fmtGel(documentation?.documentSalesValue)}
-          />
-          <MetricRow
-            label="Write-offs"
-            value={fmtKgSigned(documentation?.writeOffKg)}
-          />
+          <ul className="mt-3 space-y-1.5">
+            <li>
+              <JumpLink to="cash">Unresolved withdrawals and unmapped inflows</JumpLink>
+            </li>
+            <li>
+              <JumpLink to="cash">Unsupported checks and supplier settlement</JumpLink>
+            </li>
+            <li>
+              <JumpLink to="cash">Net unexplained paper cash</JumpLink>
+            </li>
+          </ul>
+          <FormulaNote>
+            Those figures live in the cash section and are shown there once. A product&apos;s own
+            share of them is the “related cash gap” column above.
+          </FormulaNote>
+        </SectionCard>
+
+        <SectionCard
+          title="Documentation linked to inventory anomalies"
+          subtitle="Which documents produced the stock this matrix is arguing about."
+        >
           <MetricRow
             label="Flagged documents"
-            value={fmtCount(documentation?.flaggedDocumentCount)}
-            hint={fmtGel(documentation?.flaggedDocumentValue)}
-            tone={gapTone(documentation?.flaggedDocumentValue)}
+            value={fmtCount(
+              (inventory?.products ?? []).reduce(
+                (sum, product) => sum + (product.flaggedDocumentCount ?? 0),
+                0
+              )
+            )}
+            hint="Σ of the flagged-document column above, attributed per product"
           />
-          <MetricRow
-            label="Individually unmapped rows"
-            value={fmtCount(documentation?.unmappedDocumentRowCount)}
-            tone={documentation && documentation.unmappedDocumentRowCount > 0 ? 'warn' : 'neutral'}
-            drilldownKey="documentation.unmapped"
-          />
+          <ul className="mt-3 space-y-1.5">
+            <li>
+              <JumpLink to="documentation">Purchase and sales document values</JumpLink>
+            </li>
+            <li>
+              <JumpLink to="documentation">Unmapped RS.ge rows</JumpLink>
+            </li>
+          </ul>
           <button
             type="button"
             className="mt-3 text-xs text-primary hover:underline"
             onClick={() =>
-              openDrilldown({
-                key: 'documentation.unmapped',
-                label: 'Unmapped RS.ge rows',
-              })
+              openDrilldown({ key: 'documentation.unmapped', label: 'Unmapped RS.ge rows' })
             }
           >
             Open the unmapped rows and classify them →

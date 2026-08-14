@@ -1,14 +1,18 @@
 /**
- * 06 — Documentation Ledger.
- *
- * RS.ge rows are primary, each with the two consequences it carries: what it
- * did to stock, and what it did to cash or to paper cash.
+ * Documentation — RS.ge rows as the primary object (old view 06), each with the
+ * two consequences it carries: what it did to stock, and what it did to cash or
+ * to paper cash.
  *
  * Both effects are derived here, and the derivation is stated on screen rather
  * than implied. The inventory effect comes from the row's own direction and
  * quantity; the cash effect comes from the row's mapping splits and the
  * behavioural flags on their categories. An unmapped row therefore has no cash
  * effect the audit can claim — it shows an em dash, not a zero.
+ *
+ * The totals card below owns every `documentation.*` figure on the page. The
+ * "inventory consequence" and "cash consequence" cards this view used to carry
+ * are now links: their figures live in the inventory and cash sections, one
+ * scroll away, and are printed once.
  */
 import * as React from 'react'
 import { Input } from '@/components/ui/input'
@@ -17,11 +21,11 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'
 import type { AuditCategory, AuditSourceRow } from '@/lib/audit-api'
 import { useAudit } from '../audit-context'
-import { ThreeFlowStrip } from '../three-flow-strip'
 import { MetricRow, SectionCard, FormulaNote } from '../metric'
 import { StatusBadge } from '../status-badge'
+import { RuleBadge } from '../rule-badge'
 import { MappingDialog } from '../mapping-dialog'
-import { FeedCapNotice } from '../feed-cap-notice'
+import { JumpLink } from '../section-nav'
 import {
   EM_DASH,
   fmtCount,
@@ -56,7 +60,11 @@ function cashEffect(
     const category = split.categoryCode ? categoriesByCode.get(split.categoryCode) : undefined
     const amount = split.amount ?? 0
     if (!category) continue
-    const signed = category.customerReceipt ? amount : category.supplierSettlement || category.nonSupplierExpense ? -amount : amount
+    const signed = category.customerReceipt
+      ? amount
+      : category.supplierSettlement || category.nonSupplierExpense
+        ? -amount
+        : amount
     if (category.paperOnly) paper += signed
     else real += signed
   }
@@ -71,15 +79,13 @@ function cashEffect(
   }
 }
 
-export function DocumentationLedger() {
+export function DocumentationSection() {
   const { flows, sourceRows, sourceRowsQuery, categories, openDrilldown } = useAudit()
   const [search, setSearch] = React.useState('')
   const [onlyUnmapped, setOnlyUnmapped] = React.useState(false)
   const [mappingRow, setMappingRow] = React.useState<AuditSourceRow | null>(null)
 
   const documentation = flows?.documentation ?? null
-  const inventory = flows?.inventory ?? null
-  const cash = flows?.cash ?? null
 
   const categoriesByCode = React.useMemo(
     () => new Map(categories.map((category) => [category.code, category])),
@@ -101,15 +107,16 @@ export function DocumentationLedger() {
 
   return (
     <div className="space-y-4">
-      <ThreeFlowStrip />
-
-      <FeedCapNotice />
-
       <SectionCard
         title="RS.ge and evidence rows"
         subtitle="Every row individually mappable. Raw values are shown exactly as imported."
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/*
+              `documentation.rows` is every document line in the period —
+              deliberately broad, so like `cash.bankRows` it hangs off an
+              explicit browse action and never off a problem.
+            */}
             <button
               type="button"
               className="whitespace-nowrap text-xs text-primary hover:underline"
@@ -165,7 +172,10 @@ export function DocumentationLedger() {
                   const effect = inventoryEffect(row)
                   const cashText = cashEffect(row, categoriesByCode)
                   return (
-                    <tr key={`${row.sourceType}:${row.sourceRowId}`} className="border-b border-border/70 align-top">
+                    <tr
+                      key={`${row.sourceType}:${row.sourceRowId}`}
+                      className="border-b border-border/70 align-top"
+                    >
                       <td className="whitespace-nowrap py-1.5 pr-2">{fmtDate(row.date)}</td>
                       <td className="py-1.5 pr-2">
                         <div className="font-medium">{row.sourceType ?? EM_DASH}</div>
@@ -198,7 +208,10 @@ export function DocumentationLedger() {
                         <div className="text-[11px] text-muted-foreground">{cashText.detail}</div>
                       </td>
                       <td className="py-1.5 pr-2">
-                        <StatusBadge status={row.status} />
+                        <div className="flex flex-col items-start gap-1">
+                          <StatusBadge status={row.status} />
+                          <RuleBadge mapping={row.mapping} />
+                        </div>
                       </td>
                       <td className="py-1.5">
                         <Button
@@ -227,8 +240,11 @@ export function DocumentationLedger() {
         )}
       </SectionCard>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <SectionCard title="Documentation totals" subtitle="The flow this ledger belongs to.">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <SectionCard
+          title="Documentation totals"
+          subtitle="Every figure the documentation flow reports for this period."
+        >
           <MetricRow
             label="Purchase documents"
             value={fmtGel(documentation?.documentPurchaseValue)}
@@ -238,6 +254,27 @@ export function DocumentationLedger() {
             label="Sales documents"
             value={fmtGel(documentation?.documentSalesValue)}
             hint={fmtKgSigned(documentation?.documentSalesKg)}
+          />
+          <MetricRow label="Write-offs" value={fmtKgSigned(documentation?.writeOffKg)} />
+          <MetricRow
+            label="Paper-only sales"
+            value={fmtGel(documentation?.paperOnlySalesValue)}
+            hint={`${fmtCount(documentation?.paperOnlySalesCount)} documents`}
+            tone={gapTone(documentation?.paperOnlySalesValue)}
+            drilldownKey="documentation.paperOnlySales"
+          />
+          <MetricRow
+            label="Paper-only customer payments"
+            value={fmtGel(documentation?.paperOnlyCustomerPaymentValue)}
+            hint={`${fmtCount(documentation?.paperOnlyCustomerPaymentCount)} documents`}
+            tone={gapTone(documentation?.paperOnlyCustomerPaymentValue)}
+            drilldownKey="documentation.paperOnlyReceipts"
+          />
+          <MetricRow
+            label="Unsupported supplier documents"
+            value={fmtGel(documentation?.unsupportedSupplierDocumentValue)}
+            hint={`${fmtCount(documentation?.unsupportedSupplierDocumentCount)} documents`}
+            tone={gapTone(documentation?.unsupportedSupplierDocumentValue)}
           />
           <MetricRow
             label="Flagged documents"
@@ -249,58 +286,48 @@ export function DocumentationLedger() {
             label="Unmapped rows"
             value={fmtCount(documentation?.unmappedDocumentRowCount)}
             hint={fmtGel(documentation?.unmappedDocumentValue)}
+            tone={
+              documentation && documentation.unmappedDocumentRowCount > 0 ? 'warn' : 'neutral'
+            }
             drilldownKey="documentation.unmapped"
           />
+          <MetricRow
+            label="Document rows in period"
+            value={fmtCount(documentation?.documentRowCount)}
+          />
+          <FormulaNote>
+            Showing {fmtCount(rows.length)} rows from the shared feed above; the flow reports{' '}
+            {fmtCount(documentation?.documentRowCount)} document rows for this period. Where the two
+            differ, the feed was capped rather than the period being smaller.
+          </FormulaNote>
         </SectionCard>
 
-        <SectionCard title="Inventory consequence" subtitle="What these documents did to stock.">
-          <MetricRow
-            label="Document stock"
-            value={fmtKgSigned(inventory?.documentStockKg)}
-          />
-          <MetricRow label="Real stock (confirmed)" value={fmtKgSigned(inventory?.realStockKg)} />
-          <MetricRow
-            label="Gap"
-            value={fmtKgSigned(inventory?.gapKg)}
-            tone={gapTone(inventory?.gapKg)}
-          />
-          <MetricRow
-            label="Write-offs"
-            value={fmtKgSigned(inventory?.documentWriteOffKg)}
-          />
-        </SectionCard>
-
-        <SectionCard title="Cash consequence" subtitle="What these documents did to money.">
-          <MetricRow
-            label="Paper cash created"
-            value={fmtGel(cash?.paperCashCreated)}
-            tone={gapTone(cash?.paperCashCreated)}
-            drilldownKey="cash.paperCash"
-          />
-          <MetricRow
-            label="Paper cash reduced"
-            value={fmtGel(cash?.paperCashReduced)}
-          />
-          <MetricRow
-            label="Net unexplained paper cash"
-            value={fmtGel(cash?.netUnexplainedPaperCash)}
-            tone={gapTone(cash?.netUnexplainedPaperCash)}
-            drilldownKey="cash.paperCash"
-          />
-          <MetricRow
-            label="Unsupported checks"
-            value={fmtGel(cash?.unsupportedChecks)}
-            tone={gapTone(cash?.unsupportedChecks)}
-            drilldownKey="cash.unsupportedChecks"
-          />
+        <SectionCard
+          title="What these documents did elsewhere"
+          subtitle="Each consequence is measured once, in the flow that owns it."
+        >
+          <ul className="space-y-2">
+            <li>
+              <JumpLink to="inventory">Document stock, real stock and the gap</JumpLink>
+              <p className="text-xs text-muted-foreground">
+                The stock these purchases, sales and write-offs produced.
+              </p>
+            </li>
+            <li>
+              <JumpLink to="cash">Paper cash created, reduced and net unexplained</JumpLink>
+              <p className="text-xs text-muted-foreground">
+                What the paper-only rows above did to accounting cash.
+              </p>
+            </li>
+            <li>
+              <JumpLink to="cash">Checks and unsupported settlement evidence</JumpLink>
+              <p className="text-xs text-muted-foreground">
+                Evidence held against supplier settlement, which is not money.
+              </p>
+            </li>
+          </ul>
         </SectionCard>
       </div>
-
-      <p className="text-xs text-muted-foreground">
-        Showing {fmtCount(rows.length)} rows from the shared feed. The documentation flow reports{' '}
-        {fmtCount(documentation?.documentRowCount)} document rows for this period; where the two
-        differ, the feed was capped rather than the period being smaller.
-      </p>
 
       <MappingDialog row={mappingRow} onClose={() => setMappingRow(null)} />
     </div>

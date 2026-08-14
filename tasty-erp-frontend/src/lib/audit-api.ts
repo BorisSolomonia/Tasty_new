@@ -137,6 +137,86 @@ export interface AuditMapping {
   updatedBy: string | null
   createdAt: string | null
   updatedAt: string | null
+  /**
+   * The saved rule that created this mapping, when one did (BOR-91).
+   *
+   * Server-derived and optional: it is never sent back on save, and a build
+   * whose backend predates rules simply omits it. Wherever a row is displayed,
+   * a present value is shown, so a classification nobody typed says who did
+   * type it.
+   */
+  appliedByRuleId?: string | null
+}
+
+// ---------------------------------------------------------------------------
+// AuditMappingRuleDto / MappingRuleCriterion (BOR-91)
+// ---------------------------------------------------------------------------
+
+/**
+ * What makes another transaction "similar" enough to inherit a mapping.
+ *
+ * Mirrors `MappingRuleCriterion.java`. Every criterion also matches on
+ * direction — a payment to a counterparty and a receipt from the same
+ * counterparty are never the same thing.
+ */
+export type MappingRuleCriterion =
+  | 'COUNTERPARTY'
+  | 'COUNTERPARTY_AND_DESCRIPTION'
+  | 'DESCRIPTION'
+  | 'TRANSACTION_TYPE'
+
+/**
+ * Fallback wording for a criterion, used only when the backend's own
+ * `explanation` is absent. The backend's sentence is preferred because it is
+ * built from the row in hand and therefore names the actual counterparty.
+ */
+export const CRITERION_LABEL: Record<MappingRuleCriterion, string> = {
+  COUNTERPARTY: 'Every transaction with this counterparty, in this direction',
+  COUNTERPARTY_AND_DESCRIPTION:
+    'This counterparty and this exact payment description',
+  DESCRIPTION: 'Any transaction with this exact description, whoever it is with',
+  TRANSACTION_TYPE: 'Every transaction the bank gave this transaction type, in this direction',
+}
+
+/** A reusable classification the user chose to apply beyond one transaction. */
+export interface AuditMappingRule {
+  id: string | null
+  criterion: MappingRuleCriterion | null
+  /** CREDIT or DEBIT. A rule never crosses direction. */
+  direction: string | null
+  counterpartyTin: string | null
+  counterpartyName: string | null
+  description: string | null
+  transactionType: string | null
+
+  // what the rule asserts
+  categoryCode: string | null
+  mappedCounterpartyName: string | null
+  mappedCounterpartyTin: string | null
+  note: string | null
+
+  /** False once revoked; kept so history still resolves. */
+  active: boolean
+  appliedCount: number
+  appliedAmount: number | null
+
+  createdBy: string | null
+  createdAt: string | null
+  updatedBy: string | null
+  updatedAt: string | null
+}
+
+/** What a rule would do, shown before the user commits. */
+export interface AuditMappingRulePreview {
+  criterion: MappingRuleCriterion | null
+  /** Plain-language statement of the match, e.g. "every payment to X". */
+  explanation: string | null
+  /** How many rows match, including the one in hand. */
+  matchCount: number
+  matchAmount: number | null
+  /** How many of those already carry a mapping a person made. */
+  alreadyMappedByPersonCount: number
+  sample: AuditSourceRow[] | null
 }
 
 // ---------------------------------------------------------------------------
@@ -457,6 +537,46 @@ export const auditLayerApi = {
   /** Voids a mapping. History is retained — the change log is append-only. */
   deleteMapping: async (id: string, operator: string, reason: string) => {
     await fetchWithAuth(`${BASE}/mappings/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      params: { operator, reason },
+    })
+  },
+
+  // -------------------------------------------------------------------------
+  // Mapping rules (BOR-91). A rule is created only by explicit choice: the
+  // scope step offers the criteria that actually match the row in hand, each
+  // with a live count of what it would catch, and the user picks one.
+  // -------------------------------------------------------------------------
+
+  getMappingRules: async () => {
+    const response = await fetchWithAuth(`${BASE}/mappings/rules`)
+    return jsonData<AuditMappingRule[]>(response)
+  },
+
+  /** One entry per criterion that applies to this row. Never auto-selected. */
+  previewMappingRules: async (params: {
+    sourceRowId: string
+    startDate: string
+    endDate: string
+  }) => {
+    const response = await fetchWithAuth(`${BASE}/mappings/rules/preview`, {
+      params: { ...params },
+    })
+    return jsonData<AuditMappingRulePreview[]>(response)
+  },
+
+  saveMappingRule: async (rule: AuditMappingRule, operator: string) => {
+    const response = await fetchWithAuth(`${BASE}/mappings/rules`, {
+      method: 'PUT',
+      params: { operator },
+      body: JSON.stringify(rule),
+    })
+    return jsonData<AuditMappingRule>(response)
+  },
+
+  /** Revoking un-maps every mapping the rule created. */
+  revokeMappingRule: async (id: string, operator: string, reason: string) => {
+    await fetchWithAuth(`${BASE}/mappings/rules/${encodeURIComponent(id)}`, {
       method: 'DELETE',
       params: { operator, reason },
     })

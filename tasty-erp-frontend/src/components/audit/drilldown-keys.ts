@@ -23,8 +23,20 @@ export const DRILLDOWN_KEYS = [
   'cash.unmappedInflows',
   /** Bank rows carrying a split in a supplier-settlement category. */
   'cash.supplierSettlement',
-  /** Every imported statement row in the period, mapped or not. */
+  /**
+   * Every imported statement row in the period, mapped or not.
+   *
+   * Deliberately broad, so it hangs off an explicit "browse everything" action
+   * only. A problem must never open this: an alert about six rows that expands
+   * into every statement row has changed the scope under the reader.
+   */
   'cash.bankRows',
+  /** BOR-91 — one dedicated key per alert, so every problem expands itself. */
+  'cash.paidWithoutDocumentation',
+  'cash.outflowWithoutCounterparty',
+  'cash.supplierNeverPaid',
+  'cash.checksUnclassified',
+  'cash.uncoveredPurchase',
   /** Document rows in any paper-only category. */
   'cash.paperCash',
   /** Check and receipt evidence held for counterparties. */
@@ -33,7 +45,7 @@ export const DRILLDOWN_KEYS = [
   'documentation.paperOnlyReceipts',
   /** Document rows nobody has classified yet. */
   'documentation.unmapped',
-  /** Every document line in the period. */
+  /** Every document line in the period. Broad, like `cash.bankRows`: explicit browse only. */
   'documentation.rows',
   /** Documents behind a positive gap. Accepts a product name as `subject`. */
   'inventory.positiveGap',

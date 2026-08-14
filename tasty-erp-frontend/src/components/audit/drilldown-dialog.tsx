@@ -60,7 +60,7 @@ export function DrilldownDialog() {
 
   return (
     <Dialog open={open} onOpenChange={(next) => (next ? undefined : closeDrilldown())}>
-      <DialogContent>
+      <DialogContent size="wide">
         <DialogHeader>
           <DialogTitle>{data?.label ?? drilldown?.label ?? 'Drill-down'}</DialogTitle>
           <DialogDescription>

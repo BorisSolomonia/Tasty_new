@@ -16,6 +16,8 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Predicate;
@@ -105,7 +107,57 @@ public class AuditDrilldownService {
                             + "purchases." + subjectSuffix(subject),
                     row -> matchesProduct(row, subject));
 
-            case "cash.unsupportedChecks" -> checks(key, startDate, endDate, mappings);
+            case "cash.unsupportedChecks" -> checks(key, startDate, endDate, mappings, false);
+
+            // BOR-91: one dedicated set per alert. Three alerts previously shared
+            // cash.supplierSettlement, which is none of their record sets — a
+            // drill-down that answers a different question than the one clicked
+            // is worse than no drill-down.
+            case "cash.checksUnclassified" -> checks(key, startDate, endDate, mappings, true);
+
+            case "cash.paidWithoutDocumentation" -> {
+                AuditSupplierRegistry suppliers = AuditSupplierRegistry.from(
+                        sourceRowService.loadProductMovements(startDate, endDate));
+                yield bank(key, startDate, endDate, mappings,
+                        "Paid to counterparties with no purchase documentation",
+                        "Money-out rows whose counterparty never appears as a seller on any "
+                                + "RS.ge purchase document. These cannot be supplier settlements "
+                                + "on the evidence available.",
+                        row -> isDebit(row) && identified(row)
+                                && !suppliers.isDocumentedSupplier(identityOf(row)),
+                        AuditSourceRowDto::getAmount);
+            }
+
+            case "cash.outflowWithoutCounterparty" -> bank(key, startDate, endDate, mappings,
+                    "Outflow with no identifiable counterparty",
+                    "Money-out rows where the statement printed no tax code and the name "
+                            + "could not be resolved to one — ATM withdrawals and similar.",
+                    row -> isDebit(row) && !identified(row),
+                    AuditSourceRowDto::getAmount);
+
+            case "cash.supplierNeverPaid" -> {
+                List<ProductMovementDto> movements =
+                        sourceRowService.loadProductMovements(startDate, endDate);
+                Set<String> paidTins = new HashSet<>();
+                for (AuditSourceRowDto row : sourceRowService.loadBankRows(startDate, endDate, mappings)) {
+                    if (isDebit(row) && identified(row)) {
+                        paidTins.add(identityOf(row));
+                    }
+                }
+                yield documentsFrom(key, movements, mappings,
+                        "Documented suppliers never paid by bank",
+                        "Purchase-document rows from counterparties that received no bank "
+                                + "payment at all in this period.",
+                        row -> row.getCounterpartyTin() != null
+                                && !paidTins.contains(row.getCounterpartyTin().trim())
+                                && "PURCHASE".equals(row.getDirection()));
+            }
+
+            case "cash.uncoveredPurchase" -> documents(key, startDate, endDate, mappings,
+                    "Documented purchases behind the uncovered balance",
+                    "Every RS.ge purchase-document row in the period. The uncovered balance is "
+                            + "what remains of these after supplier settlement and real debt.",
+                    row -> "PURCHASE".equals(row.getDirection()));
 
             default -> throw new ValidationException("key", "Unknown drill-down key: " + key);
         };
@@ -130,6 +182,19 @@ public class AuditDrilldownService {
         return finish(key, label, definition, rows, amountOf);
     }
 
+    private AuditDrilldownDto documentsFrom(String key, List<ProductMovementDto> movements,
+                                            Map<String, AuditMappingDto> mappings,
+                                            String label, String definition,
+                                            Predicate<AuditSourceRowDto> filter) {
+        List<AuditSourceRowDto> rows = new ArrayList<>();
+        for (AuditSourceRowDto row : sourceRowService.toDocumentRows(movements, mappings)) {
+            if (filter.test(row)) {
+                rows.add(row);
+            }
+        }
+        return finish(key, label, definition, rows, AuditSourceRowDto::getAmount);
+    }
+
     private AuditDrilldownDto documents(String key, LocalDate startDate, LocalDate endDate,
                                         Map<String, AuditMappingDto> mappings,
                                         String label, String definition,
@@ -150,11 +215,15 @@ public class AuditDrilldownService {
      * money without implying the two are the same thing.
      */
     private AuditDrilldownDto checks(String key, LocalDate startDate, LocalDate endDate,
-                                     Map<String, AuditMappingDto> mappings) {
+                                     Map<String, AuditMappingDto> mappings,
+                                     boolean unclassifiedOnly) {
         List<AuditSourceRowDto> rows = new ArrayList<>();
         for (CheckEvidenceDto check : repository.findCheckEvidence()) {
             if (check.getDate() != null
                     && (check.getDate().isBefore(startDate) || check.getDate().isAfter(endDate))) {
+                continue;
+            }
+            if (unclassifiedOnly && check.isClassified()) {
                 continue;
             }
             rows.add(AuditSourceRowDto.builder()
@@ -260,6 +329,18 @@ public class AuditDrilldownService {
 
     private static String subjectSuffix(String subject) {
         return subject == null || subject.isBlank() ? "" : " Filtered to '" + subject + "'.";
+    }
+
+    private static boolean identified(AuditSourceRowDto row) {
+        return identityOf(row) != null;
+    }
+
+    private static String identityOf(AuditSourceRowDto row) {
+        String t = row.getResolvedCounterpartyTin();
+        if (t == null || t.isBlank()) {
+            t = row.getCounterpartyTin();
+        }
+        return t == null || t.isBlank() ? null : t.trim();
     }
 
     private static boolean isDebit(AuditSourceRowDto row) {

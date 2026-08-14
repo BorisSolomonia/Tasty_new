@@ -1,10 +1,43 @@
 /**
- * BOR-89 "Audit Control" — eight UX variants over one payload.
+ * BOR-91 "Audit Control" — one page.
  *
- * The page owns the period and product filters, the operator name and the
- * drill-down dialog. Every variant below renders the same `AuditFlowsDto`
- * fetched once by `AuditProvider`, so switching variants changes the shape of
- * the argument and never the scope of the data.
+ * This replaces the eight-variant switcher BOR-89 shipped. Eight renderings of
+ * one payload turned out to be eight places to look for the same figure:
+ * `netUnexplainedPaperCash` appeared in four of them, the three-flow strip in
+ * all eight. The page is now a single scroll with sticky in-page navigation,
+ * and the invariant that makes it readable is that **a metric appears in
+ * exactly one place**. Where a section needs to acknowledge another flow, it
+ * links to the figure rather than reprinting it.
+ *
+ * What each old view became:
+ *
+ *  - 01 Executive Control Tower  → Problems (top cases) + the totals now owned
+ *                                  by the Cash, Inventory and Documentation
+ *                                  sections
+ *  - 02 Three-Lane Flow Map      → DELIBERATELY FOLDED. Its lane graphic showed
+ *                                  purchases → sales → write-offs → document
+ *                                  stock, and every one of those numbers is in
+ *                                  the inventory section's period totals, where
+ *                                  it sits beside the real stock it is measured
+ *                                  against. The lane visual restated them in a
+ *                                  prettier order; it added no capability the
+ *                                  rest of the page lacks, and its node-selects
+ *                                  -filters-other-lanes behaviour is the same
+ *                                  cross-flow link the Problems panel makes
+ *                                  from the alerts' own subjects. Duplication,
+ *                                  not capability — so it is gone rather than
+ *                                  ported.
+ *  - 03 Exception Investigator   → Problems (case anatomy)
+ *  - 04 Inventory-First Matrix   → Inventory section
+ *  - 05 Cash-First Treasury      → Cash section (the base of this page)
+ *  - 06 Documentation Ledger     → Documentation section
+ *  - 07 Risk Heatmap             → Problems (risk by rule, monthly
+ *                                  concentration, cross-flow clusters)
+ *  - 08 Reconciliation Workbench → Workbench section
+ *
+ * The period and product filters, the operator name and the drill-down dialog
+ * stay owned by this page, and every section renders the one `AuditFlowsDto`
+ * that `AuditProvider` fetches once.
  */
 import * as React from 'react'
 import { RefreshCw } from 'lucide-react'
@@ -19,95 +52,19 @@ import {
   useAudit,
 } from '@/components/audit/audit-context'
 import { DataWarnings } from '@/components/audit/data-warnings'
+import { FeedCapNotice } from '@/components/audit/feed-cap-notice'
 import { DrilldownDialog } from '@/components/audit/drilldown-dialog'
 import { OperatorPicker } from '@/components/audit/operator-picker'
 import { PendingNotice } from '@/components/audit/pending-notice'
-import { ExecutiveControlTower } from '@/components/audit/views/executive-control-tower'
-import { ThreeLaneFlowMap } from '@/components/audit/views/three-lane-flow-map'
-import { ExceptionInvestigator } from '@/components/audit/views/exception-investigator'
-import { InventoryFirstMatrix } from '@/components/audit/views/inventory-first-matrix'
-import { CashFirstTreasury } from '@/components/audit/views/cash-first-treasury'
-import { DocumentationLedger } from '@/components/audit/views/documentation-ledger'
-import { RiskHeatmap } from '@/components/audit/views/risk-heatmap'
-import { ReconciliationWorkbench } from '@/components/audit/views/reconciliation-workbench'
-
-const VIEW_STORAGE_KEY = 'tasty.audit.view'
-
-interface ViewDefinition {
-  id: string
-  number: string
-  title: string
-  blurb: string
-  Component: () => React.JSX.Element
-}
-
-const VIEWS: ViewDefinition[] = [
-  {
-    id: 'control-tower',
-    number: '01',
-    title: 'Executive Control Tower',
-    blurb: 'Three flows first, then each reconciliation, then the rules that fired.',
-    Component: ExecutiveControlTower,
-  },
-  {
-    id: 'flow-map',
-    number: '02',
-    title: 'Three-Lane Flow Map',
-    blurb: 'Synchronised lanes. Selecting a node filters the other two.',
-    Component: ThreeLaneFlowMap,
-  },
-  {
-    id: 'investigator',
-    number: '03',
-    title: 'Exception Investigator',
-    blurb: 'Organised around cases rather than totals, with each case’s anatomy.',
-    Component: ExceptionInvestigator,
-  },
-  {
-    id: 'inventory-matrix',
-    number: '04',
-    title: 'Inventory-First Matrix',
-    blurb: 'Product reconciliation dominates; cash and documents stay attached.',
-    Component: InventoryFirstMatrix,
-  },
-  {
-    id: 'treasury',
-    number: '05',
-    title: 'Cash-First Treasury',
-    blurb: 'Bank bridge, paper-cash bridge and the supplier coverage control.',
-    Component: CashFirstTreasury,
-  },
-  {
-    id: 'ledger',
-    number: '06',
-    title: 'Documentation Ledger',
-    blurb: 'RS.ge rows with their stock and cash consequences, each mappable.',
-    Component: DocumentationLedger,
-  },
-  {
-    id: 'heatmap',
-    number: '07',
-    title: 'Risk Heatmap',
-    blurb: 'Severity weight per flow, month concentration and cross-flow clusters.',
-    Component: RiskHeatmap,
-  },
-  {
-    id: 'workbench',
-    number: '08',
-    title: 'Reconciliation Workbench',
-    blurb: 'The daily queue beside the split-mapping editor.',
-    Component: ReconciliationWorkbench,
-  },
-]
-
-function readStoredView(): string {
-  try {
-    const stored = window.localStorage.getItem(VIEW_STORAGE_KEY)
-    return VIEWS.some((view) => view.id === stored) ? (stored as string) : VIEWS[0].id
-  } catch {
-    return VIEWS[0].id
-  }
-}
+import { ThreeFlowStrip } from '@/components/audit/three-flow-strip'
+import { ProblemsPanel } from '@/components/audit/problems-panel'
+import { RulesPanel } from '@/components/audit/rules-panel'
+import { CategoryManager } from '@/components/audit/category-manager'
+import { AUDIT_SECTIONS, PageSection } from '@/components/audit/section-nav'
+import { CashSection } from '@/components/audit/sections/cash-section'
+import { InventorySection } from '@/components/audit/sections/inventory-section'
+import { DocumentationSection } from '@/components/audit/sections/documentation-section'
+import { WorkbenchSection } from '@/components/audit/sections/workbench-section'
 
 export function AuditPage() {
   return (
@@ -119,19 +76,7 @@ export function AuditPage() {
 
 function AuditWorkspace() {
   const { flows, flowsQuery, filters, setFilters, refreshAll } = useAudit()
-  const [viewId, setViewId] = React.useState<string>(readStoredView)
-
-  const activeView = VIEWS.find((view) => view.id === viewId) ?? VIEWS[0]
-  const ActiveComponent = activeView.Component
-
-  const selectView = (id: string) => {
-    setViewId(id)
-    try {
-      window.localStorage.setItem(VIEW_STORAGE_KEY, id)
-    } catch {
-      // Selection still works for this session without storage.
-    }
-  }
+  const activeSection = useActiveSection(!flowsQuery.isLoading)
 
   const productOptions = React.useMemo(() => {
     const names = (flows?.inventory?.products ?? [])
@@ -145,10 +90,11 @@ function AuditWorkspace() {
       {/* Header ---------------------------------------------------------- */}
       <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <h1 className="text-xl font-bold tracking-tight">Audit Control — Inventory × Cash × Documentation</h1>
+          <h1 className="text-xl font-bold tracking-tight">
+            Audit Control — Inventory × Cash × Documentation
+          </h1>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            Eight ways to read one audit. Every view renders the same payload for the same period —
-            they differ in emphasis, never in scope.
+            One period, one payload, one page. Each figure is shown once, in the flow that owns it.
           </p>
         </div>
         <OperatorPicker />
@@ -209,72 +155,143 @@ function AuditWorkspace() {
           <RefreshCw className={cn('mr-2 h-4 w-4', flowsQuery.isFetching && 'animate-spin')} />
           {flowsQuery.isFetching ? 'Refreshing…' : 'Refresh'}
         </Button>
-        <p className="ml-auto max-w-xs text-[11px] leading-snug text-muted-foreground">
-          Changing the period or product refetches the one shared payload, so all eight views move
-          together.
+        <p className="ml-auto max-w-sm text-[11px] leading-snug text-muted-foreground">
+          Changing the period or product refetches the one shared payload. Real inventory is a
+          manual input, source rows stay individually mappable, and every manual mapping or override
+          is logged against a self-declared operator name.
         </p>
       </div>
 
-      {/* Warnings apply to every view, so they sit above the switcher ----- */}
+      {/* Rendered once for the whole page, not once per section ------------ */}
       <DataWarnings warnings={flows?.dataWarnings} error={flowsQuery.error} />
+      <FeedCapNotice />
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[16rem_minmax(0,1fr)]">
-        {/* Switcher ------------------------------------------------------ */}
-        <nav aria-label="Audit views" className="xl:sticky xl:top-16 xl:self-start">
-          <ul className="flex gap-2 overflow-x-auto pb-2 xl:flex-col xl:overflow-visible xl:pb-0">
-            {VIEWS.map((view) => (
-              <li key={view.id} className="shrink-0 xl:shrink">
-                <button
-                  type="button"
-                  onClick={() => selectView(view.id)}
-                  className={cn(
-                    'w-full rounded-md border px-3 py-2 text-left transition-colors',
-                    view.id === activeView.id
-                      ? 'border-primary bg-primary text-primary-foreground'
-                      : 'border-border bg-card hover:bg-accent'
-                  )}
-                >
-                  <div className="whitespace-nowrap text-xs font-semibold">
-                    {view.number} — {view.title}
-                  </div>
-                  <div
-                    className={cn(
-                      'mt-0.5 hidden text-[11px] leading-snug xl:block',
-                      view.id === activeView.id
-                        ? 'text-primary-foreground/80'
-                        : 'text-muted-foreground'
-                    )}
-                  >
-                    {view.blurb}
-                  </div>
-                </button>
-              </li>
-            ))}
-          </ul>
+      <ThreeFlowStrip />
 
-          <p className="mt-3 hidden rounded-md border border-border bg-muted/40 p-3 text-[11px] leading-snug text-muted-foreground xl:block">
-            <span className="font-semibold text-foreground">Rule for all eight views.</span> Every
-            view contains all three flows. Real inventory is manually editable and normally zero.
-            Bank and RS.ge source rows stay individually mappable, and every manual mapping or
-            override is permanently logged against a self-declared operator name.
-          </p>
-        </nav>
+      {/* Sticky in-page navigation ---------------------------------------- */}
+      <nav
+        aria-label="Audit sections"
+        className="sticky top-14 z-20 -mx-1 border-b border-border bg-background/90 px-1 py-2 backdrop-blur"
+      >
+        <ul className="flex gap-2 overflow-x-auto">
+          {AUDIT_SECTIONS.map((section) => (
+            <li key={section.id} className="shrink-0">
+              <a
+                href={`#${section.id}`}
+                title={section.hint}
+                className={cn(
+                  'block rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
+                  activeSection === section.id
+                    ? 'border-primary bg-primary text-primary-foreground'
+                    : 'border-border bg-card hover:bg-accent'
+                )}
+              >
+                {section.label}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </nav>
 
-        {/* Active view --------------------------------------------------- */}
-        <div className="min-w-0">
-          {flowsQuery.isLoading ? (
-            <div className="space-y-3">
-              <PendingNotice active what="the three-flow payload for this period" />
-              <Skeleton className="h-28 w-full" />
-              <Skeleton className="h-64 w-full" />
-            </div>
-          ) : (
-            <ActiveComponent />
-          )}
+      {flowsQuery.isLoading ? (
+        <div className="space-y-3">
+          <PendingNotice active what="the three-flow payload for this period" />
+          <Skeleton className="h-28 w-full" />
+          <Skeleton className="h-64 w-full" />
         </div>
-      </div>
+      ) : (
+        <div className="space-y-8">
+          <PageSection
+            id="problems"
+            title="Problems"
+            description="Every rule that fired, the arithmetic behind the selected one, and where the unresolved rows concentrate. Each case opens its own source rows — never a wider set."
+          >
+            <ProblemsPanel />
+          </PageSection>
+
+          <PageSection
+            id="cash"
+            title="Cash"
+            description="What the bank did, what documents did to accounting cash, and whether supplier settlement plus asserted debt is covered by documented purchases."
+          >
+            <CashSection />
+          </PageSection>
+
+          <PageSection
+            id="inventory"
+            title="Inventory"
+            description="Documented movement per product against the manually confirmed real stock. Real stock is an input, not a derivation, and is normally zero until someone confirms it."
+          >
+            <InventorySection />
+          </PageSection>
+
+          <PageSection
+            id="documentation"
+            title="Documentation"
+            description="RS.ge rows with the two consequences each one carries — what it did to stock, and what it did to cash or paper cash. Every row is individually mappable."
+          >
+            <DocumentationSection />
+          </PageSection>
+
+          <PageSection
+            id="workbench"
+            title="Reconciliation workbench"
+            description="The daily queue beside the split-mapping editor. Saving here moves the three-flow strip at the top of this page immediately."
+          >
+            <WorkbenchSection />
+          </PageSection>
+
+          <PageSection
+            id="rules"
+            title="Rules & categories"
+            description="Classifications that apply beyond the transaction they were made on, and the categories they assert. A rule is created only by explicit choice and can be revoked, which un-maps everything it created."
+          >
+            <div className="space-y-4">
+              <RulesPanel />
+              <CategoryManager />
+            </div>
+          </PageSection>
+        </div>
+      )}
 
       <DrilldownDialog />
     </div>
   )
+}
+
+/**
+ * Which section the reader is in.
+ *
+ * Anchor links alone leave the nav showing nothing once the reader scrolls, so
+ * the observer marks the section currently crossing the top third of the
+ * viewport. It is a reading aid only — no data depends on it, and if
+ * IntersectionObserver is unavailable the nav simply stays unhighlighted.
+ */
+function useActiveSection(enabled: boolean): string | null {
+  const [active, setActive] = React.useState<string | null>(null)
+
+  React.useEffect(() => {
+    if (!enabled || typeof IntersectionObserver === 'undefined') return
+
+    const elements = AUDIT_SECTIONS.map((section) => document.getElementById(section.id)).filter(
+      (element): element is HTMLElement => element !== null
+    )
+    if (elements.length === 0) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)
+        if (visible.length > 0) setActive(visible[0].target.id)
+      },
+      { rootMargin: '-15% 0px -70% 0px' }
+    )
+
+    elements.forEach((element) => observer.observe(element))
+    return () => observer.disconnect()
+    // Re-registered when the sections appear; the section list itself is static.
+  }, [enabled])
+
+  return active
 }

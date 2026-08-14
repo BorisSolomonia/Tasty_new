@@ -8,6 +8,8 @@ import com.google.cloud.firestore.WriteBatch;
 import ge.tastyerp.common.dto.auditlayer.AuditCategoryDto;
 import ge.tastyerp.common.dto.auditlayer.AuditChangeLogDto;
 import ge.tastyerp.common.dto.auditlayer.AuditMappingDto;
+import ge.tastyerp.common.dto.auditlayer.AuditMappingRuleDto;
+import ge.tastyerp.common.dto.auditlayer.MappingRuleCriterion;
 import ge.tastyerp.common.dto.auditlayer.AuditMappingSplitDto;
 import ge.tastyerp.common.dto.auditlayer.AuditMappingStatus;
 import ge.tastyerp.common.dto.auditlayer.AuditSourceType;
@@ -59,6 +61,7 @@ public class AuditLayerRepository {
     static final String COLLECTION_CHECK_EVIDENCE = "audit_check_evidence";
     static final String COLLECTION_CHANGE_LOG = "audit_change_log";
     static final String COLLECTION_COUNTERPARTY_ALIAS = "audit_counterparty_alias";
+    static final String COLLECTION_MAPPING_RULES = "audit_mapping_rules";
 
     /** Firestore hard limit on operations per WriteBatch. */
     private static final int FIRESTORE_BATCH_LIMIT = 500;
@@ -116,6 +119,7 @@ public class AuditLayerRepository {
         data.put("splits", splitsToMaps(mapping.getSplits()));
         data.put("linkedSourceRows", mapping.getLinkedSourceRows());
         data.put("suggestionReason", mapping.getSuggestionReason());
+        data.put("appliedByRuleId", mapping.getAppliedByRuleId());
         data.put("confidence", mapping.getConfidence());
         data.put("note", mapping.getNote());
         data.put("createdBy", mapping.getCreatedBy());
@@ -215,6 +219,65 @@ public class AuditLayerRepository {
 
     public void deleteCategory(String code) {
         delete(COLLECTION_CATEGORIES, code);
+    }
+
+    // ==================== mapping rules ====================
+
+    public List<AuditMappingRuleDto> findMappingRules() {
+        List<AuditMappingRuleDto> result = new ArrayList<>();
+        try {
+            QuerySnapshot snapshot = firestore.collection(COLLECTION_MAPPING_RULES).get().get();
+            for (QueryDocumentSnapshot doc : snapshot.getDocuments()) {
+                Long applied = doc.getLong("appliedCount");
+                result.add(AuditMappingRuleDto.builder()
+                        .id(doc.getId())
+                        .criterion(doc.getString("criterion") == null ? null
+                                : MappingRuleCriterion.valueOf(doc.getString("criterion")))
+                        .direction(doc.getString("direction"))
+                        .counterpartyTin(doc.getString("counterpartyTin"))
+                        .counterpartyName(doc.getString("counterpartyName"))
+                        .description(doc.getString("description"))
+                        .transactionType(doc.getString("transactionType"))
+                        .categoryCode(doc.getString("categoryCode"))
+                        .mappedCounterpartyName(doc.getString("mappedCounterpartyName"))
+                        .mappedCounterpartyTin(doc.getString("mappedCounterpartyTin"))
+                        .note(doc.getString("note"))
+                        .active(Boolean.TRUE.equals(doc.getBoolean("active")))
+                        .appliedCount(applied == null ? 0 : applied.intValue())
+                        .appliedAmount(decimal(doc, "appliedAmount"))
+                        .createdBy(doc.getString("createdBy"))
+                        .createdAt(parseDateTime(doc.getString("createdAt")))
+                        .updatedBy(doc.getString("updatedBy"))
+                        .updatedAt(parseDateTime(doc.getString("updatedAt")))
+                        .build());
+            }
+        } catch (InterruptedException | ExecutionException e) {
+            log.error("Error loading mapping rules: {}", e.getMessage());
+            Thread.currentThread().interrupt();
+        }
+        return result;
+    }
+
+    public void saveMappingRule(AuditMappingRuleDto rule) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("criterion", rule.getCriterion() == null ? null : rule.getCriterion().name());
+        data.put("direction", rule.getDirection());
+        data.put("counterpartyTin", rule.getCounterpartyTin());
+        data.put("counterpartyName", rule.getCounterpartyName());
+        data.put("description", rule.getDescription());
+        data.put("transactionType", rule.getTransactionType());
+        data.put("categoryCode", rule.getCategoryCode());
+        data.put("mappedCounterpartyName", rule.getMappedCounterpartyName());
+        data.put("mappedCounterpartyTin", rule.getMappedCounterpartyTin());
+        data.put("note", rule.getNote());
+        data.put("active", rule.isActive());
+        data.put("appliedCount", rule.getAppliedCount());
+        data.put("appliedAmount", rule.getAppliedAmount() == null ? null : rule.getAppliedAmount().doubleValue());
+        data.put("createdBy", rule.getCreatedBy());
+        data.put("createdAt", rule.getCreatedAt() == null ? null : rule.getCreatedAt().toString());
+        data.put("updatedBy", rule.getUpdatedBy());
+        data.put("updatedAt", rule.getUpdatedAt() == null ? null : rule.getUpdatedAt().toString());
+        write(COLLECTION_MAPPING_RULES, rule.getId(), data);
     }
 
     // ==================== counterparty aliases ====================
@@ -501,6 +564,7 @@ public class AuditLayerRepository {
                 .splits(splits)
                 .linkedSourceRows(linked)
                 .suggestionReason(doc.getString("suggestionReason"))
+                .appliedByRuleId(doc.getString("appliedByRuleId"))
                 .confidence(confidence == null ? null : confidence.intValue())
                 .note(doc.getString("note"))
                 .createdBy(doc.getString("createdBy"))

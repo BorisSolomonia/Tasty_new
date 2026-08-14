@@ -1,13 +1,20 @@
 /**
- * 05 — Cash-First Treasury & Paper-Cash Control.
+ * Cash — the bank bridge, the paper-cash bridge and the supplier coverage
+ * control. This is the base the consolidated page was built on (old view 05).
  *
- * Cash dominates, and the screen answers four questions at once: what the bank
- * actually did, what evidence exists that is not money, what paper-only sales
- * and payments did to accounting cash, and whether supplier settlement plus
- * asserted debt is covered by documented purchases.
+ * Two changes from that view, both to keep every figure in exactly one place:
  *
- * The coverage control deliberately reads `supplierSettlementAndDebt`, not
- * total withdrawals: a withdrawal does not prove a supplier was settled.
+ *  - the supplier-directed money (direct bank payments, allocated cash
+ *    settlements) now appears only inside the coverage control, where it is an
+ *    input to the breach arithmetic, instead of once there and once in the
+ *    bridge above it;
+ *  - the three "other flow" cards it used to carry are gone. On a single page
+ *    the inventory and documentation sections are one scroll away, and a second
+ *    copy of a figure is a second thing a reader can mistake for a separate
+ *    finding.
+ *
+ * The coverage control still reads `supplierSettlementAndDebt`, never total
+ * withdrawals: a withdrawal does not prove a supplier was settled.
  */
 import * as React from 'react'
 import { AlertOctagon } from 'lucide-react'
@@ -15,22 +22,20 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { AuditSourceRow } from '@/lib/audit-api'
 import { useAudit } from '../audit-context'
-import { ThreeFlowStrip } from '../three-flow-strip'
 import { MetricRow, SectionCard, FormulaNote } from '../metric'
 import { StatusBadge } from '../status-badge'
+import { RuleBadge } from '../rule-badge'
 import { SupplierDebtPanel } from '../supplier-debt-panel'
 import { MappingDialog } from '../mapping-dialog'
-import { FeedCapNotice } from '../feed-cap-notice'
 import { isUnresolved } from '../cross-flow'
-import { fmtCount, fmtGel, fmtKgSigned, fmtDate, fmtText, gapTone } from '../format'
+import { JumpLink } from '../section-nav'
+import { fmtCount, fmtGel, fmtDate, fmtText, gapTone } from '../format'
 
-export function CashFirstTreasury() {
+export function CashSection() {
   const { flows, sourceRows, sourceRowsQuery, openDrilldown } = useAudit()
   const [mappingRow, setMappingRow] = React.useState<AuditSourceRow | null>(null)
 
   const cash = flows?.cash ?? null
-  const inventory = flows?.inventory ?? null
-  const documentation = flows?.documentation ?? null
 
   const bankRowsToMap = sourceRows
     .filter((row) => row.sourceType === 'BANK' && isUnresolved(row))
@@ -38,34 +43,18 @@ export function CashFirstTreasury() {
 
   return (
     <div className="space-y-4">
-      <ThreeFlowStrip />
-
-      <FeedCapNotice />
-
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* 1 ---------------------------------------------------------------- */}
         <SectionCard
           title="1. Bank-to-real-cash bridge"
-          subtitle="What left the bank, what it was allocated to, and what evidence exists for the rest."
+          subtitle="What the bank did, what was allocated to a purpose, and what evidence exists for the rest."
         >
           <MetricRow label="Bank inflows" value={fmtGel(cash?.bankInflow)} />
           <MetricRow label="Bank outflows" value={fmtGel(cash?.bankOutflow)} />
+          <MetricRow label="Total cash withdrawals" value={fmtGel(cash?.cashWithdrawals)} />
           <MetricRow
-            label="Total cash withdrawals"
-            value={fmtGel(cash?.cashWithdrawals)}
-          />
-          <MetricRow
-            label="Allocated to supplier settlement"
-            value={fmtGel(cash?.supplierAllocatedCashSettlements)}
-            drilldownKey="cash.supplierSettlement"
-          />
-          <MetricRow
-            label="Allocated to other spending"
-            value={fmtGel(cash?.nonSupplierExpenses)}
-          />
-          <MetricRow
-            label="Returned / redeposited"
-            value={fmtGel(cash?.cashReturnedOrRedeposited)}
+            label="Withdrawals mapped to a purpose"
+            value={fmtGel(cash?.mappedWithdrawalAmount)}
           />
           <MetricRow
             label="Unresolved withdrawals"
@@ -82,23 +71,18 @@ export function CashFirstTreasury() {
           />
 
           <div className="mt-3 border-t border-border pt-2">
+            <MetricRow label="Allocated to other spending" value={fmtGel(cash?.nonSupplierExpenses)} />
             <MetricRow
-              label="Direct bank payments to suppliers"
-              value={fmtGel(cash?.directBankSupplierPayments)}
+              label="Returned / redeposited"
+              value={fmtGel(cash?.cashReturnedOrRedeposited)}
             />
-            <MetricRow
-              label="Customer bank receipts"
-              value={fmtGel(cash?.customerBankReceipts)}
-            />
+            <MetricRow label="Customer bank receipts" value={fmtGel(cash?.customerBankReceipts)} />
             <MetricRow
               label="Real customer cash receipts"
               value={fmtGel(cash?.realCustomerCashReceipts)}
             />
             <MetricRow label="Other income" value={fmtGel(cash?.otherIncome)} />
-            <MetricRow
-              label="Refunds and reversals"
-              value={fmtGel(cash?.refundsAndReversals)}
-            />
+            <MetricRow label="Refunds and reversals" value={fmtGel(cash?.refundsAndReversals)} />
           </div>
 
           <div className="mt-3 border-t border-border pt-2">
@@ -120,6 +104,11 @@ export function CashFirstTreasury() {
               drilldownKey="cash.unsupportedChecks"
             />
           </div>
+
+          <FormulaNote>
+            Money that settled suppliers is not listed here — it is an input to the coverage control
+            below, and appears there once.
+          </FormulaNote>
         </SectionCard>
 
         {/* 2 ---------------------------------------------------------------- */}
@@ -165,6 +154,11 @@ export function CashFirstTreasury() {
             />
           </div>
 
+          {/*
+            The single home of `netUnexplainedPaperCash`. It used to appear in
+            four of the eight views; four copies of one figure read as four
+            findings.
+          */}
           <div className="mt-3 border-t border-border pt-2">
             <MetricRow
               label="Net unexplained paper cash"
@@ -231,10 +225,7 @@ export function CashFirstTreasury() {
             value={fmtGel(cash?.realOutstandingSupplierDebt)}
             hint="Asserted by an operator, per supplier, below"
           />
-          <MetricRow
-            label="Settlement + debt"
-            value={fmtGel(cash?.supplierSettlementAndDebt)}
-          />
+          <MetricRow label="Settlement + debt" value={fmtGel(cash?.supplierSettlementAndDebt)} />
           <MetricRow
             label="Excess over documented purchases"
             value={fmtGel(cash?.excessOverDocumentedPurchases)}
@@ -249,7 +240,9 @@ export function CashFirstTreasury() {
 
           <FormulaNote>
             Total withdrawals are deliberately not an input here. Only the portion mapped to supplier
-            settlement counts, because a withdrawal does not prove a supplier was settled.
+            settlement counts, because a withdrawal does not prove a supplier was settled. The
+            purchases side of this control is documented in the{' '}
+            <JumpLink to="documentation">documentation section</JumpLink>.
           </FormulaNote>
 
           <div className="mt-3 border-t border-border pt-3">
@@ -269,6 +262,11 @@ export function CashFirstTreasury() {
             cash?.unmappedOutflowAmount
           )}) of ${fmtCount(cash?.bankRowCount)} bank rows`}
           actions={
+            /*
+              The one place `cash.bankRows` is reachable. It is deliberately
+              broad — every statement row, mapped or not — so it hangs off an
+              explicit "browse all" and never off a problem.
+            */
             <button
               type="button"
               className="text-xs text-primary hover:underline"
@@ -297,6 +295,7 @@ export function CashFirstTreasury() {
                     <div className="truncate text-muted-foreground" title={row.description ?? ''}>
                       {fmtText(row.description)}
                     </div>
+                    <RuleBadge mapping={row.mapping} className="mt-1" />
                   </div>
                   <StatusBadge status={row.status} />
                   <Button
@@ -312,69 +311,6 @@ export function CashFirstTreasury() {
               ))}
             </div>
           )}
-        </SectionCard>
-      </div>
-
-      {/* 5 — the other two flows, mandatory on every view -------------------- */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <SectionCard title="Inventory consequence" subtitle="The stock side of the same period.">
-          <MetricRow
-            label="Document stock"
-            value={fmtKgSigned(inventory?.documentStockKg)}
-          />
-          <MetricRow label="Real stock (confirmed)" value={fmtKgSigned(inventory?.realStockKg)} />
-          <MetricRow
-            label="Gap"
-            value={fmtKgSigned(inventory?.gapKg)}
-            tone={gapTone(inventory?.gapKg)}
-          />
-          <MetricRow
-            label="Products with a positive gap"
-            value={fmtCount(inventory?.positiveGapProducts)}
-          />
-          <MetricRow
-            label="Products with a negative gap"
-            value={fmtCount(inventory?.negativeGapProducts)}
-          />
-        </SectionCard>
-
-        <SectionCard title="On-paper sales & receipts" subtitle="Documentation that moved paper cash.">
-          <MetricRow
-            label="Paper-only sales"
-            value={fmtGel(documentation?.paperOnlySalesValue)}
-            hint={`${fmtCount(documentation?.paperOnlySalesCount)} documents`}
-            tone={gapTone(documentation?.paperOnlySalesValue)}
-            drilldownKey="documentation.paperOnlySales"
-          />
-          <MetricRow
-            label="Paper-only customer payments"
-            value={fmtGel(documentation?.paperOnlyCustomerPaymentValue)}
-            hint={`${fmtCount(documentation?.paperOnlyCustomerPaymentCount)} documents`}
-            drilldownKey="documentation.paperOnlyReceipts"
-          />
-          <MetricRow
-            label="Real money received against paper sales"
-            value={fmtGel(cash?.realMoneyReceivedAgainstPaperSales)}
-          />
-        </SectionCard>
-
-        <SectionCard title="Supplier paper payments" subtitle="Evidence held against supplier settlement.">
-          <MetricRow label="Checks / payment documents on hand" value={fmtGel(cash?.checksOnHand)} />
-          <MetricRow
-            label="Supported supplier settlement"
-            value={fmtGel(cash?.checksSupportedByRealMoney)}
-          />
-          <MetricRow
-            label="Unsupported paper settlement"
-            value={fmtGel(cash?.unsupportedChecks)}
-            tone={gapTone(cash?.unsupportedChecks)}
-          />
-          <MetricRow
-            label="Unsupported supplier documents"
-            value={fmtGel(documentation?.unsupportedSupplierDocumentValue)}
-            hint={`${fmtCount(documentation?.unsupportedSupplierDocumentCount)} documents`}
-            tone={gapTone(documentation?.unsupportedSupplierDocumentValue)}
-          />
         </SectionCard>
       </div>
 

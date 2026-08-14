@@ -50,6 +50,13 @@ public class AuditMappingDto {
     /** Why a rule proposed this mapping. Null for hand-made mappings. */
     private String suggestionReason;
 
+    /**
+     * The reusable rule that created this mapping, if any (BOR-91). Present so a
+     * row can always say why it was classified, and so revoking that rule undoes
+     * exactly the mappings it made and nothing else.
+     */
+    private String appliedByRuleId;
+
     /** 0-100 for suggestions. Null when a person made the decision. */
     private Integer confidence;
 

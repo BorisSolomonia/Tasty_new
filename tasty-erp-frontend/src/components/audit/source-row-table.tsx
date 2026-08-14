@@ -19,6 +19,7 @@ import { ArrowDown, ArrowUp } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/cn'
 import type { AuditSourceRow } from '@/lib/audit-api'
+import { RuleBadge } from './rule-badge'
 import { StatusBadge } from './status-badge'
 import { EM_DASH, fmtDate, fmtGel, fmtKgSigned, fmtText, gapTone, toneClass } from './format'
 
@@ -115,7 +116,13 @@ export function SourceRowTable({
       }),
       columnHelper.accessor('status', {
         header: 'Status',
-        cell: (info) => <StatusBadge status={info.getValue()} />,
+        cell: ({ row }) => (
+          <div className="flex flex-col items-start gap-1">
+            <StatusBadge status={row.original.status} />
+            {/* Why this row says what it says, when a rule and not a person said it. */}
+            <RuleBadge mapping={row.original.mapping} />
+          </div>
+        ),
       }),
       columnHelper.accessor('description', {
         header: 'Raw description',

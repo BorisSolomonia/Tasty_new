@@ -20,16 +20,33 @@ const DialogOverlay = React.forwardRef<
 ))
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 
+/**
+ * Dialog widths.
+ *
+ * `wide` exists for the data windows — a drill-down table or a mapping scope
+ * preview has ten or more columns, and at 64rem they were reading through a
+ * letterbox. Both are capped at 96vw, so the panel never forces the page itself
+ * to scroll sideways; a table wider than the panel scrolls inside its own
+ * container instead.
+ */
+const DIALOG_SIZE = {
+  default: 'w-[min(64rem,96vw)]',
+  wide: 'w-[min(96rem,96vw)]',
+} as const
+
+export type DialogSize = keyof typeof DIALOG_SIZE
+
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
+  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { size?: DialogSize }
+>(({ className, children, size = 'default', ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        'fixed left-1/2 top-1/2 z-50 flex max-h-[92dvh] w-[min(64rem,96vw)] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 overflow-hidden rounded-lg border bg-background p-5 shadow-lg',
+        'fixed left-1/2 top-1/2 z-50 flex max-h-[92dvh] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 overflow-hidden rounded-lg border bg-background p-5 shadow-lg',
+        DIALOG_SIZE[size],
         className
       )}
       {...props}

@@ -1,9 +1,9 @@
 /**
- * 08 — Reconciliation Workbench.
+ * The reconciliation workbench (old view 08), unchanged: the queue on the left,
+ * the split-mapping editor on the right.
  *
- * The daily working surface: the queue on the left, the split-mapping editor on
- * the right. Saving here invalidates the whole audit layer, so the three-flow
- * strip above moves as soon as a row is classified — the mapping and the
+ * Saving here invalidates the whole audit layer, so the three-flow strip at the
+ * top of the page moves as soon as a row is classified — the mapping and the
  * aggregate it feeds are never out of step within a session.
  */
 import * as React from 'react'
@@ -12,11 +12,9 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'
 import type { AuditSourceRow } from '@/lib/audit-api'
 import { useAudit } from '../audit-context'
-import { ThreeFlowStrip } from '../three-flow-strip'
 import { MetricCard, SectionCard } from '../metric'
 import { MappingEditor } from '../mapping-editor'
 import { SourceRowTable, sourceRowKey } from '../source-row-table'
-import { FeedCapNotice } from '../feed-cap-notice'
 import { isUnresolved } from '../cross-flow'
 import { fmtCount, fmtGel } from '../format'
 
@@ -58,7 +56,7 @@ function matches(row: AuditSourceRow, filter: QueueFilter): boolean {
   }
 }
 
-export function ReconciliationWorkbench() {
+export function WorkbenchSection() {
   const { sourceRows, sourceRowsQuery } = useAudit()
   const [filter, setFilter] = React.useState<QueueFilter>('ALL')
   const [search, setSearch] = React.useState('')
@@ -112,10 +110,6 @@ export function ReconciliationWorkbench() {
 
   return (
     <div className="space-y-4">
-      <ThreeFlowStrip />
-
-      <FeedCapNotice />
-
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         {queues.map((queue) => (
           <MetricCard

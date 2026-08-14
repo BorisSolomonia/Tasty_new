@@ -28,6 +28,7 @@ import type {
 import { useSaveMapping, useVoidMapping } from '@/hooks/use-audit-flows'
 import { useAudit } from './audit-context'
 import { useOperatorGuard } from './operator-picker'
+import { RuleBadge } from './rule-badge'
 import { StatusBadge } from './status-badge'
 import { ChangeHistory } from './change-history'
 import { EM_DASH, fmtDate, fmtGel, fmtKgSigned, fmtText, hasValue } from './format'
@@ -62,11 +63,21 @@ export function MappingEditor({
   onSaved,
   className,
   showHistory = true,
+  onProposeMapping,
+  submitLabel,
 }: {
   row: AuditSourceRow
   onSaved?: () => void
   className?: string
   showHistory?: boolean
+  /**
+   * When supplied, the editor builds the mapping and hands it over instead of
+   * writing it (BOR-91). The mapping dialog uses this to interpose the scope
+   * step — "only this transaction, or also the ones like it?" — so the widening
+   * decision is always taken before anything is committed, never after.
+   */
+  onProposeMapping?: (payload: AuditMapping) => void
+  submitLabel?: string
 }) {
   const { categories, operator } = useAudit()
   const { ready, message } = useOperatorGuard()
@@ -131,26 +142,34 @@ export function MappingEditor({
     setSplits((current) => current.map((split, i) => (i === index ? { ...split, ...patch } : split)))
   }
 
+  const buildPayload = (): AuditMapping => ({
+    id: row.mapping?.id ?? null,
+    sourceType: row.sourceType,
+    sourceRowId: row.sourceRowId,
+    sourceAmount,
+    status: nextStatus,
+    splits,
+    // Derived server-side from the splits; never sent as a stored figure.
+    unresolvedAmount: null,
+    linkedSourceRows: row.mapping?.linkedSourceRows ?? null,
+    suggestionReason: row.mapping?.suggestionReason ?? null,
+    confidence: row.mapping?.confidence ?? null,
+    note: note.trim() ? note.trim() : null,
+    createdBy: row.mapping?.createdBy ?? null,
+    updatedBy: null,
+    createdAt: row.mapping?.createdAt ?? null,
+    updatedAt: null,
+    // `appliedByRuleId` is deliberately not sent: which rule created a mapping
+    // is the server's account of its own work, not a client assertion.
+  })
+
   const handleSave = async () => {
     if (blockedReason) return
     setError(null)
-    const payload: AuditMapping = {
-      id: row.mapping?.id ?? null,
-      sourceType: row.sourceType,
-      sourceRowId: row.sourceRowId,
-      sourceAmount,
-      status: nextStatus,
-      splits,
-      // Derived server-side from the splits; never sent as a stored figure.
-      unresolvedAmount: null,
-      linkedSourceRows: row.mapping?.linkedSourceRows ?? null,
-      suggestionReason: row.mapping?.suggestionReason ?? null,
-      confidence: row.mapping?.confidence ?? null,
-      note: note.trim() ? note.trim() : null,
-      createdBy: row.mapping?.createdBy ?? null,
-      updatedBy: null,
-      createdAt: row.mapping?.createdAt ?? null,
-      updatedAt: null,
+    const payload = buildPayload()
+    if (onProposeMapping) {
+      onProposeMapping(payload)
+      return
     }
     try {
       await saveMutation.mutateAsync(payload)
@@ -185,7 +204,10 @@ export function MappingEditor({
           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             {row.sourceType ?? 'SOURCE'} · {fmtText(row.reference)}
           </span>
-          <StatusBadge status={row.status} className="ml-auto" />
+          <span className="ml-auto flex flex-wrap items-center gap-2">
+            <RuleBadge mapping={row.mapping} />
+            <StatusBadge status={row.status} />
+          </span>
         </div>
         <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
           <Field label="Date" value={fmtDate(row.date)} />
@@ -397,7 +419,7 @@ export function MappingEditor({
           disabled={Boolean(blockedReason) || saveMutation.isPending}
         >
           <Save className="mr-1 h-4 w-4" />
-          {saveMutation.isPending ? 'Saving…' : 'Save mapping'}
+          {saveMutation.isPending ? 'Saving…' : submitLabel ?? 'Save mapping'}
         </Button>
 
         {row.mapping?.id && !voiding ? (
