@@ -12,9 +12,10 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { apiErrorMessage } from '@/lib/api-client'
 import { useSaveSupplierDebt, useSupplierDebt } from '@/hooks/use-audit-flows'
 import { useAudit } from './audit-context'
+import { CollapsiblePanel } from './collapsible-panel'
 import { EditableNumber } from './editable-number'
 import { useOperatorGuard } from './operator-picker'
-import { fmtDate, fmtGel, fmtText } from './format'
+import { fmtCount, fmtDate, fmtGel, fmtText } from './format'
 
 const inputClass =
   'h-8 w-full rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
@@ -76,30 +77,38 @@ export function SupplierDebtPanel() {
         </p>
       ) : null}
 
+      {/*
+        The per-counterparty table is collapsed; Σ asserted debt stays on the
+        header, because that is the figure the coverage control above reads.
+      */}
       {rows.length > 0 ? (
+        <CollapsiblePanel
+          title="Per-supplier asserted debt"
+          summary={`${fmtCount(rows.length)} suppliers · ${fmtGel(total)} asserted`}
+        >
         <div className="overflow-x-auto">
-          <table className="w-full text-xs">
+          <table className="w-full text-[11px]">
             <thead>
               <tr className="border-b border-border text-left text-muted-foreground">
-                <th className="py-1.5 pr-2 font-semibold">Supplier</th>
-                <th className="py-1.5 pr-2 font-semibold">Last updated</th>
-                <th className="py-1.5 text-right font-semibold">Outstanding</th>
+                <th className="py-1 pr-2 font-semibold">Supplier</th>
+                <th className="py-1 pr-2 font-semibold">Last updated</th>
+                <th className="py-1 text-right font-semibold">Outstanding</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((row) => (
                 <tr key={row.id ?? row.supplierName ?? ''} className="border-b border-border/70">
-                  <td className="py-1.5 pr-2">
+                  <td className="py-1 pr-2">
                     <div className="font-medium">{fmtText(row.supplierName)}</div>
                     {row.supplierTin ? (
                       <div className="text-[11px] text-muted-foreground">{row.supplierTin}</div>
                     ) : null}
                   </td>
-                  <td className="py-1.5 pr-2 text-muted-foreground">
+                  <td className="py-1 pr-2 text-muted-foreground">
                     {fmtDate(row.updatedAt)}
                     {row.updatedBy ? ` · ${row.updatedBy}` : ''}
                   </td>
-                  <td className="py-1.5 text-right">
+                  <td className="py-1 text-right">
                     <EditableNumber
                       value={row.outstandingAmount}
                       label={`Outstanding debt to ${row.supplierName ?? 'supplier'}`}
@@ -111,14 +120,15 @@ export function SupplierDebtPanel() {
                 </tr>
               ))}
               <tr>
-                <td className="py-1.5 pr-2 font-semibold" colSpan={2}>
+                <td className="py-1 pr-2 font-semibold" colSpan={2}>
                   Σ asserted debt
                 </td>
-                <td className="py-1.5 text-right font-semibold tabular-nums">{fmtGel(total)}</td>
+                <td className="py-1 text-right font-semibold tabular-nums">{fmtGel(total)}</td>
               </tr>
             </tbody>
           </table>
         </div>
+        </CollapsiblePanel>
       ) : null}
 
       <div className="grid gap-2 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_auto]">

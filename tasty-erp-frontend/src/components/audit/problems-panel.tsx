@@ -10,11 +10,15 @@
  * and then the two summaries that answer "where is this concentrated?" — by
  * rule, by month, and by subject across flows.
  *
- * Every "open evidence" affordance uses the alert's own `drilldownKey`. The
+ * Every "show evidence" affordance uses the alert's own `drilldownKey`. The
  * broad keys (`cash.bankRows`, `documentation.rows`) are reachable only from
  * the explicit "browse all" buttons in the Cash and Documentation sections —
  * never from a problem, because expanding a four-row finding into every
  * statement row changes the scope under the reader.
+ *
+ * Evidence no longer opens in a dialog: it scrolls to the section that browses
+ * that kind of row and renders there (see `evidence.ts`), so the reader lands
+ * somewhere they can carry on working instead of on a layer over the page.
  */
 import * as React from 'react'
 import { Button } from '@/components/ui/button'
@@ -23,8 +27,10 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'
 import type { AuditAlert } from '@/lib/audit-api'
 import { useAudit } from './audit-context'
+import { CollapsiblePanel } from './collapsible-panel'
 import { MetricCard, SectionCard, FormulaNote } from './metric'
 import { AlertList, alertEvidenceKey, sortAlerts } from './alert-list'
+import { sectionForDrilldownKey } from './evidence'
 import { SeverityBadge } from './status-badge'
 import { SourceRowTable } from './source-row-table'
 import {
@@ -60,6 +66,11 @@ export function ProblemsPanel() {
   const weights = flowWeights(alerts)
   const buckets = React.useMemo(() => monthBuckets(sourceRows), [sourceRows])
   const maxUnresolved = buckets.reduce((max, bucket) => Math.max(max, bucket.unresolved), 0)
+  // Named on the closed header, so shutting the grid does not hide the finding.
+  const worstMonth = buckets.reduce<(typeof buckets)[number] | null>(
+    (worst, bucket) => (worst === null || bucket.unresolved > worst.unresolved ? bucket : worst),
+    null
+  )
   const clusters = React.useMemo(() => crossFlowClusters(alerts).slice(0, 12), [alerts])
 
   const byRule = React.useMemo(() => {
@@ -88,7 +99,7 @@ export function ProblemsPanel() {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
         {weights.map((entry) => (
           <MetricCard
             key={entry.flow}
@@ -106,7 +117,7 @@ export function ProblemsPanel() {
         deliberately not scaled to 100 — there is no ceiling to scale against.
       </p>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
         <SectionCard
           title="Cases"
           subtitle="Every rule that fired, ranked by severity then amount. Select one to open its anatomy."
@@ -126,9 +137,16 @@ export function ProblemsPanel() {
         <CaseAnatomy alert={active} allAlerts={alerts ?? []} />
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <SectionCard
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <CollapsiblePanel
           title="Monthly concentration of unresolved rows"
+          summary={
+            worstMonth
+              ? `${fmtCount(buckets.length)} months · worst ${worstMonth.month} with ${fmtCount(
+                  worstMonth.unresolved
+                )} unresolved`
+              : `${fmtCount(buckets.length)} months`
+          }
           subtitle="Counted from the dates on the shared source-row feed. Select a month to list its rows."
         >
           {sourceRowsQuery.isLoading ? (
@@ -175,34 +193,37 @@ export function ProblemsPanel() {
               </FormulaNote>
             </>
           )}
-        </SectionCard>
+        </CollapsiblePanel>
 
-        <SectionCard
+        <CollapsiblePanel
           title="Risk by rule"
+          summary={`${fmtCount(byRule.length)} rules · ${fmtGel(
+            byRule.reduce((sum, entry) => sum + entry.amount, 0)
+          )}`}
           subtitle="Every rule that fired, grouped by rule id and ranked by severity weight."
         >
           {byRule.length === 0 ? (
             <p className="text-sm text-muted-foreground">No rule fired for this period.</p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-xs">
+              <table className="w-full text-[11px]">
                 <thead>
                   <tr className="border-b border-border text-left text-muted-foreground">
-                    <th className="py-1.5 pr-2 font-semibold">Rule</th>
-                    <th className="py-1.5 pr-2 font-semibold">Flow</th>
-                    <th className="py-1.5 pr-2 text-right font-semibold">Fired</th>
-                    <th className="py-1.5 pr-2 text-right font-semibold">Σ amount</th>
-                    <th className="py-1.5 text-right font-semibold">Weight</th>
+                    <th className="py-1 pr-2 font-semibold">Rule</th>
+                    <th className="py-1 pr-2 font-semibold">Flow</th>
+                    <th className="py-1 pr-2 text-right font-semibold">Fired</th>
+                    <th className="py-1 pr-2 text-right font-semibold">Σ amount</th>
+                    <th className="py-1 text-right font-semibold">Weight</th>
                   </tr>
                 </thead>
                 <tbody>
                   {byRule.map((entry) => (
                     <tr key={entry.ruleId} className="border-b border-border/70">
-                      <td className="py-1.5 pr-2 font-mono text-[11px]">{entry.ruleId}</td>
-                      <td className="py-1.5 pr-2">{flowLabel(entry.flow)}</td>
-                      <td className="py-1.5 pr-2 text-right tabular-nums">{fmtCount(entry.count)}</td>
-                      <td className="py-1.5 pr-2 text-right tabular-nums">{fmtGel(entry.amount)}</td>
-                      <td className="py-1.5 text-right font-semibold tabular-nums">
+                      <td className="py-1 pr-2 font-mono text-[11px]">{entry.ruleId}</td>
+                      <td className="py-1 pr-2">{flowLabel(entry.flow)}</td>
+                      <td className="py-1 pr-2 text-right tabular-nums">{fmtCount(entry.count)}</td>
+                      <td className="py-1 pr-2 text-right tabular-nums">{fmtGel(entry.amount)}</td>
+                      <td className="py-1 text-right font-semibold tabular-nums">
                         {fmtCount(entry.weight)}
                       </td>
                     </tr>
@@ -211,17 +232,22 @@ export function ProblemsPanel() {
               </table>
             </div>
           )}
-        </SectionCard>
+        </CollapsiblePanel>
       </div>
 
       {selectedMonth ? (
-        <SectionCard
+        <CollapsiblePanel
+          key={selectedMonth}
           title={`Unresolved rows in ${selectedMonth}`}
+          summary={`${fmtCount(monthRows.length)} rows`}
           subtitle="From the same feed every section reads."
+          // Opened because the reader just asked for this month by clicking it.
+          defaultOpen
+          highlight
           actions={
             <button
               type="button"
-              className="text-xs text-primary hover:underline"
+              className="text-[11px] text-primary hover:underline"
               onClick={() => setSelectedMonth(null)}
             >
               Clear month
@@ -229,11 +255,12 @@ export function ProblemsPanel() {
           }
         >
           <SourceRowTable rows={monthRows} emptyMessage="No unresolved rows in this month." />
-        </SectionCard>
+        </CollapsiblePanel>
       ) : null}
 
-      <SectionCard
+      <CollapsiblePanel
         title="Cross-flow clusters"
+        summary={`${fmtCount(clusters.length)} subjects named in more than one flow`}
         subtitle="Subjects named by rules in more than one flow. The link is the rule's own subject list, not an inference."
       >
         {clusters.length === 0 ? (
@@ -242,22 +269,22 @@ export function ProblemsPanel() {
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-xs">
+            <table className="w-full text-[11px]">
               <thead>
                 <tr className="border-b border-border text-left text-muted-foreground">
-                  <th className="py-1.5 pr-2 font-semibold">Subject</th>
+                  <th className="py-1 pr-2 font-semibold">Subject</th>
                   {FLOW_KEYS.map((flow) => (
-                    <th key={flow} className="py-1.5 pr-2 text-right font-semibold">
+                    <th key={flow} className="py-1 pr-2 text-right font-semibold">
                       {flowLabel(flow)}
                     </th>
                   ))}
-                  <th className="py-1.5 text-right font-semibold">Flows</th>
+                  <th className="py-1 text-right font-semibold">Flows</th>
                 </tr>
               </thead>
               <tbody>
                 {clusters.map((cluster) => (
                   <tr key={cluster.subject} className="border-b border-border/70">
-                    <td className="max-w-[16rem] py-1.5 pr-2">
+                    <td className="max-w-[16rem] py-1 pr-2">
                       <div className="truncate font-medium" title={cluster.subject}>
                         {cluster.subject}
                       </div>
@@ -269,7 +296,7 @@ export function ProblemsPanel() {
                         0
                       )
                       return (
-                        <td key={flow} className="py-1.5 pr-2 text-right tabular-nums">
+                        <td key={flow} className="py-1 pr-2 text-right tabular-nums">
                           {flowAlerts.length === 0 ? (
                             <span className="text-muted-foreground">—</span>
                           ) : (
@@ -281,7 +308,7 @@ export function ProblemsPanel() {
                         </td>
                       )
                     })}
-                    <td className="py-1.5 text-right font-semibold tabular-nums">
+                    <td className="py-1 text-right font-semibold tabular-nums">
                       {cluster.flowCount}
                     </td>
                   </tr>
@@ -290,13 +317,13 @@ export function ProblemsPanel() {
             </table>
           </div>
         )}
-      </SectionCard>
+      </CollapsiblePanel>
     </div>
   )
 }
 
 function CaseAnatomy({ alert, allAlerts }: { alert: AuditAlert | null; allAlerts: AuditAlert[] }) {
-  const { openDrilldown } = useAudit()
+  const { showEvidence } = useAudit()
 
   if (!alert) {
     return (
@@ -401,21 +428,22 @@ function CaseAnatomy({ alert, allAlerts }: { alert: AuditAlert | null; allAlerts
           title={evidence.blockedReason}
           onClick={() =>
             evidence.key &&
-            openDrilldown({
+            showEvidence({
               key: evidence.key,
               subject: subjects.length === 1 ? subjects[0] : undefined,
               label: alert.title ?? undefined,
             })
           }
         >
-          Open source evidence ({fmtCount(alert.affectedRowCount)} rows)
+          Show source evidence ({fmtCount(alert.affectedRowCount)} rows)
         </Button>
-        {evidence.blockedReason ? (
+        {evidence.key === null ? (
           <p className="text-[11px] text-muted-foreground">{evidence.blockedReason}</p>
         ) : (
           <p className="text-[11px] text-muted-foreground">
-            Expands <span className="font-mono">{evidence.key}</span> — this rule&apos;s own rows,
-            not a wider set.
+            Scrolls to the {sectionForDrilldownKey(evidence.key)} section and opens{' '}
+            <span className="font-mono">{evidence.key}</span> there — this rule&apos;s own rows, not
+            a wider set.
           </p>
         )}
       </div>

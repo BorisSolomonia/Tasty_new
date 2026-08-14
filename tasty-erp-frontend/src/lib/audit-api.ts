@@ -238,6 +238,13 @@ export interface AuditSourceRow {
   description: string | null
   additionalInformation: string | null
   reference: string | null
+  /** The bank's own classification of the row, e.g. "გადარიცხვა თანხის გატანა". */
+  transactionType: string | null
+  /** Tax code the backend resolved for the counterparty, when it could. */
+  resolvedCounterpartyTin: string | null
+  counterpartyIdentitySource: string | null
+  /** Why the identity above is claimed — the backend's own words. */
+  counterpartyIdentityBasis: string | null
   status: AuditMappingStatus | null
   mapping: AuditMapping | null
   unresolvedAmount: number | null
@@ -565,10 +572,20 @@ export const auditLayerApi = {
     return jsonData<AuditMappingRulePreview[]>(response)
   },
 
-  saveMappingRule: async (rule: AuditMappingRule, operator: string) => {
+  /**
+   * Saves the rule and applies it across the given period in one call — the
+   * period is required, because "apply this classification to similar rows"
+   * has no meaning without saying over what span. Editing an existing rule
+   * re-applies it the same way.
+   */
+  saveMappingRule: async (
+    rule: AuditMappingRule,
+    operator: string,
+    period: { startDate: string; endDate: string }
+  ) => {
     const response = await fetchWithAuth(`${BASE}/mappings/rules`, {
       method: 'PUT',
-      params: { operator },
+      params: { operator, startDate: period.startDate, endDate: period.endDate },
       body: JSON.stringify(rule),
     })
     return jsonData<AuditMappingRule>(response)

@@ -185,7 +185,7 @@ export function SourceRowTable({
 
   return (
     <div className={cn('overflow-x-auto', className)}>
-      <table className="w-full border-collapse text-xs">
+      <table className="w-full border-collapse text-[11px]">
         <thead>
           {table.getHeaderGroups().map((headerGroup) => (
             <tr key={headerGroup.id} className="border-b border-border">
@@ -195,7 +195,7 @@ export function SourceRowTable({
                 return (
                   <th
                     key={header.id}
-                    className="px-2 py-2 text-left font-semibold text-muted-foreground"
+                    className="px-2 py-1 text-left font-semibold text-muted-foreground"
                   >
                     {header.isPlaceholder ? null : sortable ? (
                       <button
@@ -230,7 +230,7 @@ export function SourceRowTable({
                 )}
               >
                 {row.getVisibleCells().map((cell) => (
-                  <td key={cell.id} className="px-2 py-2">
+                  <td key={cell.id} className="px-2 py-1">
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>
                 ))}

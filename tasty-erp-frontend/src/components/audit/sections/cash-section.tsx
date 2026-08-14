@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { AuditSourceRow } from '@/lib/audit-api'
 import { useAudit } from '../audit-context'
+import { CollapsiblePanel } from '../collapsible-panel'
 import { MetricRow, SectionCard, FormulaNote } from '../metric'
 import { StatusBadge } from '../status-badge'
 import { RuleBadge } from '../rule-badge'
@@ -32,7 +33,7 @@ import { JumpLink } from '../section-nav'
 import { fmtCount, fmtGel, fmtDate, fmtText, gapTone } from '../format'
 
 export function CashSection() {
-  const { flows, sourceRows, sourceRowsQuery, openDrilldown } = useAudit()
+  const { flows, sourceRows, sourceRowsQuery, showEvidence } = useAudit()
   const [mappingRow, setMappingRow] = React.useState<AuditSourceRow | null>(null)
 
   const cash = flows?.cash ?? null
@@ -254,8 +255,17 @@ export function CashSection() {
         </SectionCard>
 
         {/* 4 ---------------------------------------------------------------- */}
-        <SectionCard
+        {/*
+          A queue of rows, not a figure — so it is shut on load and its header
+          carries the counts the open list would have shown.
+        */}
+        <CollapsiblePanel
           title="4. Bank rows requiring mapping"
+          summary={`${fmtCount(bankRowsToMap.length)} shown of ${fmtCount(
+            cash?.bankRowCount
+          )} · ${fmtGel(cash?.unmappedInflowAmount)} in / ${fmtGel(
+            cash?.unmappedOutflowAmount
+          )} out unmapped`}
           subtitle={`${fmtCount(cash?.unmappedInflowCount)} unmapped inflows (${fmtGel(
             cash?.unmappedInflowAmount
           )}) · ${fmtCount(cash?.unmappedOutflowCount)} unmapped outflows (${fmtGel(
@@ -269,8 +279,8 @@ export function CashSection() {
             */
             <button
               type="button"
-              className="text-xs text-primary hover:underline"
-              onClick={() => openDrilldown({ key: 'cash.bankRows', label: 'All bank statement rows' })}
+              className="whitespace-nowrap text-[11px] text-primary hover:underline"
+              onClick={() => showEvidence({ key: 'cash.bankRows', label: 'All bank statement rows' })}
             >
               Browse all bank rows
             </button>
@@ -311,7 +321,7 @@ export function CashSection() {
               ))}
             </div>
           )}
-        </SectionCard>
+        </CollapsiblePanel>
       </div>
 
       <MappingDialog row={mappingRow} onClose={() => setMappingRow(null)} />

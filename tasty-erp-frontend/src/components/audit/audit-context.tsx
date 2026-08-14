@@ -21,6 +21,13 @@ import type {
   AuditSourceRow,
   AuditSourceRowPage,
 } from '@/lib/audit-api'
+import type { DrilldownKey } from './drilldown-keys'
+import {
+  evidenceHash,
+  parseEvidenceHash,
+  sectionForDrilldownKey,
+  type EvidenceSection,
+} from './evidence'
 
 /** Shared row feed cap. Rows beyond this are not silently hidden — see below. */
 export const SOURCE_ROW_LIMIT = 1000
@@ -37,11 +44,16 @@ export interface AuditFilters {
   product: string
 }
 
-export interface DrilldownRequest {
-  key: string
+export interface EvidenceRequest {
+  key: DrilldownKey
   subject?: string
-  /** Label shown while the drill-down loads. */
+  /** Title shown while the drill-down loads, usually the problem's own. */
   label?: string
+}
+
+/** A request, plus the section that will render it. */
+export interface ActiveEvidence extends EvidenceRequest {
+  section: EvidenceSection
 }
 
 interface AuditContextValue {
@@ -71,9 +83,18 @@ interface AuditContextValue {
   setOperator: (name: string) => void
   operatorHistory: string[]
 
-  drilldown: DrilldownRequest | null
-  openDrilldown: (request: DrilldownRequest) => void
-  closeDrilldown: () => void
+  /**
+   * The one problem whose rows are currently on screen, and where.
+   *
+   * Exactly one at a time: two evidence panels open at once would put two
+   * different row sets on one page with nothing saying which problem each
+   * belongs to.
+   */
+  evidence: ActiveEvidence | null
+  /** Route the key to its section, scroll there, and render its rows. */
+  showEvidence: (request: EvidenceRequest) => void
+  /** Return the sections to their normal contents. */
+  clearEvidence: () => void
 
   refreshAll: () => void
 }
@@ -105,6 +126,22 @@ export function todayIso(): string {
 
 export const DEFAULT_START_DATE = '2023-01-01'
 
+/** Bring a section's heading below the app bar and this page's section nav. */
+function scrollSectionIntoView(section: string) {
+  if (typeof document === 'undefined') return
+  // One frame, so the panel is in the DOM before it is scrolled to.
+  requestAnimationFrame(() => {
+    document.getElementById(section)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  })
+}
+
+function restoreEvidenceFromHash(): ActiveEvidence | null {
+  if (typeof window === 'undefined') return null
+  const parsed = parseEvidenceHash(window.location.hash)
+  if (!parsed) return null
+  return { ...parsed, section: sectionForDrilldownKey(parsed.key) }
+}
+
 export function AuditProvider({ children }: { children: React.ReactNode }) {
   const [filters, setFiltersState] = React.useState<AuditFilters>(() => ({
     startDate: DEFAULT_START_DATE,
@@ -113,7 +150,7 @@ export function AuditProvider({ children }: { children: React.ReactNode }) {
   }))
   const [operator, setOperatorState] = React.useState<string>(readStoredOperator)
   const [operatorHistory, setOperatorHistory] = React.useState<string[]>(readOperatorHistory)
-  const [drilldown, setDrilldown] = React.useState<DrilldownRequest | null>(null)
+  const [evidence, setEvidence] = React.useState<ActiveEvidence | null>(restoreEvidenceFromHash)
 
   const product = filters.product === ALL_PRODUCTS ? undefined : filters.product
 
@@ -138,6 +175,37 @@ export function AuditProvider({ children }: { children: React.ReactNode }) {
   const setFilters = React.useCallback((next: Partial<AuditFilters>) => {
     setFiltersState((current) => ({ ...current, ...next }))
   }, [])
+
+  const showEvidence = React.useCallback((request: EvidenceRequest) => {
+    const section = sectionForDrilldownKey(request.key)
+    setEvidence({ ...request, section })
+    // replaceState, not `location.hash =`: assigning the hash would make the
+    // browser jump instantly and stack a history entry per problem opened.
+    window.history.replaceState(
+      null,
+      '',
+      `${window.location.pathname}${window.location.search}${evidenceHash(request.key, request.subject)}`
+    )
+    scrollSectionIntoView(section)
+  }, [])
+
+  const clearEvidence = React.useCallback(() => {
+    setEvidence(null)
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
+  }, [])
+
+  /**
+   * A reload with an evidence hash lands at the top of the page, because the
+   * section is not in the DOM until the payload arrives. Scroll once it is.
+   */
+  const restoredSection = evidence?.section
+  const contentReady = !flowsQuery.isLoading
+  const restoredRef = React.useRef(false)
+  React.useEffect(() => {
+    if (restoredRef.current || !contentReady || !restoredSection) return
+    restoredRef.current = true
+    scrollSectionIntoView(restoredSection)
+  }, [contentReady, restoredSection])
 
   const setOperator = React.useCallback((name: string) => {
     const trimmed = name.trim()
@@ -171,9 +239,9 @@ export function AuditProvider({ children }: { children: React.ReactNode }) {
       operator,
       setOperator,
       operatorHistory,
-      drilldown,
-      openDrilldown: setDrilldown,
-      closeDrilldown: () => setDrilldown(null),
+      evidence,
+      showEvidence,
+      clearEvidence,
       refreshAll: invalidate,
     }),
     [
@@ -187,7 +255,9 @@ export function AuditProvider({ children }: { children: React.ReactNode }) {
       operator,
       setOperator,
       operatorHistory,
-      drilldown,
+      evidence,
+      showEvidence,
+      clearEvidence,
       invalidate,
     ]
   )

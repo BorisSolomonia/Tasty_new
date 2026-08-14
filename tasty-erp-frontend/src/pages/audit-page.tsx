@@ -53,7 +53,6 @@ import {
 } from '@/components/audit/audit-context'
 import { DataWarnings } from '@/components/audit/data-warnings'
 import { FeedCapNotice } from '@/components/audit/feed-cap-notice'
-import { DrilldownDialog } from '@/components/audit/drilldown-dialog'
 import { OperatorPicker } from '@/components/audit/operator-picker'
 import { PendingNotice } from '@/components/audit/pending-notice'
 import { ThreeFlowStrip } from '@/components/audit/three-flow-strip'
@@ -86,7 +85,7 @@ function AuditWorkspace() {
   }, [flows])
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* Header ---------------------------------------------------------- */}
       <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div>
@@ -100,7 +99,7 @@ function AuditWorkspace() {
         <OperatorPicker />
       </div>
 
-      <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-card p-3">
+      <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-card p-2">
         <div>
           <Label htmlFor="audit-start" className="text-xs text-muted-foreground">
             From
@@ -200,7 +199,7 @@ function AuditWorkspace() {
           <Skeleton className="h-64 w-full" />
         </div>
       ) : (
-        <div className="space-y-8">
+        <div className="space-y-5">
           <PageSection
             id="problems"
             title="Problems"
@@ -253,8 +252,6 @@ function AuditWorkspace() {
           </PageSection>
         </div>
       )}
-
-      <DrilldownDialog />
     </div>
   )
 }

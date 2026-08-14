@@ -62,7 +62,10 @@ export function RuleScopeStep({
   const [expandedSample, setExpandedSample] = React.useState<string | null>(null)
 
   const saveMapping = useSaveMapping(operator)
-  const saveRule = useSaveMappingRule(operator)
+  const saveRule = useSaveMappingRule(operator, {
+    startDate: filters.startDate,
+    endDate: filters.endDate,
+  })
 
   const splits = payload.splits ?? []
   // A rule asserts exactly one category, so it can only be built from a mapping
@@ -221,8 +224,10 @@ export function RuleScopeStep({
             onChange={(event) => setRuleNote(event.target.value)}
           />
           <p className="mt-2 text-xs text-muted-foreground">
-            The rule stays live: a statement row imported later that matches is mapped
-            automatically and tagged with this rule. Revoking it un-maps everything it created.
+            The rule is applied across the period selected at the top of the page ({filters.startDate}{' '}
+            → {filters.endDate}) and stays live afterwards: a statement row imported later that
+            matches is mapped automatically and tagged with this rule. Rows a person already
+            classified are left alone, and revoking the rule un-maps everything it created.
           </p>
         </div>
       ) : null}
@@ -334,11 +339,14 @@ function ScopeOption({
 /**
  * The rule to save.
  *
- * The key fields are sent as the row shows them, but `sourceRowId` is sent with
- * them on purpose: the backend is the only party that can resolve a criterion's
- * key authoritatively — it holds the bank's own transaction type, which is not
- * on the source-row DTO at all, and it owns the counterparty-name normalisation
- * a client copy would drift from.
+ * The keys come from the row the user is looking at — `AuditMappingRuleService`
+ * matches on the rule's own fields and resolves nothing from a row id, so every
+ * key a criterion can use must be carried here. That includes the bank's own
+ * `transactionType`, which is why the source-row type exposes it.
+ *
+ * `resolvedCounterpartyTin` is preferred over the raw one for what the mapping
+ * *asserts*: it is the backend's own identification, and it is what the rule
+ * writes onto each split.
  */
 function buildRule(
   row: AuditSourceRow,
@@ -349,7 +357,7 @@ function buildRule(
     counterpartyTin: string | null
     note: string | null
   }
-): AuditMappingRule & { sourceRowId: string | null } {
+): AuditMappingRule {
   return {
     id: null,
     criterion,
@@ -357,11 +365,11 @@ function buildRule(
     counterpartyTin: row.counterpartyTin ?? null,
     counterpartyName: row.counterpartyName ?? null,
     description: row.description ?? null,
-    // Not exposed on the source row; the backend fills it from `sourceRowId`.
-    transactionType: null,
+    transactionType: row.transactionType ?? null,
     categoryCode,
-    mappedCounterpartyName: assertion.counterpartyName,
-    mappedCounterpartyTin: assertion.counterpartyTin,
+    mappedCounterpartyName: assertion.counterpartyName ?? row.counterpartyName ?? null,
+    mappedCounterpartyTin:
+      assertion.counterpartyTin ?? row.resolvedCounterpartyTin ?? row.counterpartyTin ?? null,
     note: assertion.note,
     active: true,
     appliedCount: 0,
@@ -370,6 +378,5 @@ function buildRule(
     createdAt: null,
     updatedBy: null,
     updatedAt: null,
-    sourceRowId: row.sourceRowId ?? null,
   }
 }

@@ -19,6 +19,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'
 import type { AuditProductRow } from '@/lib/audit-api'
 import { useAudit } from '../audit-context'
+import { CollapsiblePanel } from '../collapsible-panel'
+import { SectionEvidence } from '../evidence-panel'
 import { MetricRow, SectionCard, FormulaNote } from '../metric'
 import { RealStockCell } from '../real-stock-cell'
 import { inventoryGapKey } from '../drilldown-keys'
@@ -36,7 +38,7 @@ type SortKey =
   | 'flaggedDocumentCount'
 
 export function InventorySection() {
-  const { flows, flowsQuery, openDrilldown } = useAudit()
+  const { flows, flowsQuery, showEvidence } = useAudit()
   const [search, setSearch] = React.useState('')
   const [sortKey, setSortKey] = React.useState<SortKey>('gapKg')
   const [descending, setDescending] = React.useState(true)
@@ -70,7 +72,7 @@ export function InventorySection() {
   }
 
   const header = (key: SortKey, label: string, alignRight = true) => (
-    <th className={cn('py-1.5 pr-2 font-semibold', alignRight && 'text-right')}>
+    <th className={cn('py-1 pr-2 font-semibold', alignRight && 'text-right')}>
       <button
         type="button"
         className={cn('inline-flex items-center gap-1 hover:text-foreground', alignRight && 'justify-end')}
@@ -85,15 +87,20 @@ export function InventorySection() {
   )
 
   return (
-    <div className="space-y-4">
-      <SectionCard
+    <div className="space-y-3">
+      <SectionEvidence section="inventory" />
+
+      <CollapsiblePanel
         title="Product reconciliation matrix"
+        summary={`${fmtCount(rows.length)} of ${fmtCount(
+          inventory?.products?.length
+        )} products · gap ${fmtKgSigned(inventory?.gapKg)}`}
         subtitle="Documented movement per product, the confirmed reality beside it, and the cash and document consequences attributed to it."
         actions={
           <Input
             value={search}
             placeholder="Filter products"
-            className="h-8 w-44"
+            className="h-7 w-36 text-[11px]"
             onChange={(event) => setSearch(event.target.value)}
           />
         }
@@ -108,16 +115,16 @@ export function InventorySection() {
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-xs">
+            <table className="w-full text-[11px]">
               <thead>
                 <tr className="border-b border-border text-left text-muted-foreground">
                   {header('productName', 'Product', false)}
                   {header('purchaseKg', 'Purchase kg')}
                   {header('saleKg', 'Sale kg')}
                   {header('writeOffKg', 'Write-off kg')}
-                  <th className="py-1.5 pr-2 text-right font-semibold">Write-off %</th>
+                  <th className="py-1 pr-2 text-right font-semibold">Write-off %</th>
                   {header('documentStockKg', 'Doc stock')}
-                  <th className="py-1.5 pr-2 text-right font-semibold">Real stock</th>
+                  <th className="py-1 pr-2 text-right font-semibold">Real stock</th>
                   {header('gapKg', 'Gap kg')}
                   {header('relatedCashGap', 'Related cash gap')}
                   {header('flaggedDocumentCount', 'Flagged docs')}
@@ -136,16 +143,20 @@ export function InventorySection() {
             </FormulaNote>
           </div>
         )}
-      </SectionCard>
+      </CollapsiblePanel>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
         <SectionCard
           title="Period totals"
           subtitle="The stock side of this period, summed across every product above."
         >
           <MetricRow label="Document purchases" value={fmtKgSigned(inventory?.documentPurchaseKg)} />
           <MetricRow label="Document sales" value={fmtKgSigned(inventory?.documentSaleKg)} />
-          <MetricRow label="Write-offs" value={fmtKgSigned(inventory?.documentWriteOffKg)} />
+          <MetricRow
+            label="Write-offs in the stock arithmetic"
+            value={fmtKgSigned(inventory?.documentWriteOffKg)}
+            hint="The documentation section reports its own count of the same events"
+          />
           <MetricRow label="Document stock" value={fmtKgSigned(inventory?.documentStockKg)} />
           <MetricRow label="Real stock (confirmed)" value={fmtKgSigned(inventory?.realStockKg)} />
           <MetricRow
@@ -198,8 +209,15 @@ export function InventorySection() {
           title="Documentation linked to inventory anomalies"
           subtitle="Which documents produced the stock this matrix is arguing about."
         >
+          {/*
+            Named "Σ … across products" on purpose. The documentation section
+            reports its own flagged-document count for the period; this is the
+            sum of the matrix column, which is the backend's attribution of
+            those documents to products. Two different figures must not share
+            one label.
+          */}
           <MetricRow
-            label="Flagged documents"
+            label="Σ flagged documents across products"
             value={fmtCount(
               (inventory?.products ?? []).reduce(
                 (sum, product) => sum + (product.flaggedDocumentCount ?? 0),
@@ -220,7 +238,7 @@ export function InventorySection() {
             type="button"
             className="mt-3 text-xs text-primary hover:underline"
             onClick={() =>
-              openDrilldown({ key: 'documentation.unmapped', label: 'Unmapped RS.ge rows' })
+              showEvidence({ key: 'documentation.unmapped', label: 'Unmapped RS.ge rows' })
             }
           >
             Open the unmapped rows and classify them →
@@ -232,14 +250,14 @@ export function InventorySection() {
 }
 
 function ProductRow({ product }: { product: AuditProductRow }) {
-  const { openDrilldown } = useAudit()
+  const { showEvidence } = useAudit()
   // The gap drill-downs are split by sign, and the backend filters them by
   // product through `subject`.
   const gapKey = inventoryGapKey(product.gapKg)
 
   return (
     <tr className="border-b border-border/70">
-      <td className="py-1.5 pr-2">
+      <td className="py-1 pr-2">
         <button
           type="button"
           className="max-w-[14rem] truncate text-left font-medium hover:underline disabled:no-underline disabled:opacity-100"
@@ -247,7 +265,7 @@ function ProductRow({ product }: { product: AuditProductRow }) {
           disabled={!gapKey}
           onClick={() =>
             gapKey &&
-            openDrilldown({
+            showEvidence({
               key: gapKey,
               subject: product.productName ?? undefined,
               label: `Inventory gap — ${product.productName ?? ''}`,
@@ -260,21 +278,21 @@ function ProductRow({ product }: { product: AuditProductRow }) {
           <div className="text-[11px] text-muted-foreground">{product.category}</div>
         ) : null}
       </td>
-      <td className="py-1.5 pr-2 text-right tabular-nums">{fmtKgSigned(product.purchaseKg)}</td>
-      <td className="py-1.5 pr-2 text-right tabular-nums">{fmtKgSigned(product.saleKg)}</td>
-      <td className="py-1.5 pr-2 text-right tabular-nums">{fmtKgSigned(product.writeOffKg)}</td>
-      <td className="py-1.5 pr-2 text-right tabular-nums">{fmtPercent(product.writeOffPercent)}</td>
-      <td className="py-1.5 pr-2 text-right tabular-nums">{fmtKgSigned(product.documentStockKg)}</td>
-      <td className="py-1.5 pr-2 text-right">
+      <td className="py-1 pr-2 text-right tabular-nums">{fmtKgSigned(product.purchaseKg)}</td>
+      <td className="py-1 pr-2 text-right tabular-nums">{fmtKgSigned(product.saleKg)}</td>
+      <td className="py-1 pr-2 text-right tabular-nums">{fmtKgSigned(product.writeOffKg)}</td>
+      <td className="py-1 pr-2 text-right tabular-nums">{fmtPercent(product.writeOffPercent)}</td>
+      <td className="py-1 pr-2 text-right tabular-nums">{fmtKgSigned(product.documentStockKg)}</td>
+      <td className="py-1 pr-2 text-right">
         <RealStockCell product={product} />
       </td>
-      <td className={cn('py-1.5 pr-2 text-right font-semibold tabular-nums', toneClass[gapTone(product.gapKg)])}>
+      <td className={cn('py-1 pr-2 text-right font-semibold tabular-nums', toneClass[gapTone(product.gapKg)])}>
         {fmtKgSigned(product.gapKg)}
       </td>
-      <td className={cn('py-1.5 pr-2 text-right tabular-nums', toneClass[gapTone(product.relatedCashGap)])}>
+      <td className={cn('py-1 pr-2 text-right tabular-nums', toneClass[gapTone(product.relatedCashGap)])}>
         {fmtGel(product.relatedCashGap)}
       </td>
-      <td className="py-1.5 text-right tabular-nums">{fmtCount(product.flaggedDocumentCount)}</td>
+      <td className="py-1 text-right tabular-nums">{fmtCount(product.flaggedDocumentCount)}</td>
     </tr>
   )
 }

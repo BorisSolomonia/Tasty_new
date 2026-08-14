@@ -145,10 +145,15 @@ export function useMappingRulePreview(
   })
 }
 
-export function useSaveMappingRule(operator: string) {
+/** Saving a rule also applies it, so the period it applies over is required. */
+export function useSaveMappingRule(
+  operator: string,
+  period: { startDate: string; endDate: string }
+) {
   const invalidate = useInvalidateAuditLayer()
   return useMutation({
-    mutationFn: (rule: AuditMappingRule) => auditLayerApi.saveMappingRule(rule, operator),
+    mutationFn: (rule: AuditMappingRule) =>
+      auditLayerApi.saveMappingRule(rule, operator, period),
     onSuccess: invalidate,
   })
 }

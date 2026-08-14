@@ -21,7 +21,7 @@ import type { AuditCategory } from '@/lib/audit-api'
 import { useCreateCategory } from '@/hooks/use-audit-flows'
 import { useAudit } from './audit-context'
 import { useOperatorGuard } from './operator-picker'
-import { SectionCard } from './metric'
+import { CollapsiblePanel } from './collapsible-panel'
 import { fmtText } from './format'
 
 type FlagKey =
@@ -126,16 +126,29 @@ export function CategoryManager() {
   }
 
   return (
-    <SectionCard
+    <CollapsiblePanel
       title="Categories"
+      summary={`${categories.length} categories · ${
+        categories.filter((category) => !category.builtIn).length
+      } custom`}
       subtitle="What a mapping can say. The flags on a category decide which totals its amounts feed."
-      actions={
-        <Button type="button" size="sm" variant="outline" className="h-7" onClick={() => setOpen((v) => !v)}>
-          <Plus className="mr-1 h-3.5 w-3.5" />
-          {open ? 'Cancel' : 'New category'}
-        </Button>
-      }
     >
+      {/*
+        In the body, not the header: the form it opens renders in the body, and
+        a button that appears to do nothing while the panel is shut is worse
+        than one extra click.
+      */}
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="mb-2 h-7"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <Plus className="mr-1 h-3.5 w-3.5" />
+        {open ? 'Cancel' : 'New category'}
+      </Button>
+
       {open ? (
         <div className="mb-4 rounded-md border border-primary/40 bg-primary/5 p-3">
           <div className="grid gap-2 sm:grid-cols-3">
@@ -228,13 +241,13 @@ export function CategoryManager() {
         </p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-xs">
+          <table className="w-full text-[11px]">
             <thead>
               <tr className="border-b border-border text-left text-muted-foreground">
-                <th className="py-1.5 pr-2 font-semibold">Category</th>
-                <th className="py-1.5 pr-2 font-semibold">Code</th>
-                <th className="py-1.5 pr-2 font-semibold">Feeds</th>
-                <th className="py-1.5 font-semibold">Origin</th>
+                <th className="py-1 pr-2 font-semibold">Category</th>
+                <th className="py-1 pr-2 font-semibold">Code</th>
+                <th className="py-1 pr-2 font-semibold">Feeds</th>
+                <th className="py-1 font-semibold">Origin</th>
               </tr>
             </thead>
             <tbody>
@@ -242,9 +255,9 @@ export function CategoryManager() {
                 const set = FLAGS.filter((flag) => Boolean(category[flag.key]))
                 return (
                   <tr key={category.code} className="border-b border-border/70 align-top">
-                    <td className="py-1.5 pr-2 font-medium">{fmtText(category.label)}</td>
-                    <td className="py-1.5 pr-2 font-mono text-[11px]">{category.code}</td>
-                    <td className="py-1.5 pr-2">
+                    <td className="py-1 pr-2 font-medium">{fmtText(category.label)}</td>
+                    <td className="py-1 pr-2 font-mono text-[11px]">{category.code}</td>
+                    <td className="py-1 pr-2">
                       {set.length === 0 ? (
                         <span className="text-muted-foreground">no headline total</span>
                       ) : (
@@ -257,7 +270,7 @@ export function CategoryManager() {
                         </span>
                       )}
                     </td>
-                    <td className="py-1.5">
+                    <td className="py-1">
                       {category.builtIn ? (
                         <span className="text-muted-foreground">built in</span>
                       ) : (
@@ -271,6 +284,6 @@ export function CategoryManager() {
           </table>
         </div>
       )}
-    </SectionCard>
+    </CollapsiblePanel>
   )
 }

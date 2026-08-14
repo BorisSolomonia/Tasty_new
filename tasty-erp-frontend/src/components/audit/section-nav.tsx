@@ -68,12 +68,12 @@ export function PageSection({
   children: ReactNode
 }) {
   return (
-    <section id={id} aria-labelledby={`${id}-heading`} className="scroll-mt-28 space-y-4">
-      <div className="border-l-2 border-primary/60 pl-3">
-        <h2 id={`${id}-heading`} className="text-base font-bold tracking-tight">
+    <section id={id} aria-labelledby={`${id}-heading`} className="scroll-mt-28 space-y-2">
+      <div className="border-l-2 border-primary/60 pl-2">
+        <h2 id={`${id}-heading`} className="text-sm font-bold tracking-tight">
           {title}
         </h2>
-        <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{description}</p>
+        <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">{description}</p>
       </div>
       {children}
     </section>

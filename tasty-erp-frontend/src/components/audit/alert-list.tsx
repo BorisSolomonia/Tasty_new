@@ -105,7 +105,7 @@ function AlertRow({
   onSelect?: (alert: AuditAlert) => void
   selected: boolean
 }) {
-  const { openDrilldown } = useAudit()
+  const { showEvidence } = useAudit()
   const inputs = Object.entries(alert.inputs ?? {})
   // The alert's own key, never a hand-picked wider one (BOR-91). The guard is
   // kept because a key this build does not know would fail server-side as
@@ -121,7 +121,7 @@ function AlertRow({
   return (
     <div
       className={cn(
-        'py-3',
+        'py-2',
         onSelect && 'cursor-pointer',
         selected && 'bg-accent/50'
       )}
@@ -175,14 +175,14 @@ function AlertRow({
           onClick={(event) => {
             event.stopPropagation()
             if (!evidence.key) return
-            openDrilldown({
+            showEvidence({
               key: evidence.key,
               subject: alert.subjects?.length === 1 ? alert.subjects[0] : undefined,
               label: alert.title ?? alert.ruleId ?? undefined,
             })
           }}
         >
-          Open evidence
+          Show evidence
           <ArrowUpRight className="ml-1 h-3.5 w-3.5" />
         </Button>
       </div>

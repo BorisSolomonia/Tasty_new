@@ -21,6 +21,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'
 import type { AuditCategory, AuditSourceRow } from '@/lib/audit-api'
 import { useAudit } from '../audit-context'
+import { CollapsiblePanel } from '../collapsible-panel'
+import { SectionEvidence } from '../evidence-panel'
 import { MetricRow, SectionCard, FormulaNote } from '../metric'
 import { StatusBadge } from '../status-badge'
 import { RuleBadge } from '../rule-badge'
@@ -80,7 +82,7 @@ function cashEffect(
 }
 
 export function DocumentationSection() {
-  const { flows, sourceRows, sourceRowsQuery, categories, openDrilldown } = useAudit()
+  const { flows, sourceRows, sourceRowsQuery, categories, showEvidence } = useAudit()
   const [search, setSearch] = React.useState('')
   const [onlyUnmapped, setOnlyUnmapped] = React.useState(false)
   const [mappingRow, setMappingRow] = React.useState<AuditSourceRow | null>(null)
@@ -106,9 +108,21 @@ export function DocumentationSection() {
   }, [sourceRows, search, onlyUnmapped])
 
   return (
-    <div className="space-y-4">
-      <SectionCard
+    <div className="space-y-3">
+      <SectionEvidence section="documentation" />
+
+      {/*
+        The longest table on the page — every RS.ge line in the period. Shut on
+        load, with the counts on the header, so the totals card below it is
+        reachable without scrolling past thousands of rows.
+      */}
+      <CollapsiblePanel
         title="RS.ge and evidence rows"
+        summary={`${fmtCount(rows.length)} shown of ${fmtCount(
+          documentation?.documentRowCount
+        )} · ${fmtCount(documentation?.unmappedDocumentRowCount)} unmapped (${fmtGel(
+          documentation?.unmappedDocumentValue
+        )})`}
         subtitle="Every row individually mappable. Raw values are shown exactly as imported."
         actions={
           <div className="flex flex-wrap items-center gap-2">
@@ -119,14 +133,14 @@ export function DocumentationSection() {
             */}
             <button
               type="button"
-              className="whitespace-nowrap text-xs text-primary hover:underline"
+              className="whitespace-nowrap text-[11px] text-primary hover:underline"
               onClick={() =>
-                openDrilldown({ key: 'documentation.rows', label: 'All RS.ge document rows' })
+                showEvidence({ key: 'documentation.rows', label: 'All RS.ge document rows' })
               }
             >
               Browse all
             </button>
-            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
               <input
                 type="checkbox"
                 checked={onlyUnmapped}
@@ -137,7 +151,7 @@ export function DocumentationSection() {
             <Input
               value={search}
               placeholder="Filter rows"
-              className="h-8 w-44"
+              className="h-7 w-36 text-[11px]"
               onChange={(event) => setSearch(event.target.value)}
             />
           </div>
@@ -151,20 +165,20 @@ export function DocumentationSection() {
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-xs">
+            <table className="w-full text-[11px]">
               <thead>
                 <tr className="border-b border-border text-left text-muted-foreground">
-                  <th className="py-1.5 pr-2 font-semibold">Date</th>
-                  <th className="py-1.5 pr-2 font-semibold">Source</th>
-                  <th className="py-1.5 pr-2 font-semibold">Type</th>
-                  <th className="py-1.5 pr-2 font-semibold">Counterparty</th>
-                  <th className="py-1.5 pr-2 font-semibold">Product</th>
-                  <th className="py-1.5 pr-2 text-right font-semibold">Qty</th>
-                  <th className="py-1.5 pr-2 text-right font-semibold">Value</th>
-                  <th className="py-1.5 pr-2 text-right font-semibold">Inventory effect</th>
-                  <th className="py-1.5 pr-2 font-semibold">Cash effect</th>
-                  <th className="py-1.5 pr-2 font-semibold">Mapping</th>
-                  <th className="py-1.5 font-semibold" />
+                  <th className="py-1 pr-2 font-semibold">Date</th>
+                  <th className="py-1 pr-2 font-semibold">Source</th>
+                  <th className="py-1 pr-2 font-semibold">Type</th>
+                  <th className="py-1 pr-2 font-semibold">Counterparty</th>
+                  <th className="py-1 pr-2 font-semibold">Product</th>
+                  <th className="py-1 pr-2 text-right font-semibold">Qty</th>
+                  <th className="py-1 pr-2 text-right font-semibold">Value</th>
+                  <th className="py-1 pr-2 text-right font-semibold">Inventory effect</th>
+                  <th className="py-1 pr-2 font-semibold">Cash effect</th>
+                  <th className="py-1 pr-2 font-semibold">Mapping</th>
+                  <th className="py-1 font-semibold" />
                 </tr>
               </thead>
               <tbody>
@@ -176,44 +190,44 @@ export function DocumentationSection() {
                       key={`${row.sourceType}:${row.sourceRowId}`}
                       className="border-b border-border/70 align-top"
                     >
-                      <td className="whitespace-nowrap py-1.5 pr-2">{fmtDate(row.date)}</td>
-                      <td className="py-1.5 pr-2">
+                      <td className="whitespace-nowrap py-1 pr-2">{fmtDate(row.date)}</td>
+                      <td className="py-1 pr-2">
                         <div className="font-medium">{row.sourceType ?? EM_DASH}</div>
                         <div className="text-[11px] text-muted-foreground">{fmtText(row.reference)}</div>
                       </td>
-                      <td className="py-1.5 pr-2">{fmtText(row.direction)}</td>
-                      <td className="max-w-[12rem] py-1.5 pr-2">
+                      <td className="py-1 pr-2">{fmtText(row.direction)}</td>
+                      <td className="max-w-[12rem] py-1 pr-2">
                         <div className="truncate" title={row.counterpartyName ?? ''}>
                           {fmtText(row.counterpartyName)}
                         </div>
                       </td>
-                      <td className="max-w-[10rem] py-1.5 pr-2">
+                      <td className="max-w-[10rem] py-1 pr-2">
                         <div className="truncate" title={row.productName ?? ''}>
                           {fmtText(row.productName)}
                         </div>
                       </td>
-                      <td className="py-1.5 pr-2 text-right tabular-nums">{fmtKgSigned(row.quantityKg)}</td>
-                      <td className="py-1.5 pr-2 text-right tabular-nums">{fmtGel(row.amount)}</td>
+                      <td className="py-1 pr-2 text-right tabular-nums">{fmtKgSigned(row.quantityKg)}</td>
+                      <td className="py-1 pr-2 text-right tabular-nums">{fmtGel(row.amount)}</td>
                       <td
                         className={cn(
-                          'py-1.5 pr-2 text-right tabular-nums',
+                          'py-1 pr-2 text-right tabular-nums',
                           effect.tone === 'bad' && 'text-destructive',
                           effect.tone === 'good' && 'text-success'
                         )}
                       >
                         {effect.text}
                       </td>
-                      <td className="py-1.5 pr-2">
+                      <td className="py-1 pr-2">
                         <div>{cashText.text}</div>
                         <div className="text-[11px] text-muted-foreground">{cashText.detail}</div>
                       </td>
-                      <td className="py-1.5 pr-2">
+                      <td className="py-1 pr-2">
                         <div className="flex flex-col items-start gap-1">
                           <StatusBadge status={row.status} />
                           <RuleBadge mapping={row.mapping} />
                         </div>
                       </td>
-                      <td className="py-1.5">
+                      <td className="py-1">
                         <Button
                           type="button"
                           size="sm"
@@ -238,9 +252,9 @@ export function DocumentationSection() {
             </FormulaNote>
           </div>
         )}
-      </SectionCard>
+      </CollapsiblePanel>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <SectionCard
           title="Documentation totals"
           subtitle="Every figure the documentation flow reports for this period."
@@ -255,7 +269,18 @@ export function DocumentationSection() {
             value={fmtGel(documentation?.documentSalesValue)}
             hint={fmtKgSigned(documentation?.documentSalesKg)}
           />
-          <MetricRow label="Write-offs" value={fmtKgSigned(documentation?.writeOffKg)} />
+          {/*
+            `documentation.writeOffKg` and `inventory.documentWriteOffKg` are
+            two fields counting the same events from two flows. Both are shown,
+            under distinct labels: hiding one would hide a disagreement between
+            the flows, which is exactly the kind of thing this page exists to
+            surface.
+          */}
+          <MetricRow
+            label="Write-offs recorded on documents"
+            value={fmtKgSigned(documentation?.writeOffKg)}
+            hint="The inventory section counts the same events in its stock arithmetic"
+          />
           <MetricRow
             label="Paper-only sales"
             value={fmtGel(documentation?.paperOnlySalesValue)}

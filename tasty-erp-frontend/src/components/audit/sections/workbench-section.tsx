@@ -12,6 +12,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'
 import type { AuditSourceRow } from '@/lib/audit-api'
 import { useAudit } from '../audit-context'
+import { CollapsiblePanel } from '../collapsible-panel'
+import { SectionEvidence } from '../evidence-panel'
 import { MetricCard, SectionCard } from '../metric'
 import { MappingEditor } from '../mapping-editor'
 import { SourceRowTable, sourceRowKey } from '../source-row-table'
@@ -108,9 +110,20 @@ export function WorkbenchSection() {
     ]
   }, [sourceRows])
 
+  const unresolvedInFilter = React.useMemo(
+    () => rows.reduce((sum, row) => sum + Math.abs(row.unresolvedAmount ?? 0), 0),
+    [rows]
+  )
+
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+    <div className="space-y-3">
+      {/*
+        The page's general row browser, so it is where any cash-flow problem's
+        evidence lands (see `evidence.ts`).
+      */}
+      <SectionEvidence section="workbench" />
+
+      <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
         {queues.map((queue) => (
           <MetricCard
             key={queue.label}
@@ -147,9 +160,12 @@ export function WorkbenchSection() {
         />
       </div>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-        <SectionCard
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+        <CollapsiblePanel
           title="Source rows"
+          summary={`${fmtCount(rows.length)} of ${fmtCount(sourceRows.length)} · ${fmtGel(
+            unresolvedInFilter
+          )} unresolved`}
           subtitle={`${fmtCount(rows.length)} rows in this filter. Select one to classify it.`}
         >
           {sourceRowsQuery.isLoading ? (
@@ -166,7 +182,7 @@ export function WorkbenchSection() {
               emptyMessage="No row matches this filter."
             />
           )}
-        </SectionCard>
+        </CollapsiblePanel>
 
         <SectionCard
           title="Selected row — split mapping"

@@ -24,9 +24,9 @@ interface DrillProps {
 }
 
 export function useDrilldownHandler({ drilldownKey, subject }: DrillProps, label?: string) {
-  const { openDrilldown } = useAudit()
+  const { showEvidence } = useAudit()
   if (!drilldownKey) return undefined
-  return () => openDrilldown({ key: drilldownKey, subject, label })
+  return () => showEvidence({ key: drilldownKey, subject, label })
 }
 
 export interface MetricRowProps extends DrillProps {
@@ -51,13 +51,13 @@ export function MetricRow({
 
   const body = (
     <>
-      <span className="min-w-0 text-sm text-muted-foreground">
+      <span className="min-w-0 text-xs text-muted-foreground">
         <span className="block truncate">{label}</span>
-        {hint ? <span className="block text-xs text-muted-foreground/80">{hint}</span> : null}
+        {hint ? <span className="block text-[10px] text-muted-foreground/80">{hint}</span> : null}
       </span>
       <span className="flex shrink-0 items-center gap-1">
-        <span className={cn('text-sm font-semibold tabular-nums', toneClass[tone])}>{value}</span>
-        {onOpen ? <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" /> : null}
+        <span className={cn('text-xs font-semibold tabular-nums', toneClass[tone])}>{value}</span>
+        {onOpen ? <ChevronRight className="h-3 w-3 text-muted-foreground" /> : null}
       </span>
     </>
   )
@@ -66,7 +66,7 @@ export function MetricRow({
     return (
       <div
         className={cn(
-          'flex items-start justify-between gap-3 border-b border-border py-2 last:border-b-0',
+          'flex items-start justify-between gap-3 border-b border-border py-1 last:border-b-0',
           className
         )}
       >
@@ -80,7 +80,7 @@ export function MetricRow({
       type="button"
       onClick={onOpen}
       className={cn(
-        'flex w-full items-start justify-between gap-3 border-b border-border py-2 text-left last:border-b-0 hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        'flex w-full items-start justify-between gap-3 border-b border-border py-1 text-left last:border-b-0 hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         className
       )}
     >
@@ -113,7 +113,7 @@ export function MetricCard({
   return (
     <Card
       className={cn(
-        'p-4',
+        'p-2.5',
         onOpen && 'cursor-pointer transition-colors hover:border-primary/40 hover:bg-accent/40',
         className
       )}
@@ -132,14 +132,14 @@ export function MetricCard({
       }
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
           {label}
         </span>
         {icon}
       </div>
-      <div className={cn('mt-2 text-2xl font-bold tabular-nums', toneClass[tone])}>{value}</div>
+      <div className={cn('mt-1 text-lg font-bold tabular-nums', toneClass[tone])}>{value}</div>
       {description ? (
-        <p className="mt-1 text-xs leading-snug text-muted-foreground">{description}</p>
+        <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">{description}</p>
       ) : null}
     </Card>
   )
@@ -163,16 +163,16 @@ export function SectionCard({
 }) {
   return (
     <Card className={cn('flex flex-col overflow-hidden', className)}>
-      <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
+      <div className="flex items-start justify-between gap-3 border-b border-border px-3 py-1.5">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold tracking-tight">{title}</h3>
+          <h3 className="text-xs font-semibold tracking-tight">{title}</h3>
           {subtitle ? (
-            <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{subtitle}</p>
+            <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">{subtitle}</p>
           ) : null}
         </div>
         {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
       </div>
-      <div className={cn('flex-1 px-4 py-3', bodyClassName)}>{children}</div>
+      <div className={cn('flex-1 px-3 py-2', bodyClassName)}>{children}</div>
     </Card>
   )
 }
@@ -180,6 +180,8 @@ export function SectionCard({
 /** Explains where a derived figure came from. Used instead of silent arithmetic. */
 export function FormulaNote({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <p className={cn('mt-2 text-xs leading-snug text-muted-foreground', className)}>{children}</p>
+    <p className={cn('mt-1.5 text-[11px] leading-snug text-muted-foreground', className)}>
+      {children}
+    </p>
   )
 }

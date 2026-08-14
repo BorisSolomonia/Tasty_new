@@ -31,8 +31,8 @@ import {
   useSaveMappingRule,
 } from '@/hooks/use-audit-flows'
 import { useAudit } from './audit-context'
+import { CollapsiblePanel } from './collapsible-panel'
 import { useOperatorGuard } from './operator-picker'
-import { SectionCard } from './metric'
 import { fmtCount, fmtDate, fmtGel, fmtText } from './format'
 
 export function RulesPanel() {
@@ -41,9 +41,15 @@ export function RulesPanel() {
   const active = rules.filter((rule) => rule.active)
   const revoked = rules.filter((rule) => !rule.active)
 
+  const applied = rules.reduce((sum, rule) => sum + (rule.appliedCount ?? 0), 0)
+  const appliedAmount = rules.reduce((sum, rule) => sum + (rule.appliedAmount ?? 0), 0)
+
   return (
-    <SectionCard
+    <CollapsiblePanel
       title="Saved mapping rules"
+      summary={`${fmtCount(active.length)} active · ${fmtCount(
+        revoked.length
+      )} revoked · ${fmtCount(applied)} mappings, ${fmtGel(appliedAmount)}`}
       subtitle="Classifications that apply beyond the transaction they were created on. Each one names what it matches, what it asserts and how much it has done."
     >
       {rulesQuery.isLoading ? (
@@ -78,14 +84,18 @@ export function RulesPanel() {
           ) : null}
         </div>
       )}
-    </SectionCard>
+    </CollapsiblePanel>
   )
 }
 
 function RuleCard({ rule }: { rule: AuditMappingRule }) {
-  const { operator, categories } = useAudit()
+  const { operator, categories, filters } = useAudit()
   const { ready, message } = useOperatorGuard()
-  const saveRule = useSaveMappingRule(operator)
+  // Saving re-applies the rule, and it re-applies over the period on screen.
+  const saveRule = useSaveMappingRule(operator, {
+    startDate: filters.startDate,
+    endDate: filters.endDate,
+  })
   const revokeRule = useRevokeMappingRule(operator)
 
   const [editing, setEditing] = React.useState(false)
@@ -213,6 +223,10 @@ function RuleCard({ rule }: { rule: AuditMappingRule }) {
               <X className="h-3.5 w-3.5" />
             </Button>
           </div>
+          <p className="text-[11px] text-muted-foreground sm:col-span-3">
+            Saving re-applies the rule across the period selected at the top of the page. Rows a
+            person classified by hand are never overwritten.
+          </p>
         </div>
       ) : null}
 
