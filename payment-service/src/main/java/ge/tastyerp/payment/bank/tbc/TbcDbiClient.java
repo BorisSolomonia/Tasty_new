@@ -1,6 +1,7 @@
 package ge.tastyerp.payment.bank.tbc;
 
 import ge.tastyerp.payment.bank.BankApiProperties;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -80,6 +81,14 @@ public class TbcDbiClient {
         HttpClient create(BankApiProperties.Tbc config) throws Exception;
     }
 
+    /**
+     * The Spring constructor. {@code @Autowired} is REQUIRED here: with two
+     * constructors and no annotation, Spring falls back to a no-arg constructor
+     * that does not exist and the whole payment-service fails to start
+     * ("No default constructor found") — which is exactly what took production
+     * down on 2026-08-15. {@code SpringConstructorConventionTest} guards this.
+     */
+    @Autowired
     public TbcDbiClient(BankApiProperties properties) {
         this(properties, null);
     }
@@ -184,7 +193,7 @@ public class TbcDbiClient {
 
     /** Everything that changes the TLS identity or the connect timeout — never the password/OTP. */
     private static String clientKey(BankApiProperties.Tbc config) {
-        return String.join(" ",
+        return String.join("|",
                 String.valueOf(config.getCertificatePath()),
                 String.valueOf(config.getCertificateBase64() == null ? 0 : config.getCertificateBase64().hashCode()),
                 String.valueOf(config.getCertificatePassword() == null ? 0 : config.getCertificatePassword().hashCode()),
