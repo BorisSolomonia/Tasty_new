@@ -63,7 +63,7 @@ public class DebtService {
         if (local == null) {
             synchronized (this) {
                 if (cache == null) {
-                    cache = new SimpleTtlCache<>(cacheTtlMs, 2);
+                    cache = SimpleTtlCache.named("debt.overview", cacheTtlMs, 2);
                 }
                 local = cache;
             }
@@ -213,6 +213,38 @@ public class DebtService {
 
     // ==================== INPUT FETCHERS ====================
 
+    /**
+     * Null-tolerant numeric coercion for a JSON-derived map value.
+     *
+     * <p>{@code getOrDefault("amount", "0")} only defaults when the key is
+     * <em>absent</em>; Jackson deserialises {@code {"amount": null}} into a
+     * present key with a null value, so the previous code produced
+     * {@code new BigDecimal("null")} and one waybill with a null amount 500'd the
+     * whole debt overview (BOR-81 finding B-10). Unparseable values are logged
+     * and treated as zero rather than failing the aggregate.</p>
+     */
+    static BigDecimal jsonDecimal(Object value) {
+        if (value == null) {
+            return BigDecimal.ZERO;
+        }
+        if (value instanceof BigDecimal bd) {
+            return bd;
+        }
+        if (value instanceof Number n) {
+            return new BigDecimal(n.toString());
+        }
+        String text = String.valueOf(value).trim();
+        if (text.isEmpty() || "null".equalsIgnoreCase(text)) {
+            return BigDecimal.ZERO;
+        }
+        try {
+            return new BigDecimal(text);
+        } catch (NumberFormatException e) {
+            log.warn("Non-numeric amount '{}' in upstream payload treated as 0", text);
+            return BigDecimal.ZERO;
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private List<DebtInput> fetchInitialDebts() {
         try {
@@ -223,7 +255,7 @@ public class DebtService {
                 for (Map<String, Object> d : (List<Map<String, Object>>) response.get("data")) {
                     Object id = d.get("customerId");
                     if (id == null) continue;
-                    BigDecimal amount = new BigDecimal(String.valueOf(d.getOrDefault("debt", "0")));
+                    BigDecimal amount = jsonDecimal(d.get("debt"));
                     out.add(new DebtInput(String.valueOf(id), (String) d.get("name"), amount, Kind.INITIAL));
                 }
             }
@@ -244,7 +276,7 @@ public class DebtService {
                 for (Map<String, Object> wb : (List<Map<String, Object>>) response.get("data")) {
                     Object id = wb.get("customerId");
                     if (id == null) continue;
-                    BigDecimal amount = new BigDecimal(String.valueOf(wb.getOrDefault("amount", "0")));
+                    BigDecimal amount = jsonDecimal(wb.get("amount"));
                     out.add(new DebtInput(String.valueOf(id), (String) wb.get("customerName"), amount, Kind.SALE));
                 }
             }

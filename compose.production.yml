@@ -100,7 +100,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          # 512M, was 256M (BOR-90). Measured idle RSS is ~244 MB with only
+          # 64 MB of heap committed; a full 192 MB heap under the old 75%
+          # setting put RSS ~370 MB inside a 256 MB cgroup = OOM-kill.
+          memory: 512M
           cpus: "0.25"
     volumes:
       - ./secrets/firebase-sa.json:/secrets/firebase-sa.json:ro

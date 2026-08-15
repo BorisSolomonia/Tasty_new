@@ -55,10 +55,38 @@ public class TbcDbiClient {
     private static final int MAX_PAGES_PER_REQUEST = 1000;
 
     private final BankApiProperties properties;
+    private final ClientFactory clientFactory;
     private volatile String runtimePassword;
 
+    /**
+     * One {@link HttpClient} per certificate configuration, built lazily and reused
+     * across pages and hourly syncs.
+     *
+     * <p>Before BOR-90 (finding M-6) {@code postSoap} built a new client — and
+     * re-read and re-parsed the PKCS12 keystore and built a new {@link SSLContext}
+     * — on <em>every</em> SOAP page. Java 17's {@code HttpClient} has no
+     * {@code close()}: each instance owns a selector thread and a cached thread
+     * pool that live until the GC happens to collect the facade, so a multi-page
+     * backfill was a burst of leaked threads and native memory, and every TLS
+     * handshake was a cold one. {@code RsGeSoapClient} already held a single
+     * long-lived client; this makes the two SOAP clients consistent.</p>
+     */
+    private volatile HttpClient cachedClient;
+    private volatile String cachedClientKey;
+
+    /** Seam for tests: how an {@link HttpClient} is built for a given TBC config. */
+    @FunctionalInterface
+    interface ClientFactory {
+        HttpClient create(BankApiProperties.Tbc config) throws Exception;
+    }
+
     public TbcDbiClient(BankApiProperties properties) {
+        this(properties, null);
+    }
+
+    TbcDbiClient(BankApiProperties properties, ClientFactory clientFactory) {
         this.properties = properties;
+        this.clientFactory = clientFactory != null ? clientFactory : this::buildHttpClient;
     }
 
     public List<BankTransaction> getAccountMovements(LocalDate dateFrom, LocalDate dateTo) {
@@ -106,10 +134,7 @@ public class TbcDbiClient {
 
     private String postSoap(BankApiProperties.Tbc config, String envelope, String soapAction) {
         try {
-            HttpClient client = HttpClient.newBuilder()
-                .sslContext(buildSslContext(config))
-                .connectTimeout(Duration.ofSeconds(config.getTimeoutSeconds()))
-                .build();
+            HttpClient client = httpClient(config);
             HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(config.getEndpoint()))
                 .timeout(Duration.ofSeconds(config.getTimeoutSeconds()))
@@ -139,6 +164,38 @@ public class TbcDbiClient {
         } catch (Exception exception) {
             throw new TbcDbiException("TBC_DBI_REQUEST_FAILED", "Failed to call TBC DBI: " + exception.getMessage(), exception);
         }
+    }
+
+    /** The reusable client for this configuration; rebuilt only when the certificate config changes. */
+    HttpClient httpClient(BankApiProperties.Tbc config) throws Exception {
+        String key = clientKey(config);
+        HttpClient local = cachedClient;
+        if (local != null && key.equals(cachedClientKey)) {
+            return local;
+        }
+        synchronized (this) {
+            if (cachedClient == null || !key.equals(cachedClientKey)) {
+                cachedClient = clientFactory.create(config);
+                cachedClientKey = key;
+            }
+            return cachedClient;
+        }
+    }
+
+    /** Everything that changes the TLS identity or the connect timeout — never the password/OTP. */
+    private static String clientKey(BankApiProperties.Tbc config) {
+        return String.join(" ",
+                String.valueOf(config.getCertificatePath()),
+                String.valueOf(config.getCertificateBase64() == null ? 0 : config.getCertificateBase64().hashCode()),
+                String.valueOf(config.getCertificatePassword() == null ? 0 : config.getCertificatePassword().hashCode()),
+                String.valueOf(config.getTimeoutSeconds()));
+    }
+
+    private HttpClient buildHttpClient(BankApiProperties.Tbc config) throws Exception {
+        return HttpClient.newBuilder()
+            .sslContext(buildSslContext(config))
+            .connectTimeout(Duration.ofSeconds(config.getTimeoutSeconds()))
+            .build();
     }
 
     private SSLContext buildSslContext(BankApiProperties.Tbc config) throws Exception {

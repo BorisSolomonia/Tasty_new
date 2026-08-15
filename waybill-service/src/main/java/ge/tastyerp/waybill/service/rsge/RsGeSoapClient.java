@@ -118,7 +118,7 @@ public class RsGeSoapClient {
         try {
             return callSoapWithRetry("get_waybills", params);
         } catch (Exception e) {
-            log.error("Failed to fetch waybills: {}", e.getMessage());
+            log.error("Failed to fetch waybills {}..{}: {}", startDate, endDate, e.getMessage(), e);
             throw new ExternalServiceException("RS.ge", e.getMessage(), e);
         }
     }
@@ -140,56 +140,102 @@ public class RsGeSoapClient {
         try {
             return callSoapWithRetry("get_buyer_waybills", params);
         } catch (Exception e) {
-            log.error("Failed to fetch buyer waybills: {}", e.getMessage());
+            log.error("Failed to fetch buyer waybills {}..{}: {}", startDate, endDate, e.getMessage(), e);
             throw new ExternalServiceException("RS.ge", e.getMessage(), e);
         }
     }
     /**
+     * How many get_waybill calls are in flight or holding a completed-but-undrained
+     * result at once. Bounds heap: before this every id in the request was
+     * submitted at once and every finished result stayed referenced in the futures
+     * list until the whole batch drained (BOR-90 finding M-4).
+     */
+    static final int GOODS_FETCH_WINDOW = 200;
+
+    /**
      * Fetch goods data for multiple waybill IDs in parallel using the get_waybill endpoint.
      *
-     * Returns a map of waybillId → raw WAYBILL map (already navigated past the result wrapper).
-     * Missing or failed waybills are omitted from the result.
+     * <p>Returns a map of waybillId → raw WAYBILL map (already navigated past the
+     * result wrapper). The map distinguishes two things the caller must not confuse:</p>
+     * <ul>
+     *   <li><b>fetched but empty</b> — RS.ge answered and the document has no
+     *       {@code WAYBILL} body: present in the map with an <em>empty</em> value,
+     *       so the caller can persist "nothing here" and never ask again;</li>
+     *   <li><b>failed</b> — the call threw: <em>absent</em> from the map, so the
+     *       caller retries next time.</li>
+     * </ul>
+     * <p>Before this, empty results were dropped here, which silently disabled the
+     * caller's "store even when empty" branch and made every goods-less waybill a
+     * permanent RS.ge round trip on every request (BOR-81 finding B-12).</p>
      */
-    @SuppressWarnings("unchecked")
     public Map<String, Map<String, Object>> getWaybillGoodsMap(List<String> waybillIds) {
         if (waybillIds == null || waybillIds.isEmpty()) {
             return Map.of();
         }
 
         List<String> distinctIds = waybillIds.stream().distinct().collect(Collectors.toList());
-        log.info("Fetching goods for {} waybills via get_waybill (parallel, pool=10)", distinctIds.size());
-
-        List<CompletableFuture<Map.Entry<String, Map<String, Object>>>> futures = distinctIds.stream()
-                .map(id -> CompletableFuture.supplyAsync(() -> {
-                    Map<String, Object> waybillMap = fetchSingleWaybillMap(id);
-                    return waybillMap != null
-                            ? Map.entry(id, waybillMap)
-                            : Map.<String, Map<String, Object>>entry(id, Map.of());
-                }, goodsFetchExecutor))
-                .collect(Collectors.toList());
+        log.info("Fetching goods for {} waybills via get_waybill (parallel, pool=10, window={})",
+                distinctIds.size(), GOODS_FETCH_WINDOW);
 
         Map<String, Map<String, Object>> result = new HashMap<>();
-        for (CompletableFuture<Map.Entry<String, Map<String, Object>>> future : futures) {
-            try {
-                Map.Entry<String, Map<String, Object>> entry = future.join();
-                if (!entry.getValue().isEmpty()) {
-                    result.put(entry.getKey(), entry.getValue());
-                }
-            } catch (Exception e) {
-                log.warn("Goods fetch future failed: {}", e.getMessage());
+        int failed = 0;
+        int empty = 0;
+        for (int from = 0; from < distinctIds.size(); from += GOODS_FETCH_WINDOW) {
+            List<String> window = distinctIds.subList(from, Math.min(from + GOODS_FETCH_WINDOW, distinctIds.size()));
+            List<CompletableFuture<GoodsFetch>> futures = new ArrayList<>(window.size());
+            for (String id : window) {
+                futures.add(CompletableFuture.supplyAsync(() -> fetchSingleWaybillMap(id), goodsFetchExecutor));
             }
+            for (CompletableFuture<GoodsFetch> future : futures) {
+                GoodsFetch fetch;
+                try {
+                    fetch = future.join();
+                } catch (Exception e) {
+                    // Should not happen — fetchSingleWaybillMap never throws — but a
+                    // rejected task or a bug must be loud, not a WARN without an id.
+                    log.error("Goods fetch task failed unexpectedly", e);
+                    failed++;
+                    continue;
+                }
+                if (fetch.failed()) {
+                    failed++;
+                } else {
+                    if (fetch.waybill().isEmpty()) {
+                        empty++;
+                    }
+                    result.put(fetch.waybillId(), fetch.waybill());
+                }
+            }
+            futures.clear();
         }
 
-        log.info("Goods fetch complete: {}/{} waybills returned data", result.size(), distinctIds.size());
+        if (failed > 0) {
+            // Partial goods = understated inventory = wrong write-off and audit
+            // conclusions. That is an ERROR, not an INFO ratio.
+            log.error("Goods fetch INCOMPLETE: {} of {} waybills failed and will be retried next request "
+                    + "({} fetched with goods, {} fetched empty)",
+                    failed, distinctIds.size(), result.size() - empty, empty);
+        } else {
+            log.info("Goods fetch complete: {}/{} waybills fetched ({} empty)",
+                    result.size(), distinctIds.size(), empty);
+        }
         return result;
+    }
+
+    /** One get_waybill outcome. {@code waybill} is empty for "fetched, no body"; null when failed. */
+    record GoodsFetch(String waybillId, Map<String, Object> waybill) {
+        boolean failed() {
+            return waybill == null;
+        }
     }
 
     /**
      * Fetch the WAYBILL map for a single waybill ID using get_waybill SOAP operation.
-     * Returns the inner WAYBILL map (navigated past result wrapper), or null on failure.
+     * Never throws: returns a {@link GoodsFetch} whose {@code waybill} is the inner
+     * WAYBILL map, an empty map when RS.ge answered without one, or null on failure.
      */
     @SuppressWarnings("unchecked")
-    private Map<String, Object> fetchSingleWaybillMap(String waybillId) {
+    private GoodsFetch fetchSingleWaybillMap(String waybillId) {
         try {
             Map<String, String> params = new HashMap<>();
             params.put("su", username);
@@ -208,14 +254,15 @@ public class RsGeSoapClient {
             // Extract the WAYBILL submap which contains GOODS_LIST
             Object waybillObj = result.get("WAYBILL");
             if (waybillObj instanceof Map) {
-                return (Map<String, Object>) waybillObj;
+                return new GoodsFetch(waybillId, (Map<String, Object>) waybillObj);
             }
 
-            log.debug("get_waybill response for id={} has no WAYBILL key; keys={}", waybillId, result.keySet());
-            return null;
+            log.warn("get_waybill response for id={} has no WAYBILL key; keys={} — recorded as empty",
+                    waybillId, result.keySet());
+            return new GoodsFetch(waybillId, Map.of());
         } catch (Exception e) {
-            log.warn("Failed to fetch goods for waybill id={}: {}", waybillId, e.getMessage());
-            return null;
+            log.warn("Failed to fetch goods for waybill id={}: {}", waybillId, e.getMessage(), e);
+            return new GoodsFetch(waybillId, null);
         }
     }
 
@@ -336,7 +383,7 @@ public class RsGeSoapClient {
                     try {
                         return fetchChunk(operation, originalParams, s, e);
                     } catch (Exception ex2) {
-                        log.error("Chunk {} to {} failed after retry: {}", s, e, ex2.getMessage());
+                        log.error("Chunk {} to {} failed after retry: {}", s, e, ex2.getMessage(), ex2);
                         throw new RuntimeException("Chunk failed: " + s + " to " + e, ex2);
                     }
                 }

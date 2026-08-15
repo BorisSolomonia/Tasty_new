@@ -22,6 +22,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 /**
@@ -63,14 +65,33 @@ public class InventoryMovementService {
     @Value("${audit.movements-cache-ttl-ms:180000}")
     private long cacheTtlMs;
 
+    /** Distinct date ranges kept at once; see the note at the construction site. */
+    static final int MAX_CACHED_RANGES = 4;
+
     private volatile SimpleTtlCache<String, List<ProductMovementDto>> cache;
+
+    /**
+     * The SALE/PURCHASE list fetches run on their own two threads, not
+     * {@code ForkJoinPool.commonPool()}. On the production container
+     * ({@code cpus: "0.5"}) the JVM sees one CPU, so the common pool has
+     * parallelism 0 and {@code supplyAsync} without an executor ran both
+     * multi-minute RS.ge calls serially on the caller thread — the "parallel"
+     * fetch was never parallel in production (BOR-82 finding M-10).
+     */
+    private final ExecutorService listFetchExecutor = Executors.newFixedThreadPool(2, r -> {
+        Thread t = new Thread(r, "movement-lists");
+        t.setDaemon(true);
+        return t;
+    });
 
     private SimpleTtlCache<String, List<ProductMovementDto>> cache() {
         SimpleTtlCache<String, List<ProductMovementDto>> local = cache;
         if (local == null) {
             synchronized (this) {
                 if (cache == null) {
-                    cache = new SimpleTtlCache<>(cacheTtlMs, 16);
+                    // 4, not 16: each value is a full multi-year document feed and
+                    // the working set is one range (BOR-90 finding M-3).
+                    cache = SimpleTtlCache.named("waybill.movements", cacheTtlMs, MAX_CACHED_RANGES);
                 }
                 local = cache;
             }
@@ -89,9 +110,11 @@ public class InventoryMovementService {
 
         // SALE and PURCHASE lists are independent RS.ge calls — fetch in parallel.
         CompletableFuture<List<WaybillDto>> salesF = CompletableFuture.supplyAsync(
-                () -> waybillService.getWaybills(null, startDate, endDate, false, WaybillType.SALE));
+                () -> waybillService.getWaybills(null, startDate, endDate, false, WaybillType.SALE),
+                listFetchExecutor);
         CompletableFuture<List<WaybillDto>> purchasesF = CompletableFuture.supplyAsync(
-                () -> waybillService.getWaybills(null, startDate, endDate, false, WaybillType.PURCHASE));
+                () -> waybillService.getWaybills(null, startDate, endDate, false, WaybillType.PURCHASE),
+                listFetchExecutor);
         List<WaybillDto> sales = salesF.join();
         List<WaybillDto> purchases = purchasesF.join();
         long tLists = System.currentTimeMillis();
@@ -139,7 +162,9 @@ public class InventoryMovementService {
                     returnWaybillIds.add(entry.getKey());
                 }
                 // Stored even when empty, so a waybill with no goods is not
-                // re-fetched on every future request.
+                // re-fetched on every future request. (RsGeSoapClient now returns
+                // fetched-but-empty waybills as empty entries and omits only the
+                // ones that failed, so this branch is reachable — BOR-81 B-12.)
                 toStore.put(entry.getKey(), new WaybillGoodsRepository.StoredGoods(goods, isReturn));
             }
             waybillGoodsRepository.saveAll(toStore);

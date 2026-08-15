@@ -36,7 +36,18 @@ WORKDIR /app
 
 COPY --from=build /workspace/config-service/target/*.jar app.jar
 
-ENV JAVA_OPTS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -Djava.security.egd=file:/dev/./urandom"
+# JVM sizing (BOR-90). Measured on this service, idle after warm-up: ~200 MB of
+# non-heap (Metaspace, GC tables, code cache, CDS, symbols, threads) is committed
+# BEFORE any heap is used, and JIT arenas peak higher during start-up. With
+# MaxRAMPercentage=75 the heap alone could reach 75% of the cgroup limit, so a
+# full heap meant RSS > limit and a silent `exit 137` OOM-kill (no log, no dump).
+#  - MaxRAMPercentage lowered so heap + measured non-heap fits the limit;
+#  - explicit Metaspace/direct-memory caps so a leak there is a logged
+#    java.lang.OutOfMemoryError, not a cgroup kill;
+#  - ExitOnOutOfMemoryError so `restart: unless-stopped` restarts a JVM that
+#    has genuinely run out instead of leaving a half-dead one serving 500s.
+# Override JAVA_OPTS via the compose `environment:` block if the limit changes.
+ENV JAVA_OPTS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=40.0 -XX:MaxMetaspaceSize=128m -XX:MaxDirectMemorySize=64m -XX:+ExitOnOutOfMemoryError -Djava.security.egd=file:/dev/./urandom"
 
 EXPOSE 8888
 
