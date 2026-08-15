@@ -42,7 +42,14 @@ public class DebtService {
 
     private final PaymentRepository paymentRepository;
     private final ManualCashPaymentRepository manualCashPaymentRepository;
-    private final RestTemplate restTemplate;
+    /**
+     * Field name matches the bean name "internalRestTemplate" (300 s read
+     * timeout). The debt overview's sales fetch is a full RS.ge sweep since the
+     * cutoff (~15 s cold in production, longer on a slow RS.ge day); the default
+     * 30 s template turned a slow day into a 502 for the whole payments page
+     * (BOR-82 pass 2).
+     */
+    private final RestTemplate internalRestTemplate;
 
     @Value("${business.cutoff-date:2025-04-29}")
     private String cutoffDateString;
@@ -249,7 +256,7 @@ public class DebtService {
     private List<DebtInput> fetchInitialDebts() {
         try {
             String url = configServiceUrl + "/api/config/debts";
-            Map<String, Object> response = restTemplate.getForObject(url, Map.class);
+            Map<String, Object> response = internalRestTemplate.getForObject(url, Map.class);
             List<DebtInput> out = new ArrayList<>();
             if (response != null && response.get("data") instanceof List) {
                 for (Map<String, Object> d : (List<Map<String, Object>>) response.get("data")) {
@@ -270,7 +277,7 @@ public class DebtService {
         try {
             // Same source the legacy payments-page used: after-cutoff SALE waybills.
             String url = waybillServiceUrl + "/api/waybills?afterCutoffOnly=true&type=SALE";
-            Map<String, Object> response = restTemplate.getForObject(url, Map.class);
+            Map<String, Object> response = internalRestTemplate.getForObject(url, Map.class);
             List<DebtInput> out = new ArrayList<>();
             if (response != null && response.get("data") instanceof List) {
                 for (Map<String, Object> wb : (List<Map<String, Object>>) response.get("data")) {
@@ -290,7 +297,7 @@ public class DebtService {
     private Set<String> fetchExcluded() {
         try {
             String url = configServiceUrl + "/api/config/excluded-customers";
-            Map<String, Object> response = restTemplate.getForObject(url, Map.class);
+            Map<String, Object> response = internalRestTemplate.getForObject(url, Map.class);
             Set<String> out = new HashSet<>();
             if (response != null && response.get("data") instanceof List) {
                 for (Object id : (List<Object>) response.get("data")) {

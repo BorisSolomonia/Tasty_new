@@ -49,6 +49,8 @@ public class WaybillService {
      * Waybills are always fetched fresh from RS.ge SOAP API.
      */
     public WaybillFetchResponse fetchWaybillsFromRsGe(WaybillFetchRequest request) {
+        // An explicit "fetch from RS.ge" is the operator asking for fresh data.
+        rsGeSoapClient.invalidateChunkCache();
         log.info("Fetching waybills from RS.ge: {} to {}",
                 request.getStartDate(), request.getEndDate());
 
@@ -95,6 +97,8 @@ public class WaybillService {
      * Purchase waybills are fetched fresh for VAT calculation only.
      */
     public WaybillFetchResponse fetchPurchaseWaybillsFromRsGe(WaybillFetchRequest request) {
+        // An explicit "fetch from RS.ge" is the operator asking for fresh data.
+        rsGeSoapClient.invalidateChunkCache();
         log.info("Fetching PURCHASE waybills from RS.ge: {} to {}",
                 request.getStartDate(), request.getEndDate());
 

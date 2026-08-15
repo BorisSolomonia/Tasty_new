@@ -48,6 +48,7 @@ public class TbcSyncService {
     private final BankTransactionRepository bankTransactionRepository;
     private final PaymentRepository paymentRepository;
     private final DebtService debtService;
+    private final ge.tastyerp.payment.service.PaymentStatusService paymentStatusService;
 
     @Value("${business.payment-cutoff-date:2025-04-29}")
     private String paymentCutoffDate;
@@ -132,6 +133,7 @@ public class TbcSyncService {
             if (!newPayments.isEmpty()) {
                 paymentRepository.saveAll(newPayments);
                 debtService.invalidate(); // debt is computed on demand — drop the cached snapshot
+                paymentStatusService.invalidate();
             }
 
             SyncResult result = new SyncResult(

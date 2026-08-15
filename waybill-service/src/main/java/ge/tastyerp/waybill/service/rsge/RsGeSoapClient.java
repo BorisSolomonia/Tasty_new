@@ -1,6 +1,7 @@
 package ge.tastyerp.waybill.service.rsge;
 
 import ge.tastyerp.common.exception.ExternalServiceException;
+import ge.tastyerp.common.util.SimpleTtlCache;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -92,6 +93,41 @@ public class RsGeSoapClient {
                 t.setDaemon(true);
                 return t;
             });
+
+    /**
+     * Per-chunk result cache (BOR-82 pass 2). Every list request — the debt page's
+     * "all sales since the cutoff", the audit page's period, the VAT summary —
+     * re-swept RS.ge in 3-day chunks: ~157 SOAP calls and ~15 s for the debt page
+     * on every 60 s cache miss. Chunks are cut on a fixed 3-day grid (see
+     * {@link #chunkIndex}) so different queries share them, and cached per
+     * (operation, chunk):
+     * <ul>
+     *   <li>closed chunks (ended before yesterday) — historic waybills are
+     *       immutable in practice — for {@link #CLOSED_CHUNK_TTL_MS};</li>
+     *   <li>the chunk touching today/yesterday for {@link #OPEN_CHUNK_TTL_MS},
+     *       so new documents appear within two minutes.</li>
+     * </ul>
+     * A manual "Fetch from RS.ge" ({@link #invalidateChunkCache()}) drops both.
+     * Sizes appear in the memory diagnostics line as {@code rsge.chunks.*}.
+     */
+    static final long CLOSED_CHUNK_TTL_MS = 6L * 60 * 60 * 1000;
+    static final long OPEN_CHUNK_TTL_MS = 2L * 60 * 1000;
+    private final SimpleTtlCache<String, List<Map<String, Object>>> closedChunks =
+            SimpleTtlCache.named("rsge.chunks.closed", CLOSED_CHUNK_TTL_MS, 400);
+    private final SimpleTtlCache<String, List<Map<String, Object>>> openChunks =
+            SimpleTtlCache.named("rsge.chunks.open", OPEN_CHUNK_TTL_MS, 32);
+
+    /** Drop every cached chunk (used by the explicit fetch-from-RS.ge actions). */
+    public void invalidateChunkCache() {
+        closedChunks.invalidateAll();
+        openChunks.invalidateAll();
+        log.info("RS.ge chunk cache cleared");
+    }
+
+    /** Fixed 3-day grid: chunk i covers epoch days [3i, 3i+2]. */
+    static long chunkIndex(LocalDate day) {
+        return Math.floorDiv(day.toEpochDay(), CHUNK_DAYS);
+    }
 
     /** Thread pool for parallel per-waybill goods fetching (product-sales endpoint). */
     private final ExecutorService goodsFetchExecutor = Executors.newFixedThreadPool(10,
@@ -354,49 +390,75 @@ public class RsGeSoapClient {
         }
 
         LocalDate endInclusive = endExclusive.minusDays(1);
+        LocalDate today = LocalDate.now();
 
         List<CompletableFuture<List<Map<String, Object>>>> futures = new ArrayList<>();
 
-        LocalDate chunkStart = startInclusive;
-        while (!chunkStart.isAfter(endInclusive)) {
-            LocalDate chunkEndInclusive = chunkStart.plusDays(CHUNK_DAYS - 1L);
-            if (chunkEndInclusive.isAfter(endInclusive)) {
-                chunkEndInclusive = endInclusive;
-            }
-
-            final LocalDate s = chunkStart;
-            final LocalDate e = chunkEndInclusive;
+        // Walk the fixed grid so [start, end] of ANY query maps onto the same
+        // chunks; the first/last chunk may extend past the query and is filtered
+        // by CREATE_DATE below.
+        for (long idx = chunkIndex(startInclusive); idx <= chunkIndex(endInclusive); idx++) {
+            final LocalDate s = LocalDate.ofEpochDay(idx * CHUNK_DAYS);
+            final LocalDate e = s.plusDays(CHUNK_DAYS - 1L);
+            final String key = operation + "|" + s + "|" + e;
+            final SimpleTtlCache<String, List<Map<String, Object>>> cache =
+                    e.isBefore(today.minusDays(1)) ? closedChunks : openChunks;
 
             // Use chunkExecutor (bounded 8 threads) to cap RS.ge connection concurrency
-            futures.add(CompletableFuture.supplyAsync(() -> {
-                try {
-                    return fetchChunk(operation, originalParams, s, e);
-                } catch (Exception ex) {
-                    // Retry once after a brief pause (connect timeout or transient RS.ge error)
-                    log.warn("Chunk {} to {} failed ({}), retrying in 3s...", s, e, ex.getMessage());
-                    try {
-                        Thread.sleep(3000);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        throw new RuntimeException(ie);
-                    }
-                    try {
-                        return fetchChunk(operation, originalParams, s, e);
-                    } catch (Exception ex2) {
-                        log.error("Chunk {} to {} failed after retry: {}", s, e, ex2.getMessage(), ex2);
-                        throw new RuntimeException("Chunk failed: " + s + " to " + e, ex2);
-                    }
-                }
-            }, chunkExecutor));
-
-            chunkStart = chunkEndInclusive.plusDays(1);
+            futures.add(CompletableFuture.supplyAsync(
+                    () -> cache.getOrCompute(key, () -> fetchChunkWithRetry(operation, originalParams, s, e)),
+                    chunkExecutor));
         }
 
-        // Wait for all and collect results
-        return futures.stream()
-                .map(CompletableFuture::join)
-                .flatMap(List::stream)
-                .collect(Collectors.toList());
+        // Wait for all and collect results, trimmed to the requested window.
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (CompletableFuture<List<Map<String, Object>>> future : futures) {
+            for (Map<String, Object> row : future.join()) {
+                LocalDate d = rawCreateDate(row);
+                if (d == null || (!d.isBefore(startInclusive) && !d.isAfter(endInclusive))) {
+                    out.add(row);
+                }
+            }
+        }
+        return out;
+    }
+
+    /** One chunk with the single retry the previous inline lambda had; the result is immutable for the cache. */
+    private List<Map<String, Object>> fetchChunkWithRetry(String operation, Map<String, String> originalParams,
+                                                          LocalDate s, LocalDate e) {
+        try {
+            return List.copyOf(fetchChunk(operation, originalParams, s, e));
+        } catch (Exception ex) {
+            // Retry once after a brief pause (connect timeout or transient RS.ge error)
+            log.warn("Chunk {} to {} failed ({}), retrying in 3s...", s, e, ex.getMessage());
+            try {
+                Thread.sleep(3000);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(ie);
+            }
+            try {
+                return List.copyOf(fetchChunk(operation, originalParams, s, e));
+            } catch (Exception ex2) {
+                log.error("Chunk {} to {} failed after retry: {}", s, e, ex2.getMessage(), ex2);
+                throw new RuntimeException("Chunk failed: " + s + " to " + e, ex2);
+            }
+        }
+    }
+
+    /** CREATE_DATE of a raw waybill map as a LocalDate, or null when absent/unparseable. */
+    static LocalDate rawCreateDate(Map<String, Object> row) {
+        for (String k : new String[]{"CREATE_DATE", "create_date", "CreateDate", "CREATEDATE"}) {
+            Object v = row.get(k);
+            if (v instanceof String str && str.length() >= 10) {
+                try {
+                    return LocalDate.parse(str.substring(0, 10));
+                } catch (Exception ignored) {
+                    return null;
+                }
+            }
+        }
+        return null;
     }
 
     /**

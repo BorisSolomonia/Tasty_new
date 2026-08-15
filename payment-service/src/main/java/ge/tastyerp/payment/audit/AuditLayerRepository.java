@@ -18,6 +18,7 @@ import ge.tastyerp.common.dto.auditlayer.CounterpartyAliasDto;
 import ge.tastyerp.common.dto.auditlayer.RealInventoryOverrideDto;
 import ge.tastyerp.common.dto.auditlayer.RealSupplierDebtDto;
 import ge.tastyerp.common.util.FutureResults;
+import ge.tastyerp.common.util.SimpleTtlCache;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Repository;
@@ -68,6 +69,39 @@ public class AuditLayerRepository {
 
     private final Firestore firestore;
 
+    /**
+     * Read-through caches for the collections every audit request reads in full
+     * (BOR-82 pass 2, finding F-2). {@code /audit} fires {@code /flows} and
+     * {@code /source-rows} concurrently and each rebuilt the whole mapping index
+     * from Firestore; drill-downs, rule previews and rule application rebuilt it
+     * again — 2 to 4 full reads of {@code audit_mappings} per page load.
+     *
+     * <p>These ARE user-editable collections, which {@link SimpleTtlCache}'s
+     * contract normally forbids caching. It is safe here because this repository
+     * is the <b>only</b> writer, every write path below calls
+     * {@link #invalidateReadCaches()}, and the fleet is single-instance — so a
+     * save is visible to the very next read. The 30 s TTL is a belt for the
+     * braces. Returned lists are copies; callers must not rely on mutating them.</p>
+     */
+    private static final long READ_CACHE_TTL_MS = 30_000;
+    private static final String ALL = "all";
+    private final SimpleTtlCache<String, List<AuditMappingDto>> mappingsCache =
+            SimpleTtlCache.named("audit.mappings", READ_CACHE_TTL_MS, 1);
+    private final SimpleTtlCache<String, List<AuditCategoryDto>> categoriesCache =
+            SimpleTtlCache.named("audit.categories", READ_CACHE_TTL_MS, 1);
+    private final SimpleTtlCache<String, List<CounterpartyAliasDto>> aliasesCache =
+            SimpleTtlCache.named("audit.aliases", READ_CACHE_TTL_MS, 1);
+    private final SimpleTtlCache<String, List<AuditMappingRuleDto>> rulesCache =
+            SimpleTtlCache.named("audit.rules", READ_CACHE_TTL_MS, 1);
+
+    /** Every write path calls this; see the field javadoc for why that makes caching safe. */
+    void invalidateReadCaches() {
+        mappingsCache.invalidateAll();
+        categoriesCache.invalidateAll();
+        aliasesCache.invalidateAll();
+        rulesCache.invalidateAll();
+    }
+
     // ==================== mappings ====================
 
     /**
@@ -80,6 +114,10 @@ public class AuditLayerRepository {
     }
 
     public List<AuditMappingDto> findAllMappings() {
+        return new ArrayList<>(mappingsCache.getOrCompute(ALL, this::readAllMappings));
+    }
+
+    private List<AuditMappingDto> readAllMappings() {
         List<AuditMappingDto> result = new ArrayList<>();
         QuerySnapshot snapshot = FutureResults.await(
                 firestore.collection(COLLECTION_MAPPINGS).get(), "load audit mappings");
@@ -116,6 +154,7 @@ public class AuditLayerRepository {
     public void saveMapping(AuditMappingDto mapping) {
         String id = mappingId(mapping.getSourceType(), mapping.getSourceRowId());
         write(COLLECTION_MAPPINGS, id, mappingToMap(mapping));
+        invalidateReadCaches();
     }
 
     private Map<String, Object> mappingToMap(AuditMappingDto mapping) {
@@ -151,6 +190,7 @@ public class AuditLayerRepository {
         int written = writeBatched(COLLECTION_MAPPINGS, mappings,
                 m -> mappingId(m.getSourceType(), m.getSourceRowId()), this::mappingToMap);
         writeBatched(COLLECTION_CHANGE_LOG, logEntries, e -> null, this::changeLogToMap);
+        invalidateReadCaches();
         return written;
     }
 
@@ -181,6 +221,10 @@ public class AuditLayerRepository {
 
     /** User-created categories only. Built-ins live in {@link AuditCategories}. */
     public List<AuditCategoryDto> findCustomCategories() {
+        return new ArrayList<>(categoriesCache.getOrCompute(ALL, this::readCustomCategories));
+    }
+
+    private List<AuditCategoryDto> readCustomCategories() {
         List<AuditCategoryDto> result = new ArrayList<>();
         QuerySnapshot snapshot = FutureResults.await(
                 firestore.collection(COLLECTION_CATEGORIES).get(), "load audit categories");
@@ -212,15 +256,21 @@ public class AuditLayerRepository {
         data.put("paperOnly", category.isPaperOnly());
         data.put("unresolved", category.isUnresolved());
         write(COLLECTION_CATEGORIES, category.getCode(), data);
+        invalidateReadCaches();
     }
 
     public void deleteCategory(String code) {
         delete(COLLECTION_CATEGORIES, code);
+        invalidateReadCaches();
     }
 
     // ==================== mapping rules ====================
 
     public List<AuditMappingRuleDto> findMappingRules() {
+        return new ArrayList<>(rulesCache.getOrCompute(ALL, this::readMappingRules));
+    }
+
+    private List<AuditMappingRuleDto> readMappingRules() {
         List<AuditMappingRuleDto> result = new ArrayList<>();
         QuerySnapshot snapshot = FutureResults.await(
                 firestore.collection(COLLECTION_MAPPING_RULES).get(), "load mapping rules");
@@ -271,11 +321,16 @@ public class AuditLayerRepository {
         data.put("updatedBy", rule.getUpdatedBy());
         data.put("updatedAt", rule.getUpdatedAt() == null ? null : rule.getUpdatedAt().toString());
         write(COLLECTION_MAPPING_RULES, rule.getId(), data);
+        invalidateReadCaches();
     }
 
     // ==================== counterparty aliases ====================
 
     public List<CounterpartyAliasDto> findCounterpartyAliases() {
+        return new ArrayList<>(aliasesCache.getOrCompute(ALL, this::readCounterpartyAliases));
+    }
+
+    private List<CounterpartyAliasDto> readCounterpartyAliases() {
         List<CounterpartyAliasDto> result = new ArrayList<>();
         QuerySnapshot snapshot = FutureResults.await(
                 firestore.collection(COLLECTION_COUNTERPARTY_ALIAS).get(), "load counterparty aliases");
@@ -302,10 +357,12 @@ public class AuditLayerRepository {
         data.put("createdBy", alias.getCreatedBy());
         data.put("createdAt", alias.getCreatedAt() == null ? null : alias.getCreatedAt().toString());
         write(COLLECTION_COUNTERPARTY_ALIAS, alias.getId(), data);
+        invalidateReadCaches();
     }
 
     public void deleteCounterpartyAlias(String id) {
         delete(COLLECTION_COUNTERPARTY_ALIAS, id);
+        invalidateReadCaches();
     }
 
     // ==================== real inventory ====================

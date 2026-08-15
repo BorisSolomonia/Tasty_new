@@ -5,6 +5,7 @@ import ge.tastyerp.common.dto.payment.CustomerDebtDto;
 import ge.tastyerp.common.dto.payment.PaymentDto;
 import ge.tastyerp.common.dto.waybill.WaybillType;
 import ge.tastyerp.common.exception.ExternalServiceException;
+import ge.tastyerp.common.util.SimpleTtlCache;
 import ge.tastyerp.common.util.TinValidator;
 import ge.tastyerp.common.util.UnitClassifier;
 import ge.tastyerp.payment.repository.AuditExceptionRepository;
@@ -472,8 +473,22 @@ public class AuditControlService {
                 .build();
     }
 
-    @SuppressWarnings("unchecked")
+    /**
+     * The customers collection was read in full through config-service on every
+     * dashboard load, to build one boolean per customer (BOR-82 finding F-6).
+     * The real/unreal flag on a customer document changes rarely and the page's
+     * own "Unreal" toggle goes through the unreal-customers overlay (fetched
+     * fresh), so 30 s of reuse changes nothing a user can observe.
+     */
+    private final SimpleTtlCache<String, Map<String, Boolean>> realEntityCache =
+            SimpleTtlCache.named("audit.realEntity", 30_000, 1);
+
     private Map<String, Boolean> fetchRealEntityMap() {
+        return new HashMap<>(realEntityCache.getOrCompute("all", this::readRealEntityMap));
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Boolean> readRealEntityMap() {
         Map<String, Boolean> map = new HashMap<>();
         try {
             String url = configServiceUrl + "/api/config/customers";

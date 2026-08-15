@@ -44,6 +44,7 @@ public class ExcelProcessingService {
     private final PaymentRepository paymentRepository;
     private final PaymentReconciliationService reconciliationService;
     private final DebtService debtService;
+    private final PaymentStatusService paymentStatusService;
     /** BOR-89: mirrors the full statement (both directions) for the audit layer. */
     private final ge.tastyerp.payment.audit.BankStatementMirrorService bankStatementMirrorService;
 
@@ -380,6 +381,7 @@ public class ExcelProcessingService {
         // Drop its cached snapshot so the next read reflects the new payments.
         if (!validateOnly && !addedTransactions.isEmpty()) {
             debtService.invalidate();
+            paymentStatusService.invalidate();
         }
 
         // Calculate existing app total for this bank

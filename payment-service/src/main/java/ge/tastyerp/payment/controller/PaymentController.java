@@ -114,6 +114,7 @@ public class PaymentController {
     public ResponseEntity<ApiResponse<Object>> deleteBankPayments() {
         int deleted = paymentService.purgeBankPayments(List.of("tbc", "bog"));
         debtService.invalidate(); // debt is computed on demand — drop the cached snapshot
+        paymentStatusService.invalidate();
         return ResponseEntity.ok(ApiResponse.success(
                 Map.of("deleted", deleted),
                 "Bank payments deleted"
@@ -161,6 +162,7 @@ public class PaymentController {
 
         if (result.paymentsDeleted() > 0) {
             debtService.invalidate(); // recomputed debt must reflect the removed duplicates
+            paymentStatusService.invalidate();
         }
 
         String message = String.format("Removed %d duplicate payments (₾%.2f recovered).",

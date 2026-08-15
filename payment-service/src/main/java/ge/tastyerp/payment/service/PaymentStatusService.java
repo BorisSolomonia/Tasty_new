@@ -2,6 +2,7 @@ package ge.tastyerp.payment.service;
 
 import ge.tastyerp.common.dto.payment.PaymentDto;
 import ge.tastyerp.common.dto.payment.PaymentStatusDto;
+import ge.tastyerp.common.util.SimpleTtlCache;
 import ge.tastyerp.payment.repository.PaymentRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -14,6 +15,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Service for calculating payment status indicators.
@@ -37,18 +39,39 @@ public class PaymentStatusService {
     private static final int DANGER_THRESHOLD_DAYS = 30;
 
     /**
+     * The status map is a "days since last payment" badge per customer. It used
+     * to be recomputed from a full read of BOTH payment collections (every payment
+     * ever, ~20k documents) on every /payments page mount — ~3 s and 40 % of the
+     * daily free-tier read quota per view (BOR-82 finding F-4). It now reads only
+     * payments after the cutoff (the only ones it uses) and keeps the result for
+     * 60 s; the Excel/manual/DBI writers call {@link #invalidate()} so a fresh
+     * upload is reflected at once.
+     */
+    private final SimpleTtlCache<String, Map<String, PaymentStatusDto>> cache =
+            SimpleTtlCache.named("payment.status", TimeUnit.SECONDS.toMillis(60), 1);
+
+    /** Drop the cached status map (call after any payment write). */
+    public void invalidate() {
+        cache.invalidateAll();
+    }
+
+    /**
      * Calculate payment status for all customers.
      * Returns a map of customerId -> PaymentStatusDto.
      */
     public Map<String, PaymentStatusDto> calculatePaymentStatus() {
+        return cache.getOrCompute("all", this::computePaymentStatus);
+    }
+
+    private Map<String, PaymentStatusDto> computePaymentStatus() {
         log.info("Calculating payment status for all customers");
 
-        // Fetch all payments after cutoff (bank + manual cash).
-        // Manual cash lives in a separate collection; a cash-only customer must not
-        // be flagged red just because they have no bank payments.
+        // Fetch payments after cutoff (bank + manual cash) — the only window this
+        // badge uses. Manual cash lives in a separate collection; a cash-only
+        // customer must not be flagged red just because they have no bank payments.
         LocalDate cutoffDate = LocalDate.parse(paymentCutoffDate);
-        List<PaymentDto> allPayments = new ArrayList<>(paymentRepository.findAll());
-        allPayments.addAll(paymentRepository.findAllManualPayments());
+        List<PaymentDto> allPayments = new ArrayList<>(paymentRepository.findByDateAfter(cutoffDate));
+        allPayments.addAll(paymentRepository.findManualPayments(null, cutoffDate, null, null));
 
         // Filter payments after cutoff
         List<PaymentDto> relevantPayments = allPayments.stream()
