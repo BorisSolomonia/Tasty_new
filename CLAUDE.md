@@ -12,12 +12,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```
 tasty-erp/
-├── api-gateway/          # Spring Cloud Gateway - routing, security, rate limiting
-├── waybill-service/      # RS.ge SOAP integration, waybill management
-├── payment-service/      # Excel import, payment reconciliation, future Bank API
+├── waybill-service/      # RS.ge SOAP integration, waybill management, inventory movements
+├── payment-service/      # Excel import, payment reconciliation, TBC DBI sync, the whole audit layer
 ├── config-service/       # Centralized configuration, initial debts management
-└── common/               # Shared DTOs, utilities, exceptions
+├── common/               # Shared DTOs, utilities, exceptions, cross-cutting infrastructure
+└── tasty-erp-frontend/   # React 19 + Vite 6 SPA (TanStack Router/Query, Zustand, Tailwind)
 ```
+
+**There is no API gateway.** `api-gateway/` holds only a stale `target/`
+directory; it is not a Maven module and not in `compose.production.yml`.
+Routing is done by Caddy (`Caddyfile.production`) directly to the three
+services by path prefix. Anything below that mentions a gateway, JWT
+validation, rate limiting, gRPC or JSON logging describes intent, not code —
+see "What is NOT implemented" under Security. (Corrected in BOR-81/82, 2026-08-15.)
 
 ### Clean Architecture Pattern
 
@@ -171,6 +178,14 @@ BigDecimal calculateCustomerPayments(String customerId, List<Payment> allPayment
 ## Data Architecture
 
 ### NEW ARCHITECTURE (December 2024): Aggregation Pattern
+
+> **Status (verified 2026-08-15):** the `customer_debt_summary` collection and
+> `AggregationService` described below do **not** exist in the code. Debt is
+> computed on request by `payment-service` `DebtService` (initial debts +
+> after-cutoff RS.ge sales − payments − manual cash), fronted by a 60 s
+> `SimpleTtlCache`. Waybill *goods* are persisted in `waybill_goods`
+> (waybill-service) as a read-through cache. Treat this section as the design
+> intent, and `DebtService`/`InventoryMovementService` as the source of truth.
 
 **Problem**: Storing 4,951+ waybills in Firebase caused quota exhaustion (50k reads/day free tier).
 
@@ -336,16 +351,23 @@ BANK_SYNC_INTERVAL=60
 
 ## Service Communication
 
-### Internal (gRPC)
+### Internal (HTTP/JSON, not gRPC)
 
 ```
-payment-service ←→ waybill-service (for customer waybill queries)
+payment-service → waybill-service   (RestTemplate, /api/waybills/... incl. product-movements)
+payment-service → config-service    (RestTemplate, /api/config/...)
 ```
+
+There are no `.proto` files and no gRPC calls; the gRPC artifacts in the poms
+are unused transitive leftovers. Both `RestTemplate` beans in payment-service
+carry `RequestIdPropagatingInterceptor`, so the `X-Request-Id` minted by
+`RequestCorrelationFilter` travels across the hop and appears in every
+service's log pattern as `[%X{requestId}]`.
 
 ### External
 
 ```
-Client → Caddy (443) → api-gateway (3005) → services (8081-8888)
+Client → Caddy (:80, HTTP only, bare IP) → waybill (:8081) | payment (:8082) | config (:8888)
 ```
 
 ## Deployment
@@ -362,12 +384,7 @@ gh workflow run deploy.yml
 
 ```
 ┌─────────────────────────────────────────────┐
-│                 Caddy (:80/:443)            │
-└─────────────────────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────┐
-│           api-gateway (:3005)               │
+│     Caddy (:80) — routes by /api/* prefix   │
 └─────────────────────────────────────────────┘
           │           │           │
           ▼           ▼           ▼
@@ -521,17 +538,52 @@ public class PaymentReconciliationService {
 
 ## Security
 
-- JWT validation via Firebase Auth tokens
-- Rate limiting at API Gateway (100 req/min default)
-- No credentials in code or git
-- All secrets via GCP Secret Manager
-- HTTPS enforced via Caddy
+What IS in place:
+
+- No credentials in code or git (`secrets/`, `.env` are ignored; runtime
+  secrets come from GCP Secret Manager at deploy time)
+- XML parsers hardened against XXE (RS.ge and TBC SOAP clients)
+- Actuator restricted to `health,info,metrics` and not routed by Caddy
+- Java containers run as a non-root user
+- Multipart uploads capped at 10 MB; drill-down row limits clamped server-side
+
+What is NOT implemented (verified in the BOR-81/82 audit, 2026-08-15 — decisions for the owner):
+
+- **No authentication on any endpoint.** There is no Spring Security, no
+  Firebase ID-token verification, and `fetchWithAuth` in the frontend sends no
+  token. The `?operator=` parameter on audit mutations is a self-declared name
+  (design decision D-4), not an identity. See `docs/AUDIT_2026-08-15.md` §Security.
+- No rate limiting anywhere (no gateway; Caddy has no `rate_limit`).
+- Production Caddy serves plain HTTP on a bare IP; wildcard CORS on `/api/*`.
 
 ## Monitoring
 
 - Spring Boot Actuator endpoints: `/actuator/health`, `/actuator/metrics`
-- Container health checks configured
-- Structured JSON logging for GCP Cloud Logging
+  (reachable only inside the compose network)
+- Container health checks configured (compose)
+- Plain-text console logging with `[%X{requestId}]` in all three services;
+  Docker's json-file driver wraps it. There is no structured JSON encoder.
+- `MemoryDiagnostics` (common) logs one `MEM heap …` line every 5 minutes with
+  heap, non-heap, thread count and named-cache sizes; WARN above 90% heap.
+
+## Engineering rules established by the BOR-81/82/90 audit (2026-08-15)
+
+- **Never block on a Firestore `ApiFuture` with `.get()`.** Use
+  `FutureResults.await(future, "what it does")` from `common`. It bounds the
+  wait, throws `DataStoreException` (503) instead of returning "no data", and
+  sets the interrupt flag ONLY on a genuine `InterruptedException`. The old
+  `catch (InterruptedException | ExecutionException e) { ...; interrupt(); }`
+  idiom poisoned the request thread and rendered outages as empty ledgers.
+- **One rule, one class.** Shared business rules live in `common` (e.g.
+  `UnitClassifier.isKilogram`, `ProductCategoryResolver`); never copy them.
+- **Caches of large values use `SimpleTtlCache.named(...)`** so their sizes
+  appear in the memory diagnostics line; keep `maxEntries` small (the working
+  set is one date range).
+- **Frontend mutations invalidate only the scopes they can change** (see
+  `AuditScope` in `hooks/use-audit-flows.ts`), and every `useMutation` either
+  passes `onError` or relies on the global `MutationCache.onError` toast.
+- **Frontend changes must keep `npm run lint`, `npm run type-check`,
+  `npm test` and `npm run build` green** — CI now runs all four.
 
 ---
 

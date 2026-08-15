@@ -3,9 +3,14 @@ name: CI - Tasty ERP
 on:
   pull_request:
     branches: [master, main]
+  # Also on direct pushes: the deploy pipeline builds the frontend only AFTER
+  # `mvn verify` and in parallel with pushing three backend images, so a
+  # TypeScript error used to be discovered mid-deploy (BOR-82 finding O-9).
+  push:
+    branches: [master, main]
 
 jobs:
-  build-and-test:
+  backend:
     runs-on: ubuntu-latest
 
     steps:
@@ -25,8 +30,39 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: test-results
+          name: backend-test-results
           path: |
             **/target/surefire-reports/
             **/target/failsafe-reports/
           retention-days: 7
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tasty-erp-frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: tasty-erp-frontend/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type-check
+        run: npm run type-check
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
