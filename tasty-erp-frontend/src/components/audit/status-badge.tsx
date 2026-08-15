@@ -74,12 +74,21 @@ export function StatusBadge({
   )
 }
 
-export function SeverityBadge({ severity }: { severity: string | null | undefined }) {
+export function SeverityBadge({
+  severity,
+  className,
+}: {
+  severity: string | null | undefined
+  className?: string
+}) {
   const upper = (severity ?? '').toUpperCase()
   const variant: Variant =
     upper === 'CRITICAL' || upper === 'HIGH' ? 'destructive' : upper === 'MEDIUM' ? 'warning' : 'secondary'
   return (
-    <Badge variant={variant} className="whitespace-nowrap font-semibold tracking-wide">
+    <Badge
+      variant={variant}
+      className={cn('whitespace-nowrap font-semibold tracking-wide', className)}
+    >
       {upper || 'UNRATED'}
     </Badge>
   )

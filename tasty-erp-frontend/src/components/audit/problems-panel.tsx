@@ -6,9 +6,14 @@
  * `flows.alerts` — and keeping them apart meant the same rule appeared three
  * times with three different affordances.
  *
- * The arrangement here is: the list, the anatomy of whichever case is selected,
- * and then the two summaries that answer "where is this concentrated?" — by
- * rule, by month, and by subject across flows.
+ * The arrangement here is: the list — one line per rule, each carrying its own
+ * arithmetic behind an expander — and then the summaries that answer "where is
+ * this concentrated?" — by rule, by month, and by subject across flows.
+ *
+ * The case anatomy used to be a fourth thing: a panel beside the list showing
+ * the selected alert's formula, inputs, subjects and evidence button. Now that
+ * a row expands into exactly that, the panel was a second rendering of one
+ * alert, so it lives inside the row instead (see `alert-list.tsx`).
  *
  * Every "show evidence" affordance uses the alert's own `drilldownKey`. The
  * broad keys (`cash.bankRows`, `documentation.rows`) are reachable only from
@@ -21,47 +26,29 @@
  * somewhere they can carry on working instead of on a layer over the page.
  */
 import * as React from 'react'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
+import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'
-import type { AuditAlert } from '@/lib/audit-api'
 import { useAudit } from './audit-context'
 import { CollapsiblePanel } from './collapsible-panel'
-import { MetricCard, SectionCard, FormulaNote } from './metric'
-import { AlertList, alertEvidenceKey, sortAlerts } from './alert-list'
-import { sectionForDrilldownKey } from './evidence'
-import { SeverityBadge } from './status-badge'
+import { SectionCard, FormulaNote } from './metric'
+import { AlertList } from './alert-list'
 import { SourceRowTable } from './source-row-table'
 import {
-  alertsByFlow,
-  alertsTouching,
   crossFlowClusters,
   flowWeights,
   isUnresolved,
   monthBuckets,
-  subjectsOf,
   FLOW_KEYS,
   type FlowKey,
 } from './cross-flow'
-import {
-  fmtCount,
-  fmtGel,
-  fmtKgSigned,
-  flowLabel,
-  formatInput,
-  hasValue,
-  severityWeight,
-} from './format'
+import { fmtCount, fmtGel, flowLabel, severityWeight, toneClass } from './format'
 
 export function ProblemsPanel() {
   const { flows, flowsQuery, sourceRows, sourceRowsQuery } = useAudit()
-  const [selected, setSelected] = React.useState<AuditAlert | null>(null)
   const [selectedMonth, setSelectedMonth] = React.useState<string | null>(null)
 
   const alerts = flows?.alerts
-  const queue = sortAlerts(alerts)
-  const active = selected ?? queue[0] ?? null
 
   const weights = flowWeights(alerts)
   const buckets = React.useMemo(() => monthBuckets(sourceRows), [sourceRows])
@@ -99,43 +86,52 @@ export function ProblemsPanel() {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+      {/*
+        Three figures and their formula, on two lines rather than in three
+        cards. The cards were 86px of chrome around numbers that read as well
+        inline, and the honesty note under them is the point — it says the
+        weight is computed here and is not a score out of anything.
+      */}
+      <Card className="flex flex-wrap items-center gap-x-5 gap-y-1 px-3 py-1.5">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+          Severity weight
+        </span>
         {weights.map((entry) => (
-          <MetricCard
-            key={entry.flow}
-            label={`${flowLabel(entry.flow)} severity weight`}
-            value={fmtCount(entry.weight)}
-            tone={entry.critical > 0 ? 'bad' : entry.count > 0 ? 'warn' : 'good'}
-            description={`${fmtCount(entry.count)} rules · ${fmtCount(entry.critical)} critical`}
-          />
+          <span key={entry.flow} className="flex items-baseline gap-1.5">
+            <span className="text-[11px] text-muted-foreground">{flowLabel(entry.flow)}</span>
+            <span
+              className={cn(
+                'text-sm font-bold tabular-nums',
+                toneClass[entry.critical > 0 ? 'bad' : entry.count > 0 ? 'warn' : 'good']
+              )}
+            >
+              {fmtCount(entry.weight)}
+            </span>
+            <span className="text-[10px] tabular-nums text-muted-foreground">
+              {fmtCount(entry.count)} rules · {fmtCount(entry.critical)} critical
+            </span>
+          </span>
         ))}
-      </div>
+        <p className="w-full text-[10px] leading-snug text-muted-foreground">
+          CRITICAL×4 + HIGH×3 + MEDIUM×2 + LOW×1, summed over the rules that fired in this period.
+          Computed here from the alert list, not sent by the backend, and deliberately not scaled to
+          100 — there is no ceiling to scale against.
+        </p>
+      </Card>
 
-      <p className="rounded-md border border-border bg-muted/40 p-2 text-xs text-muted-foreground">
-        Severity weight = CRITICAL×4 + HIGH×3 + MEDIUM×2 + LOW×1, summed over the rules that fired in
-        this period. It is computed here from the alert list, not sent by the backend, and it is
-        deliberately not scaled to 100 — there is no ceiling to scale against.
-      </p>
-
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-        <SectionCard
-          title="Cases"
-          subtitle="Every rule that fired, ranked by severity then amount. Select one to open its anatomy."
-        >
-          {flowsQuery.isLoading ? (
-            <Skeleton className="h-64 w-full" />
-          ) : (
-            <AlertList
-              alerts={alerts}
-              onSelect={setSelected}
-              selectedRuleId={active?.ruleId ?? null}
-              emptyMessage="No rule fired for this period. That is a result, not a guarantee — check the data warnings above."
-            />
-          )}
-        </SectionCard>
-
-        <CaseAnatomy alert={active} allAlerts={alerts ?? []} />
-      </div>
+      <SectionCard
+        title="Cases"
+        subtitle="Every rule that fired, ranked by severity then amount. One line each — open a row for its formula, inputs and subjects."
+      >
+        {flowsQuery.isLoading ? (
+          <Skeleton className="h-40 w-full" />
+        ) : (
+          <AlertList
+            alerts={alerts}
+            emptyMessage="No rule fired for this period. That is a result, not a guarantee — check the data warnings above."
+          />
+        )}
+      </SectionCard>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <CollapsiblePanel
@@ -319,134 +315,5 @@ export function ProblemsPanel() {
         )}
       </CollapsiblePanel>
     </div>
-  )
-}
-
-function CaseAnatomy({ alert, allAlerts }: { alert: AuditAlert | null; allAlerts: AuditAlert[] }) {
-  const { showEvidence } = useAudit()
-
-  if (!alert) {
-    return (
-      <SectionCard title="Case anatomy" subtitle="Select a case to see how it was computed.">
-        <p className="text-sm text-muted-foreground">No case selected.</p>
-      </SectionCard>
-    )
-  }
-
-  const subjects = subjectsOf([alert])
-  const grouped = alertsByFlow(allAlerts)
-  const ownFlow = (alert.flow ?? '').toUpperCase() as FlowKey
-  const touched = FLOW_KEYS.map((flow) => {
-    if (flow === ownFlow) return { flow, alerts: [alert], own: true }
-    return { flow, alerts: alertsTouching(grouped[flow], subjects), own: false }
-  })
-  const inputs = Object.entries(alert.inputs ?? {})
-  const evidence = alertEvidenceKey(alert)
-
-  return (
-    <SectionCard
-      title="Case anatomy"
-      subtitle="The rule, the arithmetic and the flows it reaches."
-      actions={<SeverityBadge severity={alert.severity} />}
-    >
-      <div className="space-y-3">
-        <div>
-          <div className="font-mono text-[11px] text-muted-foreground">
-            {alert.ruleId ?? 'UNNAMED_RULE'}
-          </div>
-          <p className="mt-0.5 text-sm font-medium">{alert.title ?? 'Untitled rule'}</p>
-        </div>
-
-        <div className="rounded-md border border-border bg-muted/40 p-3">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Formula
-          </div>
-          <p className="mt-1 font-mono text-xs">{alert.formula ?? 'The rule sent no formula.'}</p>
-
-          {inputs.length > 0 ? (
-            <table className="mt-2 w-full text-xs">
-              <tbody>
-                {inputs.map(([name, value]) => (
-                  <tr key={name} className="border-t border-border/70">
-                    <td className="py-1 pr-2 text-muted-foreground">{name}</td>
-                    <td className="py-1 text-right font-medium tabular-nums">{formatInput(value)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <p className="mt-2 text-xs text-muted-foreground">The rule sent no named inputs.</p>
-          )}
-        </div>
-
-        <div className="grid grid-cols-2 gap-3 text-sm">
-          <div>
-            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Amount</div>
-            <div className="font-semibold tabular-nums">{fmtGel(alert.amount)}</div>
-          </div>
-          <div>
-            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Quantity</div>
-            <div className="font-semibold tabular-nums">
-              {hasValue(alert.quantityKg) ? fmtKgSigned(alert.quantityKg) : '—'}
-            </div>
-          </div>
-        </div>
-
-        <div>
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Flows affected
-          </div>
-          <div className="mt-1 space-y-1">
-            {touched.map(({ flow, alerts, own }) => (
-              <div key={flow} className="flex items-center justify-between gap-2 text-xs">
-                <span className="flex items-center gap-2">
-                  {flowLabel(flow)}
-                  {own ? <Badge variant="secondary">origin</Badge> : null}
-                </span>
-                <span className={alerts.length > 0 ? 'font-medium' : 'text-muted-foreground'}>
-                  {alerts.length > 0 ? `${fmtCount(alerts.length)} linked rules` : 'no linked rule'}
-                </span>
-              </div>
-            ))}
-          </div>
-          {subjects.length === 0 ? (
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              This rule names no subject, so cross-flow links cannot be established for it.
-            </p>
-          ) : (
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              Linked through: {subjects.slice(0, 6).join(', ')}
-              {subjects.length > 6 ? ` +${subjects.length - 6}` : ''}
-            </p>
-          )}
-        </div>
-
-        <Button
-          type="button"
-          className="w-full"
-          disabled={!evidence.key}
-          title={evidence.blockedReason}
-          onClick={() =>
-            evidence.key &&
-            showEvidence({
-              key: evidence.key,
-              subject: subjects.length === 1 ? subjects[0] : undefined,
-              label: alert.title ?? undefined,
-            })
-          }
-        >
-          Show source evidence ({fmtCount(alert.affectedRowCount)} rows)
-        </Button>
-        {evidence.key === null ? (
-          <p className="text-[11px] text-muted-foreground">{evidence.blockedReason}</p>
-        ) : (
-          <p className="text-[11px] text-muted-foreground">
-            Scrolls to the {sectionForDrilldownKey(evidence.key)} section and opens{' '}
-            <span className="font-mono">{evidence.key}</span> there — this rule&apos;s own rows, not
-            a wider set.
-          </p>
-        )}
-      </div>
-    </SectionCard>
   )
 }

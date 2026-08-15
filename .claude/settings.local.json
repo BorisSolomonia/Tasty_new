@@ -60,7 +60,28 @@
       "PowerShell(gh run *)",
       "PowerShell($r = Invoke-WebRequest -Uri \"http://34.136.155.111/\" -UseBasicParsing -Headers @{ \"Accept-Encoding\" = \"gzip, br\" }; \"STATUS: $\\($r.StatusCode\\)\"; \"--- HEADERS ---\"; $r.Headers.GetEnumerator\\(\\) | ForEach-Object { \"$\\($_.Key\\): $\\($_.Value\\)\" }; \"--- BODY LEN: $\\($r.RawContentLength\\) ---\"; $r.Content.Substring\\(0, [Math]::Min\\(600, $r.Content.Length\\)\\))",
       "PowerShell($html = \\(Invoke-WebRequest -Uri \"http://34.136.155.111/\" -UseBasicParsing\\).Content; $js = [regex]::Match\\($html, '/assets/index-[^\"]+\\\\.js'\\).Value; $css = [regex]::Match\\($html, '/assets/index-[^\"]+\\\\.css'\\).Value; \"ENTRY JS: $js\"; \"ENTRY CSS: $css\"; foreach \\($asset in @\\($js, $css\\)\\) { $r = Invoke-WebRequest -Uri \"http://34.136.155.111$asset\" -UseBasicParsing -Headers @{ \"Accept-Encoding\" = \"gzip\" }; \"\"; \"=== $asset ===\"; \"Cache-Control: $\\($r.Headers['Cache-Control']\\)\"; \"Content-Encoding: $\\($r.Headers['Content-Encoding']\\)\"; \"Uncompressed bytes: $\\($r.Content.Length\\)\" })",
-      "PowerShell(foreach \\($u in @\\(\"http://34.136.155.111/\", \"http://34.136.155.111/assets/index-DFteenBa.js\", \"http://34.136.155.111/api/audit-control/exceptions\"\\)\\) { $times = @\\(\\); for \\($i = 0; $i -lt 3; $i++\\) { $sw = [Diagnostics.Stopwatch]::StartNew\\(\\); try { Invoke-WebRequest -Uri $u -UseBasicParsing -Headers @{ \"Accept-Encoding\" = \"gzip\" } | Out-Null } catch {}; $sw.Stop\\(\\); $times += $sw.ElapsedMilliseconds }; \"$u -> $\\($times -join ', '\\) ms\" })"
+      "PowerShell(foreach \\($u in @\\(\"http://34.136.155.111/\", \"http://34.136.155.111/assets/index-DFteenBa.js\", \"http://34.136.155.111/api/audit-control/exceptions\"\\)\\) { $times = @\\(\\); for \\($i = 0; $i -lt 3; $i++\\) { $sw = [Diagnostics.Stopwatch]::StartNew\\(\\); try { Invoke-WebRequest -Uri $u -UseBasicParsing -Headers @{ \"Accept-Encoding\" = \"gzip\" } | Out-Null } catch {}; $sw.Stop\\(\\); $times += $sw.ElapsedMilliseconds }; \"$u -> $\\($times -join ', '\\) ms\" })",
+      "PowerShell(Test-Path *)",
+      "Bash(sed 's/ *//')",
+      "Bash(sed 's/^\\\\\\(.*\\\\\\)java:\\\\\\([0-9]*\\\\\\):\\\\s*/\\\\1 :: /')",
+      "PowerShell(java *)",
+      "Bash(java -version)",
+      "Bash(docker version *)",
+      "Bash(echo \"EXIT=$?\")",
+      "PowerShell(Get-Process *)",
+      "PowerShell(Stop-Process *)",
+      "Bash(sed -i 's/-XX:MaxDirectMemorySize=64m/-XX:MaxDirectMemorySize=128m/' waybill-service/Dockerfile payment-service/Dockerfile)",
+      "Bash(sed -i 's/-XX:MaxDirectMemorySize=32m/-XX:MaxDirectMemorySize=64m/' config-service/Dockerfile)",
+      "Bash(echo \"TSC=$?\")",
+      "Bash(npx eslint *)",
+      "Bash(npm install *)",
+      "Bash(npm audit *)",
+      "Bash(npx vitest *)",
+      "WebSearch",
+      "Artifact",
+      "Bash(gcloud auth *)",
+      "Bash(gcloud config *)",
+      "Bash(gcloud firestore *)"
     ]
   }
 }

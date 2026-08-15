@@ -214,7 +214,7 @@ function AuditWorkspace() {
           <PageSection
             id="problems"
             title="Problems"
-            description="Every rule that fired, the arithmetic behind the selected one, and where the unresolved rows concentrate. Each case opens its own source rows — never a wider set."
+            description="Every rule that fired, one line each, with its arithmetic one click inside the row, and where the unresolved rows concentrate. Each case opens its own source rows — never a wider set."
           >
             <ProblemsPanel />
           </PageSection>
