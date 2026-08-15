@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { startOfMonth, endOfMonth } from 'date-fns'
+import { startOfMonth, endOfMonth, subMonths, startOfQuarter, endOfQuarter } from 'date-fns'
 import { AlertTriangle, ChevronRight, Download, RefreshCw, ShieldCheck } from 'lucide-react'
 import { auditApi, configApi } from '@/lib/api-client'
 import type {
@@ -18,6 +18,13 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { canonicalId, formatCurrency, formatNumber, formatDate, formatDateISO } from '@/lib/utils'
+import { CATEGORY_LABELS } from '@/features/audit-control/labels'
+import { AlarmStrip } from '@/features/audit-control/alarm-strip'
+import { DumbbellChart } from '@/features/audit-control/charts/dumbbell-chart'
+import { LedgerHeatmap } from '@/features/audit-control/charts/ledger-heatmap'
+import { CashGapBars } from '@/features/audit-control/charts/cash-gap-bars'
+import { InventoryWaterfall } from '@/features/audit-control/charts/inventory-waterfall'
+import { DailyLedgerChart } from '@/features/audit-control/charts/daily-ledger-chart'
 
 const PRODUCT_FILTERS = [
   { value: '', label: 'All products' },
@@ -158,11 +165,19 @@ export function AuditControlPage() {
         onStartDate={setStartDate}
         onEndDate={setEndDate}
         onProduct={setProduct}
+        onPreset={(from, to) => {
+          setStartDate(from)
+          setEndDate(to)
+          setApplied({ startDate: from, endDate: to, product })
+        }}
         onApply={() => setApplied({ startDate, endDate, product })}
         onExport={() => data && exportLedgerWorkbook(data)}
         canExport={Boolean(data && data.inventoryLedgers.length)}
         loading={dashboardQuery.isFetching}
       />
+
+      {/* BOR-87 hybrid: what needs attention this period, before any total. */}
+      <AlarmStrip dashboard={data} dual={dualLedgerQuery.data} />
 
       {dashboardQuery.isError && (
         <Card>
@@ -299,18 +314,25 @@ function UnifiedDashboardTab({ query, ledgers }: { query: DualQuery; ledgers: In
   }
 
   return (
-    <div className="space-y-3">
-      {cards.map((c) => (
-        <CategoryAccordionCard
-          key={c.category}
-          card={c}
-          ledger={ledgerByCat.get(c.category)}
-          saving={saveMutation.isPending}
-          onSaveField={saveField}
-          savingRate={rateMutation.isPending}
-          onSaveRate={(percent) => rateMutation.mutate({ category: c.category, percent })}
-        />
-      ))}
+    <div className="space-y-4">
+      {/* BOR-87 hybrid — the three cross-category pictures, then the per-category cards as drill-down. */}
+      <LedgerHeatmap ledgers={ledgers} />
+      <DumbbellChart cards={cards} />
+      <CashGapBars dual={query.data} />
+      <div id="audit-categories" className="space-y-3 scroll-mt-20">
+        <h2 className="text-sm font-semibold text-muted-foreground">Per category — open a row for its ledger, purchase and sales windows</h2>
+        {cards.map((c) => (
+          <CategoryAccordionCard
+            key={c.category}
+            card={c}
+            ledger={ledgerByCat.get(c.category)}
+            saving={saveMutation.isPending}
+            onSaveField={saveField}
+            savingRate={rateMutation.isPending}
+            onSaveRate={(percent) => rateMutation.mutate({ category: c.category, percent })}
+          />
+        ))}
+      </div>
     </div>
   )
 }
@@ -352,13 +374,22 @@ const CategoryAccordionCard = React.memo(function CategoryAccordionCard({
           {card.vatDifference !== 0 ? (
             <span className="text-destructive">VAT diff {formatCurrency(card.vatDifference)}</span>
           ) : null}
+          {ledger && ledger.overageDays > 0 ? (
+            <span className="inline-flex items-center gap-1 font-medium text-destructive">
+              <AlertTriangle className="h-3 w-3" /> {ledger.overageDays} overage day{ledger.overageDays === 1 ? '' : 's'}
+            </span>
+          ) : null}
           <span className={`font-medium ${card.onHandDocKg < 0 ? 'text-destructive' : 'text-foreground'}`}>
-            On hand {formatNumber(card.onHandDocKg)} kg
+            Net movement {formatNumber(card.onHandDocKg)} kg
           </span>
         </span>
       </button>
       {open ? (
         <CardContent className="space-y-3 p-4 pt-0">
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            <InventoryWaterfall card={card} />
+            {ledger ? <DailyLedgerChart ledger={ledger} /> : null}
+          </div>
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
             <PurchaseWindow
               card={card}
@@ -495,9 +526,12 @@ function SalesWindow({
 function OnHandFooter({ card }: { card: UnifiedCategoryCard }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/30 px-4 py-3">
-      <div className="text-sm font-medium">On-Hand Inventory (doc)</div>
+      <div className="text-sm font-medium">
+        Net movement (doc)
+        <span className="ml-2 text-xs font-normal text-muted-foreground">opening stock not recorded — this is not a stock level</span>
+      </div>
       <div className="text-xs tabular-nums text-muted-foreground">
-        {formatNumber(card.startingInventoryKg)} starting + {formatNumber(card.netDocPurchaseKg)} net
+        {formatNumber(card.startingInventoryKg)} opening (not recorded) + {formatNumber(card.netDocPurchaseKg)} net
         purchases ({formatNumber(card.writeOffPercent)}% write-off) − {formatNumber(card.salesDocKg)} sold
       </div>
       <div
@@ -975,14 +1009,40 @@ function FilterBar(props: {
   onStartDate: (v: string) => void
   onEndDate: (v: string) => void
   onProduct: (v: string) => void
+  /** Sets both dates and applies immediately. */
+  onPreset: (from: string, to: string) => void
   onApply: () => void
   onExport: () => void
   canExport: boolean
   loading: boolean
 }) {
+  const now = new Date()
+  const presets: { label: string; from: Date; to: Date }[] = [
+    { label: 'This month', from: startOfMonth(now), to: endOfMonth(now) },
+    { label: 'Last month', from: startOfMonth(subMonths(now, 1)), to: endOfMonth(subMonths(now, 1)) },
+    { label: 'This quarter', from: startOfQuarter(now), to: endOfQuarter(now) },
+  ]
   return (
     <Card>
       <CardContent className="flex flex-wrap items-end gap-3 p-4">
+        <div className="flex flex-wrap gap-1" role="group" aria-label="Period presets">
+          {presets.map((p) => {
+            const from = formatDateISO(p.from)
+            const to = formatDateISO(p.to)
+            const active = props.startDate === from && props.endDate === to
+            return (
+              <button
+                key={p.label}
+                type="button"
+                aria-pressed={active}
+                onClick={() => props.onPreset(from, to)}
+                className={`min-h-9 rounded-md border px-3 text-sm ${active ? 'border-primary bg-primary/10' : 'border-input hover:bg-accent'}`}
+              >
+                {p.label}
+              </button>
+            )
+          })}
+        </div>
         <Field label="Start date">
           <input
             type="date"
@@ -1078,17 +1138,6 @@ function StatCard({ title, value, hint }: { title: string; value: string; hint?:
 
 // ==================== Daily ledger rows ====================
 
-const CATEGORY_LABELS: Record<string, string> = {
-  BEEF: '🐄 Beef',
-  PORK: '🐷 Pork',
-  SHEEP: '🐑 Sheep',
-  CHICKEN: '🐔 Chicken',
-  FAT: 'Fat',
-  OTHER_FOOD: 'Other food',
-  SUPPLIES: '🔧 Supplies',
-  OTHER: 'Other',
-}
-
 // Daily write-off ledger rows, expandable inside each category accordion.
 // Memoized (BOR-75): tables with hundreds of rows must only re-render when
 // their ledger changes.
@@ -1159,12 +1208,11 @@ const ReconciliationSection = React.memo(function ReconciliationSection({
 }) {
   const rows = data.reconciliation
   // Only show customers carrying a non-zero balance to keep the table focused.
-  const visible = React.useMemo(
-    () => rows.filter((r) => Math.abs(r.currentDebt) > 0.005).slice(0, 200),
-    [rows]
-  )
+  const withBalance = React.useMemo(() => rows.filter((r) => Math.abs(r.currentDebt) > 0.005), [rows])
+  const [showAll, setShowAll] = React.useState(false)
+  const visible = React.useMemo(() => (showAll ? withBalance : withBalance.slice(0, 200)), [withBalance, showAll])
   return (
-    <Card>
+    <Card id="audit-reconciliation" className="scroll-mt-20">
       <CardHeader className="p-4">
         <CardTitle className="text-base">Debt reconciliation</CardTitle>
         <CardDescription>
@@ -1258,6 +1306,15 @@ const ReconciliationSection = React.memo(function ReconciliationSection({
             </tbody>
           </table>
         </div>
+        {/* The cap is stated, never silent (CLAUDE.md: a figure whose inputs are missing must say so). */}
+        {withBalance.length > 200 ? (
+          <div className="flex items-center gap-3 border-t px-4 py-2 text-xs text-muted-foreground">
+            Showing {visible.length} of {withBalance.length} customers with a balance.
+            <Button size="sm" variant="ghost" onClick={() => setShowAll((v) => !v)}>
+              {showAll ? 'Show first 200' : 'Show all'}
+            </Button>
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   )
@@ -1301,6 +1358,11 @@ const TargetedExpenseCard = React.memo(function TargetedExpenseCard({ data }: { 
                 ))}
               </tbody>
             </table>
+            {t.matches.length > 50 ? (
+              <div className="px-2 py-2 text-xs text-muted-foreground">
+                Showing 50 of {t.matches.length} matches; the total above is over all of them.
+              </div>
+            ) : null}
           </div>
         ) : null}
       </CardContent>
@@ -1328,7 +1390,7 @@ function ExceptionsCard({ data }: { data: AuditDashboard }) {
   })
 
   return (
-    <Card>
+    <Card id="audit-exceptions" className="scroll-mt-20">
       <CardHeader className="p-4 pb-2">
         <CardTitle className="text-base">Reconciliation exceptions</CardTitle>
         <CardDescription>{data.exceptions.length} tracked exception(s)</CardDescription>
