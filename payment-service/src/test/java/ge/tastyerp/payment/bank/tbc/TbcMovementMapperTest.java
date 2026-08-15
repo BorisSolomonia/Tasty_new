@@ -82,13 +82,28 @@ class TbcMovementMapperTest {
 
         Map<String, Object> data = TbcMovementMapper.toBankTransactionMap(tx, NOW);
 
-        assertThat(data.get("source")).isEqualTo("tbc");
+        assertThat(data.get("source")).isEqualTo("tbc-dbi");
         assertThat(data.get("direction")).isEqualTo("DEBIT");
         assertThat(data.get("amount")).isEqualTo(99.99);
         assertThat(data.get("counterpartyInn")).isEqualTo("123456789");
         assertThat(data.get("isExpense")).isEqualTo(true);
         assertThat(data.get("isIncome")).isEqualTo(false);
         assertThat(data).doesNotContainKey("rawPayload");
+    }
+
+    /** BOR-81 B-1/B-2: DBI bank rows must never share the Excel mirror's source tag or lose their identity between syncs. */
+    @Test
+    void bankRowIdsAreDeterministicAndDistinctFromTheExcelMirror() {
+        BankTransaction a = credit("123456789", "REF12345");
+        BankTransaction sameAgain = credit("123456789", "REF12345");
+        BankTransaction noRef1 = credit("123456789", "");
+
+        assertThat(TbcMovementMapper.BANK_ROW_SOURCE).isNotEqualTo("tbc");
+        assertThat(TbcMovementMapper.bankRowId(a, 1)).isEqualTo("tbc-dbi|2026-07-01|CREDIT|15000|refREF12345|1");
+        assertThat(TbcMovementMapper.bankRowId(a, 1)).isEqualTo(TbcMovementMapper.bankRowId(sameAgain, 1));
+        // identical same-day movements without a reference stay apart by ordinal, not by a random id
+        assertThat(TbcMovementMapper.bankRowId(noRef1, 1)).isNotEqualTo(TbcMovementMapper.bankRowId(noRef1, 2));
+        assertThat(TbcMovementMapper.bankRowId(noRef1, 1)).startsWith("tbc-dbi|2026-07-01|CREDIT|15000|h");
     }
 
     private BankTransaction credit(String inn, String reference) {

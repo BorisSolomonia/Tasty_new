@@ -29,7 +29,18 @@ import java.util.Optional;
  */
 public final class TbcMovementMapper {
 
+    /** Source tag on payments (joins the debt rollup with the Excel path) and the sync-state key. */
     public static final String SOURCE = "tbc";
+
+    /**
+     * Source tag on {@code bankTransactions} rows written by the DBI sync.
+     *
+     * <p>Distinct from the Excel mirror's {@code "tbc"} on purpose (BOR-81
+     * finding B-1): both writers used to tag rows {@code "tbc"}, and the sync's
+     * window replacement deleted by source+date — so enabling DBI would have
+     * deleted every mirrored statement row dated in the window.</p>
+     */
+    public static final String BANK_ROW_SOURCE = "tbc-dbi";
 
     private TbcMovementMapper() {
     }
@@ -70,10 +81,35 @@ public final class TbcMovementMapper {
         return String.join("|", tx.date().toString(), toCents(amount), tin, disambiguator);
     }
 
+    /**
+     * Deterministic {@code bankTransactions} document id for a DBI movement.
+     *
+     * <p>{@code tbc-dbi|date|direction|amountCents|ref…|n}. Re-fetching an overlap
+     * window therefore rewrites the same documents instead of creating new ones
+     * (BOR-81 finding B-2: the sync used to assign a fresh random id on every
+     * run, which orphaned every human mapping the audit layer keys on the doc
+     * id). Two genuinely identical same-day movements without a bank reference
+     * are kept apart by {@code ordinal} (1, 2, …) — the caller counts
+     * occurrences within one fetch, and DBI returns movements in a stable order.</p>
+     */
+    public static String bankRowId(BankTransaction tx, int ordinal) {
+        String reference = tx.reference() == null ? "" : tx.reference().trim();
+        String disambiguator = reference.isEmpty()
+                ? "h" + Integer.toHexString(safeHash(tx))
+                : "ref" + reference;
+        return String.join("|", BANK_ROW_SOURCE, tx.date().toString(), tx.direction(),
+                toCents(AmountUtils.round(tx.amount())), disambiguator, String.valueOf(ordinal));
+    }
+
+    /** Key that identifies "the same movement" for the ordinal count in {@link #bankRowId}. */
+    public static String bankRowKey(BankTransaction tx) {
+        return bankRowId(tx, 0);
+    }
+
     /** Firestore document for the bankTransactions collection. */
     public static Map<String, Object> toBankTransactionMap(BankTransaction tx, LocalDateTime syncedAt) {
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("source", SOURCE);
+        data.put("source", BANK_ROW_SOURCE);
         data.put("date", tx.date().toString());
         data.put("direction", tx.direction());
         data.put("amount", AmountUtils.round(tx.amount()).doubleValue());

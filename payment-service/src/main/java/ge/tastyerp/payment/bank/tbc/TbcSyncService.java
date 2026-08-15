@@ -97,10 +97,17 @@ public class TbcSyncService {
         try {
             List<BankTransaction> movements = tbcDbiClient.getAccountMovements(from, to);
 
-            List<Map<String, Object>> bankRows = movements.stream()
-                    .map(tx -> TbcMovementMapper.toBankTransactionMap(tx, now))
-                    .toList();
-            int storedBankRows = bankTransactionRepository.replaceWindow(TbcMovementMapper.SOURCE, from, bankRows);
+            // Upsert under deterministic ids — never delete-and-reinsert. Window
+            // replacement reassigned random ids each run and shared the Excel
+            // mirror's source tag, so it orphaned human mappings and would have
+            // deleted mirrored statement rows (BOR-81 findings B-1/B-2).
+            Map<String, Map<String, Object>> rowsById = new java.util.LinkedHashMap<>();
+            Map<String, Integer> seen = new HashMap<>();
+            for (BankTransaction tx : movements) {
+                int ordinal = seen.merge(TbcMovementMapper.bankRowKey(tx), 1, Integer::sum);
+                rowsById.put(TbcMovementMapper.bankRowId(tx, ordinal), TbcMovementMapper.toBankTransactionMap(tx, now));
+            }
+            int storedBankRows = bankTransactionRepository.upsertAll(rowsById);
 
             LocalDate cutoff = DateUtils.parseDate(paymentCutoffDate);
             Set<String> existingCodes = paymentRepository.getAllUniqueCodesAfterCutoff();
