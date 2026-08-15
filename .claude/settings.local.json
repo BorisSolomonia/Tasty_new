@@ -81,7 +81,8 @@
       "Artifact",
       "Bash(gcloud auth *)",
       "Bash(gcloud config *)",
-      "Bash(gcloud firestore *)"
+      "Bash(gcloud firestore *)",
+      "Bash(gcloud compute *)"
     ]
   }
 }
