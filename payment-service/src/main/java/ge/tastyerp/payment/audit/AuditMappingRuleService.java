@@ -167,17 +167,33 @@ public class AuditMappingRuleService {
                 .findFirst()
                 .orElseThrow(() -> new ValidationException("id", "No mapping rule " + ruleId));
 
-        int undone = 0;
-        for (AuditMappingDto mapping : repository.findAllMappings()) {
-            if (ruleId.equals(mapping.getAppliedByRuleId())
-                    && mapping.getStatus() != AuditMappingStatus.VOIDED) {
-                mapping.setStatus(AuditMappingStatus.VOIDED);
-                mapping.setUpdatedBy(operator);
-                mapping.setUpdatedAt(LocalDateTime.now());
-                repository.saveMapping(mapping);
-                undone++;
+        // Keyed query + one batched write, instead of scanning every mapping ever
+        // created and issuing one blocking round trip per row (BOR-82 finding
+        // F-7: revoking a 5,000-row rule was 5,000 sequential writes — minutes,
+        // and a half-revoked rule if the request timed out midway).
+        LocalDateTime now = LocalDateTime.now();
+        List<AuditMappingDto> toVoid = new ArrayList<>();
+        List<ge.tastyerp.common.dto.auditlayer.AuditChangeLogDto> logs = new ArrayList<>();
+        for (AuditMappingDto mapping : repository.findMappingsByRuleId(ruleId)) {
+            if (mapping.getStatus() == AuditMappingStatus.VOIDED) {
+                continue;
             }
+            mapping.setStatus(AuditMappingStatus.VOIDED);
+            mapping.setUpdatedBy(operator);
+            mapping.setUpdatedAt(now);
+            toVoid.add(mapping);
+            logs.add(ge.tastyerp.common.dto.auditlayer.AuditChangeLogDto.builder()
+                    .entityType("MAPPING")
+                    .entityId(mapping.getId())
+                    .field("status")
+                    .oldValue(String.valueOf(AuditMappingStatus.AUTO_MAPPED))
+                    .newValue("VOIDED by revoking rule " + ruleId)
+                    .changedBy(operator)
+                    .changedAt(now)
+                    .reason(reason)
+                    .build());
         }
+        int undone = repository.saveMappingsBatch(toVoid, logs);
         rule.setActive(false);
         rule.setUpdatedBy(operator);
         rule.setUpdatedAt(LocalDateTime.now());

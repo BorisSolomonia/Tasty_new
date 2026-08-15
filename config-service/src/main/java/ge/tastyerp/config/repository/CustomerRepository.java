@@ -3,12 +3,12 @@ package ge.tastyerp.config.repository;
 import com.google.cloud.firestore.Firestore;
 import com.google.cloud.firestore.QueryDocumentSnapshot;
 import ge.tastyerp.common.dto.config.CustomerDto;
+import ge.tastyerp.common.util.FutureResults;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Repository;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
@@ -37,21 +37,19 @@ public class CustomerRepository {
     /**
      * Get all customers.
      */
+    /**
+     * A store failure throws (503) instead of returning an empty list: the
+     * audit-control dashboard derives "is this customer a real entity" from
+     * this list, so an empty answer silently reclassified every customer as
+     * unreal and moved their sales into the wrong ledger (BOR-81 B-3).
+     */
     public List<CustomerDto> findAll() {
-        try {
-            List<CustomerDto> customers = new ArrayList<>();
-
-            for (QueryDocumentSnapshot document : firestore.collection(COLLECTION).get().get().getDocuments()) {
-                customers.add(mapToDto(document));
-            }
-
-            return customers;
-
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error fetching all customers: {}", e.getMessage());
-            Thread.currentThread().interrupt();
-            return Collections.emptyList();
+        List<CustomerDto> customers = new ArrayList<>();
+        for (QueryDocumentSnapshot document : FutureResults.await(
+                firestore.collection(COLLECTION).get(), "fetch all customers").getDocuments()) {
+            customers.add(mapToDto(document));
         }
+        return customers;
     }
 
     /**
@@ -79,9 +77,15 @@ public class CustomerRepository {
                             .customerName(identification)
                             .isRealEntity(isRealEntity)
                             .build());
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error setting isRealEntity for {}: {}", identification, e.getMessage());
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
             Thread.currentThread().interrupt();
+            log.error("Error setting isRealEntity for {}: {}", identification, e.getMessage());
+            throw new RuntimeException("Failed to update isRealEntity", e);
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            log.error("Error setting isRealEntity for {}: {}", identification, e.getMessage());
             throw new RuntimeException("Failed to update isRealEntity", e);
         }
     }
@@ -107,9 +111,15 @@ public class CustomerRepository {
 
             return Optional.of(mapToDto(query.getDocuments().get(0)));
 
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error fetching customer by identification {}: {}", identification, e.getMessage());
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
             Thread.currentThread().interrupt();
+            log.error("Error fetching customer by identification {}: {}", identification, e.getMessage());
+            return Optional.empty();
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            log.error("Error fetching customer by identification {}: {}", identification, e.getMessage());
             return Optional.empty();
         }
     }

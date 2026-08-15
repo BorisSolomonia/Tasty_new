@@ -159,9 +159,15 @@ public class DeduplicationService {
                     duplicateDetails
             );
 
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("❌ Error during deduplication: {}", e.getMessage(), e);
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
             Thread.currentThread().interrupt();
+            log.error("❌ Error during deduplication: {}", e.getMessage(), e);
+            throw new RuntimeException("Failed to deduplicate payments", e);
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            log.error("❌ Error during deduplication: {}", e.getMessage(), e);
             throw new RuntimeException("Failed to deduplicate payments", e);
         }
     }

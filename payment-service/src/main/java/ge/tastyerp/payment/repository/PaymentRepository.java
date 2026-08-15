@@ -236,9 +236,15 @@ public class PaymentRepository {
             log.debug("Saved payment: {}", docRef.getId());
 
             return payment;
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error saving payment: {}", e.getMessage());
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
             Thread.currentThread().interrupt();
+            log.error("Error saving payment: {}", e.getMessage());
+            throw new RuntimeException("Failed to save payment", e);
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            log.error("Error saving payment: {}", e.getMessage());
             throw new RuntimeException("Failed to save payment", e);
         }
     }
@@ -294,9 +300,15 @@ public class PaymentRepository {
         try {
             firestore.collection(COLLECTION_PAYMENTS).document(id).delete().get();
             log.debug("Deleted payment: {}", id);
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error deleting payment {}: {}", id, e.getMessage());
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
             Thread.currentThread().interrupt();
+            log.error("Error deleting payment {}: {}", id, e.getMessage());
+            throw new RuntimeException("Failed to delete payment", e);
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            log.error("Error deleting payment {}: {}", id, e.getMessage());
             throw new RuntimeException("Failed to delete payment", e);
         }
     }
@@ -370,9 +382,15 @@ public class PaymentRepository {
             log.debug("Saved manual payment: {}", docRef.getId());
 
             return payment;
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error saving manual payment: {}", e.getMessage());
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
             Thread.currentThread().interrupt();
+            log.error("Error saving manual payment: {}", e.getMessage());
+            throw new RuntimeException("Failed to save manual payment", e);
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            log.error("Error saving manual payment: {}", e.getMessage());
             throw new RuntimeException("Failed to save manual payment", e);
         }
     }
@@ -389,9 +407,15 @@ public class PaymentRepository {
             log.debug("Updated manual payment: {}", payment.getId());
 
             return payment;
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error updating manual payment: {}", e.getMessage());
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
             Thread.currentThread().interrupt();
+            log.error("Error updating manual payment: {}", e.getMessage());
+            throw new RuntimeException("Failed to update manual payment", e);
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            log.error("Error updating manual payment: {}", e.getMessage());
             throw new RuntimeException("Failed to update manual payment", e);
         }
     }
@@ -403,9 +427,15 @@ public class PaymentRepository {
         try {
             firestore.collection(COLLECTION_MANUAL).document(id).delete().get();
             log.debug("Deleted manual payment: {}", id);
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error deleting manual payment {}: {}", id, e.getMessage());
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
             Thread.currentThread().interrupt();
+            log.error("Error deleting manual payment {}: {}", id, e.getMessage());
+            throw new RuntimeException("Failed to delete manual payment", e);
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            log.error("Error deleting manual payment {}: {}", id, e.getMessage());
             throw new RuntimeException("Failed to delete manual payment", e);
         }
     }
@@ -640,9 +670,14 @@ public class PaymentRepository {
                 }
                 totals.merge(customerId, BigDecimal.valueOf(amount), BigDecimal::add);
             }
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error aggregating payments for {} on {}: {}", source, date, e.getMessage());
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
             Thread.currentThread().interrupt();
+            log.error("Error aggregating payments for {} on {}: {}", source, date, e.getMessage());
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            log.error("Error aggregating payments for {} on {}: {}", source, date, e.getMessage());
         }
     }
 
@@ -663,9 +698,15 @@ public class PaymentRepository {
                 batch.commit().get();
                 deleted += chunk.size();
             }
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error deleting payments for source {}: {}", source, e.getMessage());
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
             Thread.currentThread().interrupt();
+            log.error("Error deleting payments for source {}: {}", source, e.getMessage());
+            throw new RuntimeException("Failed to delete payments for source " + source, e);
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            log.error("Error deleting payments for source {}: {}", source, e.getMessage());
             throw new RuntimeException("Failed to delete payments for source " + source, e);
         }
         return deleted;

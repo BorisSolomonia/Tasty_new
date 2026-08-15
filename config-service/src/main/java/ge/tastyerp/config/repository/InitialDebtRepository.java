@@ -70,9 +70,15 @@ public class InitialDebtRepository {
 
             return debts;
 
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error fetching all initial debts: {}", e.getMessage());
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
             Thread.currentThread().interrupt();
+            log.error("Error fetching all initial debts: {}", e.getMessage());
+            return Collections.emptyList();
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            log.error("Error fetching all initial debts: {}", e.getMessage());
             return Collections.emptyList();
         }
     }
@@ -101,9 +107,15 @@ public class InitialDebtRepository {
 
             return Optional.empty();
 
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error fetching initial debt for {}: {}", customerId, e.getMessage());
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
             Thread.currentThread().interrupt();
+            log.error("Error fetching initial debt for {}: {}", customerId, e.getMessage());
+            return Optional.empty();
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            log.error("Error fetching initial debt for {}: {}", customerId, e.getMessage());
             return Optional.empty();
         }
     }
@@ -158,9 +170,15 @@ public class InitialDebtRepository {
             docRef.update(updates).get();
             log.debug("Deleted initial debt for customer: {}", customerId);
 
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error deleting initial debt: {}", e.getMessage());
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
             Thread.currentThread().interrupt();
+            log.error("Error deleting initial debt: {}", e.getMessage());
+            throw new RuntimeException("Failed to delete initial debt", e);
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            log.error("Error deleting initial debt: {}", e.getMessage());
             throw new RuntimeException("Failed to delete initial debt", e);
         }
     }
@@ -217,9 +235,15 @@ public class InitialDebtRepository {
 
             return firstDebt;
 
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error creating initial_debts document: {}", e.getMessage());
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
             Thread.currentThread().interrupt();
+            log.error("Error creating initial_debts document: {}", e.getMessage());
+            throw new RuntimeException("Failed to create initial_debts document", e);
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            log.error("Error creating initial_debts document: {}", e.getMessage());
             throw new RuntimeException("Failed to create initial_debts document", e);
         }
     }

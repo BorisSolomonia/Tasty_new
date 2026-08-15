@@ -36,9 +36,15 @@ public class AuditExceptionRepository {
         try {
             QuerySnapshot snapshot = firestore.collection(COLLECTION).get().get();
             return snapshot.getDocuments().stream().map(this::toDto).toList();
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error fetching audit exceptions: {}", e.getMessage());
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
             Thread.currentThread().interrupt();
+            log.error("Error fetching audit exceptions: {}", e.getMessage());
+            return Collections.emptyList();
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            log.error("Error fetching audit exceptions: {}", e.getMessage());
             return Collections.emptyList();
         }
     }
@@ -54,9 +60,15 @@ public class AuditExceptionRepository {
             firestore.collection(COLLECTION).document(dto.getId()).set(toMap(dto)).get();
             log.debug("Saved audit exception {}", dto.getId());
             return dto;
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error saving audit exception: {}", e.getMessage());
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
             Thread.currentThread().interrupt();
+            log.error("Error saving audit exception: {}", e.getMessage());
+            throw new RuntimeException("Failed to save audit exception", e);
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            log.error("Error saving audit exception: {}", e.getMessage());
             throw new RuntimeException("Failed to save audit exception", e);
         }
     }
@@ -64,9 +76,15 @@ public class AuditExceptionRepository {
     public void delete(String id) {
         try {
             firestore.collection(COLLECTION).document(id).delete().get();
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error deleting audit exception {}: {}", id, e.getMessage());
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
             Thread.currentThread().interrupt();
+            log.error("Error deleting audit exception {}: {}", id, e.getMessage());
+            throw new RuntimeException("Failed to delete audit exception", e);
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            log.error("Error deleting audit exception {}: {}", id, e.getMessage());
             throw new RuntimeException("Failed to delete audit exception", e);
         }
     }

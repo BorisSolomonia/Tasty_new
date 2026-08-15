@@ -56,9 +56,15 @@ public class ProductVatRateRepository {
                 }
             }
             return result;
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error fetching product VAT rates: {}", e.getMessage());
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
             Thread.currentThread().interrupt();
+            log.error("Error fetching product VAT rates: {}", e.getMessage());
+            return new ArrayList<>();
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            log.error("Error fetching product VAT rates: {}", e.getMessage());
             return new ArrayList<>();
         }
     }
@@ -77,9 +83,15 @@ public class ProductVatRateRepository {
             data.put("updatedAt", com.google.cloud.Timestamp.now());
             firestore.collection(COLLECTION).document(DOCUMENT).set(data).get();
             log.debug("Saved {} product VAT rates", raw.size());
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error saving product VAT rates: {}", e.getMessage());
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
             Thread.currentThread().interrupt();
+            log.error("Error saving product VAT rates: {}", e.getMessage());
+            throw new RuntimeException("Failed to save product VAT rates", e);
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            log.error("Error saving product VAT rates: {}", e.getMessage());
             throw new RuntimeException("Failed to save product VAT rates", e);
         }
     }

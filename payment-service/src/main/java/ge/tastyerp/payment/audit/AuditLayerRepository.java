@@ -17,6 +17,7 @@ import ge.tastyerp.common.dto.auditlayer.CheckEvidenceDto;
 import ge.tastyerp.common.dto.auditlayer.CounterpartyAliasDto;
 import ge.tastyerp.common.dto.auditlayer.RealInventoryOverrideDto;
 import ge.tastyerp.common.dto.auditlayer.RealSupplierDebtDto;
+import ge.tastyerp.common.util.FutureResults;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Repository;
@@ -29,7 +30,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutionException;
 
 /**
  * Firestore access for every audit-layer collection (BOR-89 §14).
@@ -81,28 +81,36 @@ public class AuditLayerRepository {
 
     public List<AuditMappingDto> findAllMappings() {
         List<AuditMappingDto> result = new ArrayList<>();
-        try {
-            QuerySnapshot snapshot = firestore.collection(COLLECTION_MAPPINGS).get().get();
-            for (QueryDocumentSnapshot doc : snapshot.getDocuments()) {
-                result.add(toMapping(doc));
-            }
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error loading audit mappings: {}", e.getMessage());
-            Thread.currentThread().interrupt();
+        QuerySnapshot snapshot = FutureResults.await(
+                firestore.collection(COLLECTION_MAPPINGS).get(), "load audit mappings");
+        for (QueryDocumentSnapshot doc : snapshot.getDocuments()) {
+            result.add(toMapping(doc));
+        }
+        return result;
+    }
+
+    /**
+     * Only the mappings a given rule produced — a keyed query instead of a scan
+     * of the whole collection (BOR-82 finding F-7). Used to revoke a rule.
+     */
+    public List<AuditMappingDto> findMappingsByRuleId(String ruleId) {
+        List<AuditMappingDto> result = new ArrayList<>();
+        QuerySnapshot snapshot = FutureResults.await(
+                firestore.collection(COLLECTION_MAPPINGS)
+                        .whereEqualTo("appliedByRuleId", ruleId).get(),
+                "load mappings applied by rule " + ruleId);
+        for (QueryDocumentSnapshot doc : snapshot.getDocuments()) {
+            result.add(toMapping(doc));
         }
         return result;
     }
 
     public AuditMappingDto findMapping(AuditSourceType type, String sourceRowId) {
-        try {
-            DocumentSnapshot doc = firestore.collection(COLLECTION_MAPPINGS)
-                    .document(mappingId(type, sourceRowId)).get().get();
-            return doc.exists() ? toMapping(doc) : null;
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error reading audit mapping {}: {}", sourceRowId, e.getMessage());
-            Thread.currentThread().interrupt();
-            return null;
-        }
+        DocumentSnapshot doc = FutureResults.await(
+                firestore.collection(COLLECTION_MAPPINGS)
+                        .document(mappingId(type, sourceRowId)).get(),
+                "read audit mapping " + sourceRowId);
+        return doc.exists() ? toMapping(doc) : null;
     }
 
     public void saveMapping(AuditMappingDto mapping) {
@@ -153,25 +161,18 @@ public class AuditLayerRepository {
             return 0;
         }
         int written = 0;
-        try {
-            for (int i = 0; i < items.size(); i += FIRESTORE_BATCH_LIMIT) {
-                WriteBatch batch = firestore.batch();
-                List<T> chunk = items.subList(i, Math.min(i + FIRESTORE_BATCH_LIMIT, items.size()));
-                for (T item : chunk) {
-                    String id = idOf.apply(item);
-                    var ref = id == null
-                            ? firestore.collection(collection).document()
-                            : firestore.collection(collection).document(id);
-                    batch.set(ref, bodyOf.apply(item));
-                }
-                batch.commit().get();
-                written += chunk.size();
+        for (int i = 0; i < items.size(); i += FIRESTORE_BATCH_LIMIT) {
+            WriteBatch batch = firestore.batch();
+            List<T> chunk = items.subList(i, Math.min(i + FIRESTORE_BATCH_LIMIT, items.size()));
+            for (T item : chunk) {
+                String id = idOf.apply(item);
+                var ref = id == null
+                        ? firestore.collection(collection).document()
+                        : firestore.collection(collection).document(id);
+                batch.set(ref, bodyOf.apply(item));
             }
-        } catch (InterruptedException | ExecutionException e) {
-            if (e instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
-            }
-            throw new IllegalStateException("Failed to batch-write " + collection, e);
+            FutureResults.await(batch.commit(), "batch-write " + collection);
+            written += chunk.size();
         }
         return written;
     }
@@ -181,25 +182,21 @@ public class AuditLayerRepository {
     /** User-created categories only. Built-ins live in {@link AuditCategories}. */
     public List<AuditCategoryDto> findCustomCategories() {
         List<AuditCategoryDto> result = new ArrayList<>();
-        try {
-            QuerySnapshot snapshot = firestore.collection(COLLECTION_CATEGORIES).get().get();
-            for (QueryDocumentSnapshot doc : snapshot.getDocuments()) {
-                result.add(AuditCategoryDto.builder()
-                        .code(doc.getId())
-                        .label(doc.getString("label"))
-                        .description(doc.getString("description"))
-                        .builtIn(false)
-                        .supplierSettlement(bool(doc, "supplierSettlement"))
-                        .customerReceipt(bool(doc, "customerReceipt"))
-                        .nonSupplierExpense(bool(doc, "nonSupplierExpense"))
-                        .cashReturn(bool(doc, "cashReturn"))
-                        .paperOnly(bool(doc, "paperOnly"))
-                        .unresolved(bool(doc, "unresolved"))
-                        .build());
-            }
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error loading audit categories: {}", e.getMessage());
-            Thread.currentThread().interrupt();
+        QuerySnapshot snapshot = FutureResults.await(
+                firestore.collection(COLLECTION_CATEGORIES).get(), "load audit categories");
+        for (QueryDocumentSnapshot doc : snapshot.getDocuments()) {
+            result.add(AuditCategoryDto.builder()
+                    .code(doc.getId())
+                    .label(doc.getString("label"))
+                    .description(doc.getString("description"))
+                    .builtIn(false)
+                    .supplierSettlement(bool(doc, "supplierSettlement"))
+                    .customerReceipt(bool(doc, "customerReceipt"))
+                    .nonSupplierExpense(bool(doc, "nonSupplierExpense"))
+                    .cashReturn(bool(doc, "cashReturn"))
+                    .paperOnly(bool(doc, "paperOnly"))
+                    .unresolved(bool(doc, "unresolved"))
+                    .build());
         }
         return result;
     }
@@ -225,35 +222,31 @@ public class AuditLayerRepository {
 
     public List<AuditMappingRuleDto> findMappingRules() {
         List<AuditMappingRuleDto> result = new ArrayList<>();
-        try {
-            QuerySnapshot snapshot = firestore.collection(COLLECTION_MAPPING_RULES).get().get();
-            for (QueryDocumentSnapshot doc : snapshot.getDocuments()) {
-                Long applied = doc.getLong("appliedCount");
-                result.add(AuditMappingRuleDto.builder()
-                        .id(doc.getId())
-                        .criterion(doc.getString("criterion") == null ? null
-                                : MappingRuleCriterion.valueOf(doc.getString("criterion")))
-                        .direction(doc.getString("direction"))
-                        .counterpartyTin(doc.getString("counterpartyTin"))
-                        .counterpartyName(doc.getString("counterpartyName"))
-                        .description(doc.getString("description"))
-                        .transactionType(doc.getString("transactionType"))
-                        .categoryCode(doc.getString("categoryCode"))
-                        .mappedCounterpartyName(doc.getString("mappedCounterpartyName"))
-                        .mappedCounterpartyTin(doc.getString("mappedCounterpartyTin"))
-                        .note(doc.getString("note"))
-                        .active(Boolean.TRUE.equals(doc.getBoolean("active")))
-                        .appliedCount(applied == null ? 0 : applied.intValue())
-                        .appliedAmount(decimal(doc, "appliedAmount"))
-                        .createdBy(doc.getString("createdBy"))
-                        .createdAt(parseDateTime(doc.getString("createdAt")))
-                        .updatedBy(doc.getString("updatedBy"))
-                        .updatedAt(parseDateTime(doc.getString("updatedAt")))
-                        .build());
-            }
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error loading mapping rules: {}", e.getMessage());
-            Thread.currentThread().interrupt();
+        QuerySnapshot snapshot = FutureResults.await(
+                firestore.collection(COLLECTION_MAPPING_RULES).get(), "load mapping rules");
+        for (QueryDocumentSnapshot doc : snapshot.getDocuments()) {
+            Long applied = doc.getLong("appliedCount");
+            result.add(AuditMappingRuleDto.builder()
+                    .id(doc.getId())
+                    .criterion(doc.getString("criterion") == null ? null
+                            : MappingRuleCriterion.valueOf(doc.getString("criterion")))
+                    .direction(doc.getString("direction"))
+                    .counterpartyTin(doc.getString("counterpartyTin"))
+                    .counterpartyName(doc.getString("counterpartyName"))
+                    .description(doc.getString("description"))
+                    .transactionType(doc.getString("transactionType"))
+                    .categoryCode(doc.getString("categoryCode"))
+                    .mappedCounterpartyName(doc.getString("mappedCounterpartyName"))
+                    .mappedCounterpartyTin(doc.getString("mappedCounterpartyTin"))
+                    .note(doc.getString("note"))
+                    .active(Boolean.TRUE.equals(doc.getBoolean("active")))
+                    .appliedCount(applied == null ? 0 : applied.intValue())
+                    .appliedAmount(decimal(doc, "appliedAmount"))
+                    .createdBy(doc.getString("createdBy"))
+                    .createdAt(parseDateTime(doc.getString("createdAt")))
+                    .updatedBy(doc.getString("updatedBy"))
+                    .updatedAt(parseDateTime(doc.getString("updatedAt")))
+                    .build());
         }
         return result;
     }
@@ -284,22 +277,18 @@ public class AuditLayerRepository {
 
     public List<CounterpartyAliasDto> findCounterpartyAliases() {
         List<CounterpartyAliasDto> result = new ArrayList<>();
-        try {
-            QuerySnapshot snapshot = firestore.collection(COLLECTION_COUNTERPARTY_ALIAS).get().get();
-            for (QueryDocumentSnapshot doc : snapshot.getDocuments()) {
-                result.add(CounterpartyAliasDto.builder()
-                        .id(doc.getId())
-                        .rawName(doc.getString("rawName"))
-                        .normalizedName(doc.getString("normalizedName"))
-                        .counterpartyTin(doc.getString("counterpartyTin"))
-                        .note(doc.getString("note"))
-                        .createdBy(doc.getString("createdBy"))
-                        .createdAt(parseDateTime(doc.getString("createdAt")))
-                        .build());
-            }
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error loading counterparty aliases: {}", e.getMessage());
-            Thread.currentThread().interrupt();
+        QuerySnapshot snapshot = FutureResults.await(
+                firestore.collection(COLLECTION_COUNTERPARTY_ALIAS).get(), "load counterparty aliases");
+        for (QueryDocumentSnapshot doc : snapshot.getDocuments()) {
+            result.add(CounterpartyAliasDto.builder()
+                    .id(doc.getId())
+                    .rawName(doc.getString("rawName"))
+                    .normalizedName(doc.getString("normalizedName"))
+                    .counterpartyTin(doc.getString("counterpartyTin"))
+                    .note(doc.getString("note"))
+                    .createdBy(doc.getString("createdBy"))
+                    .createdAt(parseDateTime(doc.getString("createdAt")))
+                    .build());
         }
         return result;
     }
@@ -323,22 +312,18 @@ public class AuditLayerRepository {
 
     public List<RealInventoryOverrideDto> findRealInventory() {
         List<RealInventoryOverrideDto> result = new ArrayList<>();
-        try {
-            QuerySnapshot snapshot = firestore.collection(COLLECTION_REAL_INVENTORY).get().get();
-            for (QueryDocumentSnapshot doc : snapshot.getDocuments()) {
-                result.add(RealInventoryOverrideDto.builder()
-                        .id(doc.getId())
-                        .productName(doc.getString("productName"))
-                        .asOfDate(parseDate(doc.getString("asOfDate")))
-                        .realKg(decimal(doc, "realKg"))
-                        .note(doc.getString("note"))
-                        .updatedBy(doc.getString("updatedBy"))
-                        .updatedAt(parseDateTime(doc.getString("updatedAt")))
-                        .build());
-            }
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error loading real inventory overrides: {}", e.getMessage());
-            Thread.currentThread().interrupt();
+        QuerySnapshot snapshot = FutureResults.await(
+                firestore.collection(COLLECTION_REAL_INVENTORY).get(), "load real inventory overrides");
+        for (QueryDocumentSnapshot doc : snapshot.getDocuments()) {
+            result.add(RealInventoryOverrideDto.builder()
+                    .id(doc.getId())
+                    .productName(doc.getString("productName"))
+                    .asOfDate(parseDate(doc.getString("asOfDate")))
+                    .realKg(decimal(doc, "realKg"))
+                    .note(doc.getString("note"))
+                    .updatedBy(doc.getString("updatedBy"))
+                    .updatedAt(parseDateTime(doc.getString("updatedAt")))
+                    .build());
         }
         return result;
     }
@@ -362,22 +347,18 @@ public class AuditLayerRepository {
 
     public List<RealSupplierDebtDto> findSupplierDebts() {
         List<RealSupplierDebtDto> result = new ArrayList<>();
-        try {
-            QuerySnapshot snapshot = firestore.collection(COLLECTION_SUPPLIER_DEBT).get().get();
-            for (QueryDocumentSnapshot doc : snapshot.getDocuments()) {
-                result.add(RealSupplierDebtDto.builder()
-                        .id(doc.getId())
-                        .supplierName(doc.getString("supplierName"))
-                        .supplierTin(doc.getString("supplierTin"))
-                        .outstandingAmount(decimal(doc, "outstandingAmount"))
-                        .note(doc.getString("note"))
-                        .updatedBy(doc.getString("updatedBy"))
-                        .updatedAt(parseDateTime(doc.getString("updatedAt")))
-                        .build());
-            }
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error loading supplier debts: {}", e.getMessage());
-            Thread.currentThread().interrupt();
+        QuerySnapshot snapshot = FutureResults.await(
+                firestore.collection(COLLECTION_SUPPLIER_DEBT).get(), "load supplier debts");
+        for (QueryDocumentSnapshot doc : snapshot.getDocuments()) {
+            result.add(RealSupplierDebtDto.builder()
+                    .id(doc.getId())
+                    .supplierName(doc.getString("supplierName"))
+                    .supplierTin(doc.getString("supplierTin"))
+                    .outstandingAmount(decimal(doc, "outstandingAmount"))
+                    .note(doc.getString("note"))
+                    .updatedBy(doc.getString("updatedBy"))
+                    .updatedAt(parseDateTime(doc.getString("updatedAt")))
+                    .build());
         }
         return result;
     }
@@ -397,26 +378,22 @@ public class AuditLayerRepository {
 
     public List<CheckEvidenceDto> findCheckEvidence() {
         List<CheckEvidenceDto> result = new ArrayList<>();
-        try {
-            QuerySnapshot snapshot = firestore.collection(COLLECTION_CHECK_EVIDENCE).get().get();
-            for (QueryDocumentSnapshot doc : snapshot.getDocuments()) {
-                result.add(CheckEvidenceDto.builder()
-                        .id(doc.getId())
-                        .documentNumber(doc.getString("documentNumber"))
-                        .counterpartyName(doc.getString("counterpartyName"))
-                        .counterpartyTin(doc.getString("counterpartyTin"))
-                        .date(parseDate(doc.getString("date")))
-                        .amount(decimal(doc, "amount"))
-                        .explanation(doc.getString("explanation"))
-                        .classified(bool(doc, "classified"))
-                        .note(doc.getString("note"))
-                        .updatedBy(doc.getString("updatedBy"))
-                        .updatedAt(parseDateTime(doc.getString("updatedAt")))
-                        .build());
-            }
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error loading check evidence: {}", e.getMessage());
-            Thread.currentThread().interrupt();
+        QuerySnapshot snapshot = FutureResults.await(
+                firestore.collection(COLLECTION_CHECK_EVIDENCE).get(), "load check evidence");
+        for (QueryDocumentSnapshot doc : snapshot.getDocuments()) {
+            result.add(CheckEvidenceDto.builder()
+                    .id(doc.getId())
+                    .documentNumber(doc.getString("documentNumber"))
+                    .counterpartyName(doc.getString("counterpartyName"))
+                    .counterpartyTin(doc.getString("counterpartyTin"))
+                    .date(parseDate(doc.getString("date")))
+                    .amount(decimal(doc, "amount"))
+                    .explanation(doc.getString("explanation"))
+                    .classified(bool(doc, "classified"))
+                    .note(doc.getString("note"))
+                    .updatedBy(doc.getString("updatedBy"))
+                    .updatedAt(parseDateTime(doc.getString("updatedAt")))
+                    .build());
         }
         return result;
     }
@@ -448,13 +425,8 @@ public class AuditLayerRepository {
      */
     public void appendChangeLog(AuditChangeLogDto entry) {
         Map<String, Object> data = changeLogToMap(entry);
-        try {
-            firestore.collection(COLLECTION_CHANGE_LOG).document().set(data).get();
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error appending audit change log: {}", e.getMessage());
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Failed to append audit change log", e);
-        }
+        FutureResults.await(firestore.collection(COLLECTION_CHANGE_LOG).document().set(data),
+                "append audit change log");
     }
 
     private Map<String, Object> changeLogToMap(AuditChangeLogDto entry) {
@@ -470,62 +442,62 @@ public class AuditLayerRepository {
         return data;
     }
 
-    /** @param entityId null returns the whole log. */
+    /**
+     * @param entityId null returns the newest entries of the whole log.
+     *
+     * <p>The whole-log path orders and limits <em>in the query</em>: {@code changedAt}
+     * is stored as an ISO-8601 string, which sorts lexicographically in time order,
+     * and a single-field order needs no composite index. Before this the entire
+     * append-only log (one entry per mapping change, thousands per bulk
+     * suggestion run) was read and sorted in memory on every call
+     * (BOR-82 finding F-9). The per-entity path stays an equality filter with an
+     * in-memory sort because that set is tiny.</p>
+     */
     public List<AuditChangeLogDto> findChangeLog(String entityId, int limit) {
         List<AuditChangeLogDto> result = new ArrayList<>();
-        try {
-            QuerySnapshot snapshot = entityId == null || entityId.isBlank()
-                    ? firestore.collection(COLLECTION_CHANGE_LOG).get().get()
-                    : firestore.collection(COLLECTION_CHANGE_LOG)
-                            .whereEqualTo("entityId", entityId).get().get();
-            for (QueryDocumentSnapshot doc : snapshot.getDocuments()) {
-                result.add(AuditChangeLogDto.builder()
-                        .id(doc.getId())
-                        .entityType(doc.getString("entityType"))
-                        .entityId(doc.getString("entityId"))
-                        .field(doc.getString("field"))
-                        .oldValue(doc.getString("oldValue"))
-                        .newValue(doc.getString("newValue"))
-                        .changedBy(doc.getString("changedBy"))
-                        .changedAt(parseDateTime(doc.getString("changedAt")))
-                        .reason(doc.getString("reason"))
-                        .build());
-            }
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error loading audit change log: {}", e.getMessage());
-            Thread.currentThread().interrupt();
+        boolean wholeLog = entityId == null || entityId.isBlank();
+        com.google.cloud.firestore.Query query = wholeLog
+                ? firestore.collection(COLLECTION_CHANGE_LOG)
+                        .orderBy("changedAt", com.google.cloud.firestore.Query.Direction.DESCENDING)
+                : firestore.collection(COLLECTION_CHANGE_LOG).whereEqualTo("entityId", entityId);
+        if (wholeLog && limit > 0) {
+            query = query.limit(limit);
         }
-        // Newest first. Sorted in memory because the collection has no composite
-        // index and the log is small relative to the source collections.
+        QuerySnapshot snapshot = FutureResults.await(query.get(), "load audit change log");
+        for (QueryDocumentSnapshot doc : snapshot.getDocuments()) {
+            result.add(AuditChangeLogDto.builder()
+                    .id(doc.getId())
+                    .entityType(doc.getString("entityType"))
+                    .entityId(doc.getString("entityId"))
+                    .field(doc.getString("field"))
+                    .oldValue(doc.getString("oldValue"))
+                    .newValue(doc.getString("newValue"))
+                    .changedBy(doc.getString("changedBy"))
+                    .changedAt(parseDateTime(doc.getString("changedAt")))
+                    .reason(doc.getString("reason"))
+                    .build());
+        }
+        // Newest first (a no-op for the whole-log path, which is already ordered).
         result.sort((a, b) -> {
             if (a.getChangedAt() == null || b.getChangedAt() == null) {
                 return 0;
             }
             return b.getChangedAt().compareTo(a.getChangedAt());
         });
-        return limit > 0 && result.size() > limit ? result.subList(0, limit) : result;
+        // Copy, not subList: a view would pin the whole backing list.
+        return limit > 0 && result.size() > limit ? new ArrayList<>(result.subList(0, limit)) : result;
     }
 
     // ==================== helpers ====================
 
     private void write(String collection, String id, Map<String, Object> data) {
-        try {
-            firestore.collection(collection).document(id).set(data).get();
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error writing {}/{}: {}", collection, id, e.getMessage());
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Failed to write " + collection + "/" + id, e);
-        }
+        FutureResults.await(firestore.collection(collection).document(id).set(data),
+                "write " + collection + "/" + id);
     }
 
     private void delete(String collection, String id) {
-        try {
-            firestore.collection(collection).document(id).delete().get();
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error deleting {}/{}: {}", collection, id, e.getMessage());
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Failed to delete " + collection + "/" + id, e);
-        }
+        FutureResults.await(firestore.collection(collection).document(id).delete(),
+                "delete " + collection + "/" + id);
     }
 
     @SuppressWarnings("unchecked")

@@ -11,6 +11,7 @@ import ge.tastyerp.common.dto.auditlayer.AuditSourceRowPageDto;
 import ge.tastyerp.common.dto.auditlayer.AuditSourceType;
 import ge.tastyerp.common.dto.waybill.WaybillType;
 import ge.tastyerp.common.exception.ExternalServiceException;
+import ge.tastyerp.common.util.FutureResults;
 import ge.tastyerp.common.util.SimpleTtlCache;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,7 +27,6 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutionException;
 
 /**
  * Loads the immutable source rows the audit layer reasons about, and attaches
@@ -68,6 +68,9 @@ public class AuditSourceRowService {
     @Value("${audit.layer-movements-cache-ttl-ms:180000}")
     private long movementsCacheTtlMs;
 
+    /** Distinct date ranges kept at once; see the note at the construction site. */
+    static final int MAX_CACHED_RANGES = 4;
+
     private volatile SimpleTtlCache<String, List<ProductMovementDto>> movementsCache;
 
     // ==================== bank rows ====================
@@ -90,29 +93,28 @@ public class AuditSourceRowService {
                                                 Map<String, AuditMappingDto> mappings,
                                                 AuditCounterpartyResolver resolver) {
         List<AuditSourceRowDto> rows = new ArrayList<>();
-        try {
-            QuerySnapshot snapshot = firestore.collection(COLLECTION_BANK)
-                    .whereGreaterThanOrEqualTo("date", startDate.toString())
-                    .whereLessThanOrEqualTo("date", endDate.toString())
-                    .get().get();
-            for (QueryDocumentSnapshot doc : snapshot.getDocuments()) {
-                rows.add(attach(AuditSourceRowDto.builder()
-                        .sourceType(AuditSourceType.BANK)
-                        .sourceRowId(doc.getId())
-                        .date(parseDate(doc.getString("date")))
-                        .direction(doc.getString("direction"))
-                        .amount(decimal(doc.get("amount")))
-                        .counterpartyName(doc.getString("counterparty"))
-                        .counterpartyTin(doc.getString("counterpartyInn"))
-                        .description(doc.getString("description"))
-                        .additionalInformation(doc.getString("additionalInformation"))
-                        .reference(doc.getString("reference"))
-                        .transactionType(doc.getString("transactionType"))
-                        .build(), mappings));
-            }
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error loading bank transactions: {}", e.getMessage());
-            Thread.currentThread().interrupt();
+        // A store failure throws (503). It used to return an empty list, which
+        // rendered as "no bank movement in this period" — the tidy-looking empty
+        // cash flow that AuditFlowService's own warning calls the most dangerous
+        // output this module can produce (BOR-81 B-3).
+        QuerySnapshot snapshot = FutureResults.await(firestore.collection(COLLECTION_BANK)
+                .whereGreaterThanOrEqualTo("date", startDate.toString())
+                .whereLessThanOrEqualTo("date", endDate.toString())
+                .get(), "load bank transactions " + startDate + ".." + endDate);
+        for (QueryDocumentSnapshot doc : snapshot.getDocuments()) {
+            rows.add(attach(AuditSourceRowDto.builder()
+                    .sourceType(AuditSourceType.BANK)
+                    .sourceRowId(doc.getId())
+                    .date(parseDate(doc.getString("date")))
+                    .direction(doc.getString("direction"))
+                    .amount(decimal(doc.get("amount")))
+                    .counterpartyName(doc.getString("counterparty"))
+                    .counterpartyTin(doc.getString("counterpartyInn"))
+                    .description(doc.getString("description"))
+                    .additionalInformation(doc.getString("additionalInformation"))
+                    .reference(doc.getString("reference"))
+                    .transactionType(doc.getString("transactionType"))
+                    .build(), mappings));
         }
 
         // Identity is resolved after the whole window is loaded, because the
@@ -199,7 +201,9 @@ public class AuditSourceRowService {
         if (local == null) {
             synchronized (this) {
                 if (movementsCache == null) {
-                    movementsCache = new SimpleTtlCache<>(movementsCacheTtlMs, 16);
+                    // 4, not 16: each value is a full multi-year document feed and
+                    // the working set is one range (BOR-90 finding M-3).
+                    movementsCache = SimpleTtlCache.named("audit.movements", movementsCacheTtlMs, MAX_CACHED_RANGES);
                 }
                 local = movementsCache;
             }

@@ -80,11 +80,18 @@ public class WaybillGoodsRepository {
                     }
                 }
             }
-        } catch (InterruptedException | ExecutionException e) {
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
+            Thread.currentThread().interrupt();
             // A cache read failing must not fail the request — the caller falls
             // back to RS.ge, which is slower but correct.
             log.error("Error reading stored waybill goods: {}", e.getMessage());
-            Thread.currentThread().interrupt();
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            // A cache read failing must not fail the request — the caller falls
+            // back to RS.ge, which is slower but correct.
+            log.error("Error reading stored waybill goods: {}", e.getMessage());
         }
         return result;
     }
@@ -108,11 +115,18 @@ public class WaybillGoodsRepository {
                 written += Math.min(BATCH_LIMIT, entries.size() - i);
             }
             log.info("Stored goods for {} waybills", written);
-        } catch (InterruptedException | ExecutionException e) {
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
+            Thread.currentThread().interrupt();
             // Persisting is an optimisation; failing to persist must not fail the
             // request that already has the data in hand.
             log.error("Error storing waybill goods: {}", e.getMessage());
-            Thread.currentThread().interrupt();
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            // Persisting is an optimisation; failing to persist must not fail the
+            // request that already has the data in hand.
+            log.error("Error storing waybill goods: {}", e.getMessage());
         }
         return written;
     }

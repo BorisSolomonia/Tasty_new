@@ -37,9 +37,14 @@ public class PaymentOverrideRepository {
             for (QueryDocumentSnapshot doc : snapshot.getDocuments()) {
                 keys.add(doc.getId());
             }
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error fetching payment overrides: {}", e.getMessage());
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
             Thread.currentThread().interrupt();
+            log.error("Error fetching payment overrides: {}", e.getMessage());
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            log.error("Error fetching payment overrides: {}", e.getMessage());
         }
         return keys;
     }
@@ -48,9 +53,15 @@ public class PaymentOverrideRepository {
         try {
             DocumentSnapshot doc = firestore.collection(COLLECTION).document(key).get().get();
             return doc.exists() && Boolean.TRUE.equals(doc.getBoolean("markedPaid"));
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error reading payment override {}: {}", key, e.getMessage());
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
             Thread.currentThread().interrupt();
+            log.error("Error reading payment override {}: {}", key, e.getMessage());
+            return false;
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            log.error("Error reading payment override {}: {}", key, e.getMessage());
             return false;
         }
     }
@@ -64,9 +75,15 @@ public class PaymentOverrideRepository {
             data.put("updatedAt", com.google.cloud.Timestamp.now());
             firestore.collection(COLLECTION).document(key).set(data).get();
             log.debug("Set payment override {} markedPaid={}", key, markedPaid);
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error saving payment override {}: {}", key, e.getMessage());
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
             Thread.currentThread().interrupt();
+            log.error("Error saving payment override {}: {}", key, e.getMessage());
+            throw new RuntimeException("Failed to save payment override", e);
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            log.error("Error saving payment override {}: {}", key, e.getMessage());
             throw new RuntimeException("Failed to save payment override", e);
         }
     }

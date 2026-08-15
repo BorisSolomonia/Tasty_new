@@ -57,9 +57,15 @@ public class WriteOffRateRepository {
                 }
             }
             return result;
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error fetching write-off rates: {}", e.getMessage());
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
             Thread.currentThread().interrupt();
+            log.error("Error fetching write-off rates: {}", e.getMessage());
+            return new ArrayList<>();
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            log.error("Error fetching write-off rates: {}", e.getMessage());
             return new ArrayList<>();
         }
     }
@@ -79,9 +85,15 @@ public class WriteOffRateRepository {
             data.put("updatedAt", com.google.cloud.Timestamp.now());
             firestore.collection(COLLECTION).document(DOCUMENT).set(data).get();
             log.debug("Saved {} write-off rates", raw.size());
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("Error saving write-off rates: {}", e.getMessage());
+        } catch (InterruptedException e) {
+            // Genuine interruption: preserve the flag for the thread owner.
             Thread.currentThread().interrupt();
+            log.error("Error saving write-off rates: {}", e.getMessage());
+            throw new RuntimeException("Failed to save write-off rates", e);
+        } catch (ExecutionException e) {
+            // NOT an interruption: never touch the interrupt flag here, or the
+            // next blocking call on this thread fails instantly (BOR-81 B-3).
+            log.error("Error saving write-off rates: {}", e.getMessage());
             throw new RuntimeException("Failed to save write-off rates", e);
         }
     }
