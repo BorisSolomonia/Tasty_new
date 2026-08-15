@@ -1,6 +1,7 @@
 package ge.tastyerp.payment.audit;
 
 import ge.tastyerp.common.dto.audit.ProductMovementDto;
+import ge.tastyerp.common.dto.auditlayer.AuditCategoryDto;
 import ge.tastyerp.common.dto.auditlayer.AuditDrilldownDto;
 import ge.tastyerp.common.dto.auditlayer.AuditMappingDto;
 import ge.tastyerp.common.dto.auditlayer.AuditMappingSplitDto;
@@ -63,13 +64,21 @@ public class AuditDrilldownService {
                     row -> !isDebit(row) && positive(row.getUnresolvedAmount()),
                     AuditSourceRowDto::getUnresolvedAmount);
 
-            case "cash.supplierSettlement" -> bank(key, startDate, endDate, mappings,
-                    "Supplier settlement",
-                    "Bank rows carrying at least one split in a category flagged as supplier "
-                            + "settlement. Only these count toward the coverage control — total "
-                            + "withdrawals deliberately do not.",
-                    row -> hasSupplierSettlement(row),
-                    AuditSourceRowDto::getAmount);
+            case "cash.supplierSettlement" -> {
+                // Loaded ONCE, outside the per-row predicate. Calling
+                // categoriesByCode() inside the filter cost one full
+                // audit_categories read per bank row — ~9,300 sequential
+                // Firestore queries for one click on a 3.5-year statement
+                // (BOR-82 finding F-1).
+                Map<String, AuditCategoryDto> categories = mappingService.categoriesByCode();
+                yield bank(key, startDate, endDate, mappings,
+                        "Supplier settlement",
+                        "Bank rows carrying at least one split in a category flagged as supplier "
+                                + "settlement. Only these count toward the coverage control — total "
+                                + "withdrawals deliberately do not.",
+                        row -> hasSupplierSettlement(row, categories),
+                        AuditSourceRowDto::getAmount);
+            }
 
             case "cash.bankRows" -> bank(key, startDate, endDate, mappings,
                     "All bank statement rows",
@@ -307,9 +316,9 @@ public class AuditDrilldownService {
         return false;
     }
 
-    private boolean hasSupplierSettlement(AuditSourceRowDto row) {
-        Map<String, ge.tastyerp.common.dto.auditlayer.AuditCategoryDto> categories =
-                mappingService.categoriesByCode();
+    /** Pure: takes the category index as a parameter so it can never reach for the store. */
+    static boolean hasSupplierSettlement(AuditSourceRowDto row,
+                                         Map<String, AuditCategoryDto> categories) {
         for (AuditMappingSplitDto split : AuditMappingService.effectiveSplits(row.getMapping())) {
             var category = categories.get(split.getCategoryCode());
             if (category != null && category.isSupplierSettlement()) {

@@ -6,6 +6,7 @@ import ge.tastyerp.common.dto.payment.PaymentDto;
 import ge.tastyerp.common.dto.waybill.WaybillType;
 import ge.tastyerp.common.exception.ExternalServiceException;
 import ge.tastyerp.common.util.TinValidator;
+import ge.tastyerp.common.util.UnitClassifier;
 import ge.tastyerp.payment.repository.AuditExceptionRepository;
 import ge.tastyerp.payment.repository.PaymentOverrideRepository;
 import ge.tastyerp.payment.repository.PaymentRepository;
@@ -606,32 +607,13 @@ public class AuditControlService {
         return new BigDecimal(String.valueOf(value));
     }
 
-    /** Unit substrings (lowercased) that mark a line as NOT measured in kilograms. */
-    private static final List<String> NON_KG_UNITS = List.of(
-            "ცალ",      // ცალი – pieces
-            "piece", "pcs",
-            "ლიტრ", "liter", "litre",  // volume
-            "შეკვრ",    // bundle / pack
-            "კომპლ", "pack", "set",
-            "წყვილ",    // pair
-            "გრამ", "gram"             // grams – mass but not kg; excluded to avoid unit mismatch
-    );
-
     /**
      * Whether a goods line's unit is kilograms (the basis for inventory
      * conservation). Blank/unknown units default to kg because meat lines are
      * overwhelmingly kg and RS.ge's kg encoding is not guaranteed; only units
      * explicitly recognised as pieces/volume/etc. are excluded.
      */
-    private boolean isKilogram(String unit) {
-        if (unit == null || unit.isBlank()) return true;
-        String u = unit.trim().toLowerCase();
-        if (u.contains("კგ") || u.contains("kg") || u.contains("კილ") || u.contains("kilo")) {
-            return true;
-        }
-        for (String nonKg : NON_KG_UNITS) {
-            if (u.contains(nonKg)) return false;
-        }
-        return true;
+    private static boolean isKilogram(String unit) {
+        return UnitClassifier.isKilogram(unit);
     }
 }

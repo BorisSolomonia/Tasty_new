@@ -13,6 +13,7 @@ import ge.tastyerp.common.dto.auditlayer.CounterpartyIdentitySource;
 import ge.tastyerp.common.dto.auditlayer.RealInventoryOverrideDto;
 import ge.tastyerp.common.dto.auditlayer.RealSupplierDebtDto;
 import ge.tastyerp.common.dto.waybill.WaybillType;
+import ge.tastyerp.common.util.UnitClassifier;
 import ge.tastyerp.payment.service.audit.WriteOffCalculator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -64,11 +65,6 @@ public class AuditFlowService {
 
     private static final int MONEY_SCALE = 2;
     private static final int KG_SCALE = 3;
-
-    /** Unit substrings that mark a line as NOT measured in kilograms. */
-    private static final List<String> NON_KG_UNITS = List.of(
-            "ცალ", "piece", "pcs", "ლიტრ", "liter", "litre",
-            "შეკვრ", "კომპლ", "pack", "set", "წყვილ", "გრამ", "gram");
 
     private final AuditSourceRowService sourceRowService;
     private final AuditMappingService mappingService;
@@ -689,17 +685,12 @@ public class AuditFlowService {
     }
 
     /**
-     * Blank or unknown units default to kilograms: meat lines are overwhelmingly
-     * kg and RS.ge's unit encoding is not guaranteed, so only units explicitly
-     * recognised as pieces/volume are excluded. Mirrors the rule already used by
-     * {@code AuditControlService}.
+     * Delegates to the shared {@link UnitClassifier}. This class used to carry
+     * its own copy without the positive-kg check, so "კილოგრამი"/"kilogram" were
+     * dropped here but counted on /audit-control (BOR-81 finding B-4).
      */
-    private boolean isKilogram(String unit) {
-        if (unit == null || unit.isBlank()) {
-            return true;
-        }
-        String lower = unit.toLowerCase();
-        return NON_KG_UNITS.stream().noneMatch(lower::contains);
+    private static boolean isKilogram(String unit) {
+        return UnitClassifier.isKilogram(unit);
     }
 
     private static BigDecimal nz(BigDecimal value) {

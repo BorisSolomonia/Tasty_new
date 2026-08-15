@@ -25,8 +25,10 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * Service for importing manual cash payments from Excel files.
@@ -75,9 +77,47 @@ public class ManualCashExcelImportService {
         }
     }
 
+    /**
+     * Identity of a manual cash row: {@code date|amountCents|customerId}. Cash
+     * receipts carry no running balance (unlike the bank path's uniqueCode), so
+     * two genuinely distinct receipts can share this key; the ordinal appended by
+     * {@link #importId} keeps them apart within one file.
+     */
+    static String rowKey(LocalDate date, BigDecimal amount, String customerId) {
+        return DateUtils.formatDate(date) + "|" + AmountUtils.toCents(amount) + "|" + customerId.trim();
+    }
+
+    /**
+     * Deterministic Firestore document id for the n-th row with a given key.
+     * Re-uploading the same file therefore overwrites the same documents instead
+     * of doubling every cash receipt and silently erasing customer debt
+     * (BOR-81 finding B-5).
+     */
+    static String importId(String rowKey, int ordinal) {
+        return "mcx|" + rowKey + "|" + ordinal;
+    }
+
     private ExcelUploadResponse processSheet(Sheet sheet, String requestId) {
         List<TransactionDetail> addedTransactions = new ArrayList<>();
+        List<TransactionDetail> duplicateTransactions = new ArrayList<>();
         List<SkippedTransaction> skippedTransactions = new ArrayList<>();
+        List<PaymentDto> toWrite = new ArrayList<>();
+
+        // How many receipts with each key the store already holds (after the
+        // cutoff, which is the only window this importer accepts). Rows imported
+        // before deterministic ids existed carry random ids, so identity is
+        // established by key+ordinal, not by document id alone.
+        Map<String, Integer> existingCounts = new HashMap<>();
+        for (PaymentDto existing : manualCashPaymentRepository.findByDateAfter(
+                LocalDate.parse(paymentCutoffDate))) {
+            if (existing.getPaymentDate() == null || existing.getAmount() == null
+                    || existing.getCustomerId() == null) {
+                continue;
+            }
+            existingCounts.merge(rowKey(existing.getPaymentDate(), existing.getAmount(),
+                    existing.getCustomerId()), 1, Integer::sum);
+        }
+        Map<String, Integer> seenInFile = new HashMap<>();
 
         BigDecimal excelTotalAll = BigDecimal.ZERO;
         BigDecimal excelTotalWindow = BigDecimal.ZERO;
@@ -149,29 +189,51 @@ public class ManualCashExcelImportService {
             excelTotalWindow = excelTotalWindow.add(amount);
             analyzedTotal = analyzedTotal.add(amount);
 
-            PaymentDto payment = PaymentDto.builder()
+            String key = rowKey(date, amount, customerId);
+            int ordinal = seenInFile.merge(key, 1, Integer::sum);
+            String id = importId(key, ordinal);
+            if (existingCounts.getOrDefault(key, 0) >= ordinal) {
+                // The store already holds this many receipts with this identity —
+                // a re-upload (or an overlapping file). Report it; never double it.
+                duplicateTransactions.add(TransactionDetail.builder()
+                        .rowIndex(rowIndex + 1)
+                        .customerId(customerId.trim())
+                        .amount(AmountUtils.round(amount))
+                        .date(DateUtils.formatDate(date))
+                        .uniqueCode(id)
+                        .status("Duplicate")
+                        .build());
+                continue;
+            }
+
+            toWrite.add(PaymentDto.builder()
+                    .id(id)
+                    .uniqueCode(id)
                     .customerId(customerId.trim())
                     .amount(AmountUtils.round(amount))
                     .paymentDate(date)
                     .description("Manual cash (Excel)")
                     .source("manual-cash")
                     .uploadedAt(LocalDateTime.now())
-                    .build();
-
-            manualCashPaymentRepository.save(payment);
+                    .build());
 
             addedTransactions.add(TransactionDetail.builder()
                     .rowIndex(rowIndex + 1)
                     .customerId(customerId.trim())
                     .amount(AmountUtils.round(amount))
                     .date(DateUtils.formatDate(date))
+                    .uniqueCode(id)
                     .status("Added")
                     .build());
         }
 
-        String message = String.format("%d payments processed. %d added, %d skipped.",
-                addedTransactions.size() + skippedTransactions.size(),
+        // One batched write instead of one blocking round trip per row.
+        manualCashPaymentRepository.saveAll(toWrite);
+
+        String message = String.format("%d payments processed. %d added, %d duplicates, %d skipped.",
+                addedTransactions.size() + duplicateTransactions.size() + skippedTransactions.size(),
                 addedTransactions.size(),
+                duplicateTransactions.size(),
                 skippedTransactions.size());
 
         if (beforeWindowCount > 0) {
@@ -187,13 +249,13 @@ public class ManualCashExcelImportService {
                 .appTotal(BigDecimal.ZERO)
                 .totalRowsProcessed(totalRows)
                 .addedCount(addedTransactions.size())
-                .duplicateCount(0)
+                .duplicateCount(duplicateTransactions.size())
                 .skippedCount(skippedTransactions.size())
                 .beforeWindowCount(beforeWindowCount)
                 .validationPassed(true)
                 .validationDifference(BigDecimal.ZERO)
                 .addedTransactions(addedTransactions)
-                .duplicateTransactions(List.of())
+                .duplicateTransactions(duplicateTransactions)
                 .skippedTransactions(skippedTransactions)
                 .build();
     }

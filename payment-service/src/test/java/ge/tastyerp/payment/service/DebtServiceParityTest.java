@@ -169,4 +169,25 @@ class DebtServiceParityTest {
         }
         assertEquals(0, oa.getTotalOutstanding().compareTo(ob.getTotalOutstanding()));
     }
+
+    /**
+     * BOR-81 finding B-10: a JSON payload carrying {@code "amount": null} is a
+     * PRESENT key with a null value, which {@code getOrDefault} does not default;
+     * the old code built {@code new BigDecimal("null")} and 500'd the whole debt
+     * page for one bad waybill.
+     */
+    @Test
+    @DisplayName("Upstream null/absent/garbage amounts coerce to zero instead of failing the aggregate")
+    void jsonDecimalIsNullTolerant() {
+        Map<String, Object> present = new HashMap<>();
+        present.put("amount", null);
+        assertEquals(0, DebtService.jsonDecimal(present.get("amount")).compareTo(BigDecimal.ZERO));
+        assertEquals(0, DebtService.jsonDecimal(present.get("missing")).compareTo(BigDecimal.ZERO));
+        assertEquals(0, DebtService.jsonDecimal("null").compareTo(BigDecimal.ZERO));
+        assertEquals(0, DebtService.jsonDecimal("not-a-number").compareTo(BigDecimal.ZERO));
+        assertEquals(0, DebtService.jsonDecimal(1234.5).compareTo(bd("1234.5")));
+        assertEquals(0, DebtService.jsonDecimal(42).compareTo(bd("42")));
+        assertEquals(0, DebtService.jsonDecimal("99.99").compareTo(bd("99.99")));
+        assertEquals(0, DebtService.jsonDecimal(bd("7.25")).compareTo(bd("7.25")));
+    }
 }

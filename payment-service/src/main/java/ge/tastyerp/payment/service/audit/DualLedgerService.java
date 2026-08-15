@@ -6,6 +6,7 @@ import ge.tastyerp.common.dto.config.FormalSalesCustomerDto;
 import ge.tastyerp.common.dto.waybill.WaybillType;
 import ge.tastyerp.common.exception.ExternalServiceException;
 import ge.tastyerp.common.util.TinValidator;
+import ge.tastyerp.common.util.UnitClassifier;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -429,19 +430,9 @@ public class DualLedgerService {
         return v.setScale(MONEY, RoundingMode.HALF_UP);
     }
 
-    /** Unit substrings (lowercased) that mark a line as NOT measured in kilograms. */
-    private static final List<String> NON_KG_UNITS = List.of(
-            "ცალ", "piece", "pcs", "ლიტრ", "liter", "litre",
-            "შეკვრ", "კომპლ", "pack", "set", "წყვილ", "გრამ", "gram");
-
+    /** Shared rule — see {@link UnitClassifier} for why it must not be copied. */
     private static boolean isKilogram(String unit) {
-        if (unit == null || unit.isBlank()) return true;
-        String u = unit.trim().toLowerCase();
-        if (u.contains("კგ") || u.contains("kg") || u.contains("კილ") || u.contains("kilo")) return true;
-        for (String nonKg : NON_KG_UNITS) {
-            if (u.contains(nonKg)) return false;
-        }
-        return true;
+        return UnitClassifier.isKilogram(unit);
     }
 
     // ==================== HELPERS (I/O) ====================

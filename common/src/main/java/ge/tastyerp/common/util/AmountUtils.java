@@ -44,10 +44,24 @@ public final class AmountUtils {
                 .trim();
 
         // Handle comma-decimal formats:
-        // - If there's a comma but no dot, treat comma as decimal separator.
-        // - Otherwise, treat commas as thousands separators and remove them.
-        if (stringValue.contains(",") && !stringValue.contains(".")) {
+        // - Comma but no dot: the comma is the decimal separator ("10,50").
+        // - Both present: whichever separator appears LAST is the decimal one and
+        //   the other is a thousands grouper — "1,234.56" and "1.234,56" are both
+        //   1234.56. Deciding by mere presence (the previous rule) turned the
+        //   European form "1.234,56" into 1.23, a silent 1000× understatement
+        //   (BOR-81 finding B-14).
+        // - Dot but no comma: plain decimal; Arabic thousands separators dropped.
+        int lastComma = stringValue.lastIndexOf(',');
+        int lastDot = stringValue.lastIndexOf('.');
+        if (lastComma >= 0 && lastDot < 0) {
             stringValue = stringValue.replace(",", ".");
+        } else if (lastComma >= 0 && lastDot >= 0) {
+            if (lastComma > lastDot) {
+                // European: dots group thousands, comma is the decimal point.
+                stringValue = stringValue.replace(".", "").replace(",", ".");
+            } else {
+                stringValue = stringValue.replaceAll("[,\\u066C]", "");
+            }
         } else {
             stringValue = stringValue.replaceAll("[,\\u066C]", "");
         }

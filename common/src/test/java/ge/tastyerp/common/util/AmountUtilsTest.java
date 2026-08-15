@@ -30,6 +30,15 @@ class AmountUtilsTest {
         assertEquals(new BigDecimal("1000.00"), AmountUtils.parseAmount("1 000"));
     }
 
+    /** BOR-81 finding B-14: the European form must not lose three orders of magnitude. */
+    @Test
+    void parseAmount_ShouldHandleEuropeanThousandsAndDecimal() {
+        assertEquals(new BigDecimal("1234.56"), AmountUtils.parseAmount("1.234,56"));
+        assertEquals(new BigDecimal("1234567.89"), AmountUtils.parseAmount("1.234.567,89"));
+        assertEquals(new BigDecimal("1234567.89"), AmountUtils.parseAmount("1,234,567.89"));
+        assertEquals(new BigDecimal("-1234.50"), AmountUtils.parseAmount("-1.234,5"));
+    }
+
     @Test
     void parseAmount_ShouldHandleCurrencySymbolsAndWhitespace() {
         assertEquals(new BigDecimal("50.00"), AmountUtils.parseAmount(" 50.00 "));

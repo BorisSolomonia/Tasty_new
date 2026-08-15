@@ -45,4 +45,5 @@ logging:
     ge.tastyerp: ${LOG_LEVEL:INFO}
     com.google.cloud: WARN
   pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    # [%X{requestId}] matches the other two services so a hop can be joined by id.
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} [%X{requestId}] - %msg%n"
