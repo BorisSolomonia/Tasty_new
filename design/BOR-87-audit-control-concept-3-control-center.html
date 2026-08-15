@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audit Control · Exception Queue</title>
+<!--
+  BOR-87 concept 3 of 3 — ALERT-FIRST CONTROL CENTER (standalone, mock data).
+  Chart strategy: ranked EXCEPTION QUEUE with a mini-viz per alert · CATEGORY × DAY HEATMAP of overage /
+  write-off pressure · SLOPEGRAPH documented→real (kg and ₾) · DIVERGING CASH-GAP BARS · ranked debtor bars.
+  Every alert states its formula (project rule: say how a figure was established) and links to evidence.
+-->
+<style>
+  :root { color-scheme: light;
+    --bg:#fbfaf7; --surface:#fff; --surface-2:#f3f1ea; --line:#e6e3dc; --grid:#edeae2;
+    --ink:#15171a; --ink-2:#4f5259; --ink-3:#7c8089;
+    --doc:#6da7ec; --real:#184f95; --accent:#2a78d6; --accent-soft:#e4effc;
+    --good:#0ca30c; --warn:#b7780a; --crit:#c8332f; --crit-soft:#fbe9e8; --warn-soft:#fff4d6; --shadow:0 1px 2px rgba(20,22,26,.06);
+    --heat-0:#f3f1ea; --heat-1:#cde2fb; --heat-2:#86b6ef; --heat-3:#3987e5; --heat-4:#1c5cab; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { color-scheme: dark;
+    --bg:#181a1c; --surface:#1f2224; --surface-2:#26292c; --line:#33373b; --grid:#2b2f33; --ink:#f2f1ec; --ink-2:#c3c2b7; --ink-3:#8f9299;
+    --doc:#86b6ef; --real:#3987e5; --accent:#5598e7; --accent-soft:#1b2b40; --good:#3ec13e; --warn:#f0b429; --crit:#ef6b66; --crit-soft:#3a2323; --warn-soft:#3a3120; --shadow:none;
+    --heat-0:#26292c; --heat-1:#184f95; --heat-2:#256abf; --heat-3:#3987e5; --heat-4:#86b6ef; } }
+  :root[data-theme="dark"] { color-scheme: dark;
+    --bg:#181a1c; --surface:#1f2224; --surface-2:#26292c; --line:#33373b; --grid:#2b2f33; --ink:#f2f1ec; --ink-2:#c3c2b7; --ink-3:#8f9299;
+    --doc:#86b6ef; --real:#3987e5; --accent:#5598e7; --accent-soft:#1b2b40; --good:#3ec13e; --warn:#f0b429; --crit:#ef6b66; --crit-soft:#3a2323; --warn-soft:#3a3120; --shadow:none;
+    --heat-0:#26292c; --heat-1:#184f95; --heat-2:#256abf; --heat-3:#3987e5; --heat-4:#86b6ef; }
+  *{box-sizing:border-box} html,body{margin:0}
+  body{background:var(--bg);color:var(--ink);font:14px/1.45 ui-sans-serif,system-ui,"Segoe UI",Roboto,Arial,sans-serif;font-variant-numeric:tabular-nums}
+  .wrap{max-width:1240px;margin:0 auto;padding:20px 20px 64px;display:grid;gap:20px}
+  header.top{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:12px 24px}
+  h1{font-size:20px;margin:0;letter-spacing:-.01em} h1 small{display:block;font-size:12px;color:var(--ink-3);font-weight:400;margin-top:2px}
+  .eyebrow{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
+  .filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .filters button,.filters .field{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:6px;padding:7px 10px;font:inherit;min-height:36px}
+  .filters button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .filters .field{display:inline-flex;gap:6px;align-items:center;color:var(--ink-2)} .filters .field input,.filters .field select{border:0;background:transparent;color:var(--ink);font:inherit}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow)}
+  .card>.head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:6px 16px;padding:14px 16px 0}
+  .card>.head h2{font-size:15px;margin:0} .card>.head p{margin:2px 0 0;color:var(--ink-3);font-size:12px;max-width:70ch}
+  .card>.body{padding:12px 16px 16px}
+  .summary{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+  .stat{padding:12px 14px} .stat .l{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)} .stat .v{font-size:24px;font-weight:650} .stat .s{font-size:12px;color:var(--ink-2)}
+  .stat.crit .v{color:var(--crit)} .stat.warn .v{color:var(--warn)}
+  .queue{display:grid;gap:10px}
+  .alert{display:grid;grid-template-columns:auto 1fr auto;gap:12px 14px;align-items:center;padding:12px 14px;border-radius:8px;border:1px solid var(--line);background:var(--surface);border-left-width:5px}
+  .alert.crit{border-left-color:var(--crit)} .alert.warn{border-left-color:var(--warn)} .alert.info{border-left-color:var(--accent)}
+  .alert .sev{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:3px 8px;border-radius:999px;color:#fff;background:var(--ink-3)}
+  .alert.crit .sev{background:var(--crit)} .alert.warn .sev{background:var(--warn)} .alert.info .sev{background:var(--accent)}
+  .alert h3{margin:0;font-size:14px} .alert .why{font-size:12px;color:var(--ink-2);margin-top:2px} .alert .why code{background:var(--surface-2);padding:1px 5px;border-radius:3px;font-size:11px}
+  .alert .viz{width:180px} .alert .viz svg{display:block;width:100%;height:36px}
+  .alert .act{display:flex;gap:6px;flex-wrap:wrap} .alert .act a{border:1px solid var(--line);border-radius:6px;padding:6px 10px;text-decoration:none;color:var(--ink);font-size:12px;min-height:34px;display:inline-flex;align-items:center;background:var(--surface)}
+  @media (max-width:760px){ .alert{grid-template-columns:1fr} .alert .viz{width:100%} }
+  .two{display:grid;gap:20px;grid-template-columns:1fr} @media(min-width:1000px){.two{grid-template-columns:1fr 1fr}}
+  svg text{fill:var(--ink-2);font:11px ui-sans-serif,system-ui,sans-serif} svg .grid line{stroke:var(--grid)} svg .lbl-strong{fill:var(--ink);font-weight:600}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--ink-2);align-items:center} .legend i{display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:-2px;margin-right:6px}
+  .ramp{display:inline-flex;gap:2px;margin-left:4px} .ramp i{width:14px;height:12px;border-radius:2px;margin:0}
+  table{width:100%;border-collapse:collapse;font-size:13px} th,td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left} th{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-weight:600} td.num,th.num{text-align:right} .table-wrap{overflow-x:auto}
+  details.tv summary{cursor:pointer;color:var(--ink-3);font-size:12px;margin-top:8px}
+  .note{font-size:12px;color:var(--ink-3)} .note.honest{border-left:3px solid var(--warn);padding:6px 10px;background:var(--warn-soft);border-radius:4px;color:var(--ink-2)}
+  .tip{position:fixed;pointer-events:none;z-index:10;background:var(--ink);color:var(--bg);padding:6px 8px;border-radius:6px;font-size:12px;opacity:0;transition:opacity .12s;max-width:280px} .tip.on{opacity:1}
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div><div class="eyebrow">Tasty ERP · Audit Control</div>
+      <h1>Exception queue <small>Start from what is wrong; the totals wait below · 1–31 Aug 2026 · all products</small></h1></div>
+    <div class="filters" role="group" aria-label="Period and filters">
+      <label class="field">from <input type="date" value="2026-08-01"></label><label class="field">to <input type="date" value="2026-08-31"></label>
+      <label class="field">product <select><option>All products</option><option>Beef</option><option>Pork</option></select></label>
+      <label class="field">show <select><option>All severities</option><option>Critical only</option></select></label>
+      <button type="button" class="primary">Apply</button>
+    </div>
+  </header>
+
+  <!-- Compact summary: counts, not totals -->
+  <section class="summary" id="summary" aria-label="Alarm summary"></section>
+
+  <!-- 1. Ranked exception queue -->
+  <section class="card" aria-labelledby="q-h">
+    <div class="head"><div><h2 id="q-h">Exceptions, ranked by ₾ at stake</h2><p>Each alert states its rule in words, the inputs it was computed from, and a link to exactly the records that produced it. Nothing here is a total; totals are context, further down.</p></div></div>
+    <div class="body"><div class="queue" id="queue"></div></div>
+  </section>
+
+  <div class="two">
+    <!-- 2. Heatmap category × day -->
+    <section class="card" aria-labelledby="hm-h">
+      <div class="head"><div><h2 id="hm-h">Where the ledger is under pressure</h2><p>Category × day. Cell shade = documented sales as a share of what could have been on hand that day (darker = tighter). A red ring is an overage day (over 100 %). One hue, light→dark; overage is a status mark, not a colour step.</p></div>
+        <div class="legend"><span>0 %<span class="ramp"><i style="background:var(--heat-0)"></i><i style="background:var(--heat-1)"></i><i style="background:var(--heat-2)"></i><i style="background:var(--heat-3)"></i><i style="background:var(--heat-4)"></i></span>100 %</span><span><i style="border:2px solid var(--crit);border-radius:50%;background:transparent"></i>overage</span></div></div>
+      <div class="body"><svg id="heatmap" width="100%" role="img" aria-labelledby="hm-h"></svg><p class="note honest" style="margin-top:8px">Opening stock is not recorded, so "on hand" is the month's cumulative net movement. Early-month cells are therefore biased dark; the concept states it rather than hiding it.</p></div>
+    </section>
+
+    <!-- 3. Slopegraph doc → real -->
+    <section class="card" aria-labelledby="sl-h">
+      <div class="head"><div><h2 id="sl-h">Documented → real, every category at once</h2><p>Left = documented, right = real. A rising line means real exceeds paper. Slopes let seven categories be read together where the dumbbell reads one at a time.</p></div>
+        <div class="filters" role="tablist"><button type="button" role="tab" aria-selected="true" data-m="purchase">Purchases ₾</button><button type="button" role="tab" aria-selected="false" data-m="sales">Sales ₾</button><button type="button" role="tab" aria-selected="false" data-m="kg">Purchases kg</button></div></div>
+      <div class="body"><svg id="slope" width="100%" role="img" aria-labelledby="sl-h"></svg><details class="tv"><summary>Table view</summary><div class="table-wrap"><table id="slope-table"></table></div></details></div>
+    </section>
+  </div>
+
+  <div class="two">
+    <!-- 4. Diverging cash-gap bars (the unrendered payload) -->
+    <section class="card" aria-labelledby="cg-h">
+      <div class="head"><div><h2 id="cg-h">Cash gap per category</h2><p>Purchase shortage (documented − real, left) and sales surplus (real − documented, right) on one axis with zero in the middle. The backend already computes these series; the current page does not show them.</p></div></div>
+      <div class="body"><svg id="gap" width="100%" role="img" aria-labelledby="cg-h"></svg><details class="tv"><summary>Table view</summary><div class="table-wrap"><table id="gap-table"></table></div></details></div>
+    </section>
+    <!-- 5. Ranked debtors -->
+    <section class="card" aria-labelledby="dd-h">
+      <div class="head"><div><h2 id="dd-h">Who to chase</h2><p>Real receivable, ranked; exception (paper) debt shown hollow beside it so it is never mistaken for money.</p></div>
+        <div class="legend"><span><i style="background:var(--real)"></i>Real debt</span><span><i style="border:2px solid var(--doc);background:transparent"></i>Exception debt</span></div></div>
+      <div class="body"><svg id="debtors" width="100%" role="img" aria-labelledby="dd-h"></svg><p class="note">10 of 312 customers with a balance shown; the live table lists all of them.</p></div>
+    </section>
+  </div>
+
+  <!-- 6. Context totals, demoted -->
+  <section class="card" aria-labelledby="ctx-h">
+    <div class="head"><div><h2 id="ctx-h">Context totals</h2><p>Kept, deliberately last: they explain scale, they do not raise alarms.</p></div></div>
+    <div class="body"><div class="table-wrap"><table id="ctx"></table></div></div>
+  </section>
+  <p class="note">Mock data for design review only. Not connected to production.</p>
+</div>
+<div class="tip" id="tip" role="status" aria-live="polite"></div>
+
+<script>
+const CATS=[
+  {code:'BEEF',name:'Beef',purKg:18420,purDocPrice:19.80,purRealKg:19900,purRealPrice:21.10,wo:28,saleKg:12610,saleDocPrice:26.40,saleRealPrice:27.20,unrealKg:1150,formalKg:820,commission:410},
+  {code:'PORK',name:'Pork',purKg:9760,purDocPrice:13.20,purRealKg:9760,purRealPrice:13.90,wo:25,saleKg:6940,saleDocPrice:17.90,saleRealPrice:17.90,unrealKg:0,formalKg:0,commission:0},
+  {code:'SHEEP',name:'Sheep',purKg:2140,purDocPrice:24.50,purRealKg:2300,purRealPrice:24.50,wo:20,saleKg:1610,saleDocPrice:31.00,saleRealPrice:32.50,unrealKg:0,formalKg:0,commission:0},
+  {code:'CHICKEN',name:'Chicken',purKg:4380,purDocPrice:8.10,purRealKg:4380,purRealPrice:8.10,wo:8,saleKg:3970,saleDocPrice:10.60,saleRealPrice:10.60,unrealKg:210,formalKg:0,commission:0},
+  {code:'FAT',name:'Fat',purKg:1020,purDocPrice:4.20,purRealKg:1020,purRealPrice:4.20,wo:0,saleKg:860,saleDocPrice:6.10,saleRealPrice:6.10,unrealKg:0,formalKg:0,commission:0},
+  {code:'OTHER_FOOD',name:'Other food',purKg:640,purDocPrice:9.40,purRealKg:640,purRealPrice:9.40,wo:0,saleKg:590,saleDocPrice:12.30,saleRealPrice:12.30,unrealKg:0,formalKg:0,commission:0},
+];
+function rng(seed){let s=seed;return()=>{s=(s*1664525+1013904223)%4294967296;return s/4294967296}}
+CATS.forEach((c,i)=>{ c.debtDoc=c.purKg*c.purDocPrice;c.debtReal=c.purRealKg*c.purRealPrice;c.vatDiff=(c.debtReal-c.debtDoc)*18/118;c.netKg=c.purKg*(1-c.wo/100);c.saleDocTotal=c.saleKg*c.saleDocPrice;c.saleRealKg=c.saleKg-c.unrealKg-c.formalKg;c.saleRealTotal=c.saleRealKg*c.saleRealPrice+c.commission;c.netMove=c.netKg-c.saleKg;c.outVat=c.saleDocTotal*18/118;c.inVat=c.debtDoc*18/118;c.vatPayable=c.outVat-c.inVat;c.vatProjected=c.wo>0?(c.netKg*c.saleDocPrice*18/118)-c.inVat:null;
+  c.purchaseShortage=c.debtDoc-c.debtReal; c.saleSurplus=c.saleRealTotal-c.saleDocTotal;
+  const r=rng(11+i*7);let stock=0;c.days=[];c.overage=0;for(let d=1;d<=31;d++){const buy=(r()<0.55?c.purKg/17*(0.6+r()*0.8):0)*(1-c.wo/100);let sell=c.saleKg/27*(0.5+r());if(i===0&&(d===9||d===23))sell=stock+buy+180+r()*120;if(i===2&&d===17)sell=stock+buy+60;const start=stock;stock=start+buy-sell;const over=stock<-0.5;if(over)c.overage++;const avail=Math.max(start+buy,0.0001);c.days.push({d,start,buy,sell,end:stock,over,pressure:Math.min(sell/avail,1.5)});} });
+const DEBTORS=[['შპს წისქვილი ჯგუფი',41200,3800],['შპს მარანი 2000',33750,0],['ი/მ გიორგი ბერიძე',28900,0],['შპს კახეთის ხორცი',24100,12000],['შპს ბაზისი',19800,0],['ი/მ ნინო კაპანაძე',17650,0],['შპს გლდანის ბაზარი',15200,0],['შპს საბა',12900,0],['ი/მ ლევან წულაია',11400,0],['შპს დიდუბე',9700,0]];
+const fmt={gel:v=>'₾'+Math.round(v).toLocaleString('en-US'),kg:v=>Math.round(v).toLocaleString('en-US')+' kg',pct:v=>(Math.round(v*10)/10)+'%',n:v=>Math.round(v).toLocaleString('en-US')};
+const NS='http://www.w3.org/2000/svg';const el=(t,a={},p)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e};
+const tip=document.getElementById('tip');
+function hover(n,text){n.addEventListener('pointerenter',()=>{tip.textContent=text;tip.classList.add('on')});n.addEventListener('pointermove',ev=>{tip.style.left=Math.min(ev.clientX+12,innerWidth-290)+'px';tip.style.top=(ev.clientY+12)+'px'});n.addEventListener('pointerleave',()=>tip.classList.remove('on'));n.setAttribute('tabindex','0');n.addEventListener('focus',()=>{tip.textContent=text;tip.classList.add('on')});n.addEventListener('blur',()=>tip.classList.remove('on'));}
+
+// ---- alerts ----
+const beef=CATS[0], sheep=CATS[2];
+const overageKg = c => c.days.filter(d=>d.over).reduce((s,d)=>s-Math.min(d.end,0),0);
+const ALERTS=[
+  {sev:'crit',title:`Beef: ${beef.overage} overage days — ${fmt.kg(overageKg(beef))} sold that the ledger says was not there`,why:`rule: sold<sub>day</sub> > start<sub>day</sub> + purchases<sub>day</sub>(net of write-off) · inputs: RS.ge sales & purchase lines, write-off ${beef.wo}% · money at stake ≈ ${fmt.gel(overageKg(beef)*beef.saleDocPrice)}`,stake:overageKg(beef)*beef.saleDocPrice,viz:'spark',cat:beef,links:[['Daily ledger','#hm-h'],['RS.ge lines (Aug 9, 23)','#hm-h']]},
+  {sev:'crit',title:`Beef: real purchases exceed documented by ${fmt.gel(beef.debtReal-beef.debtDoc)}`,why:`rule: real kg × real price − doc kg × doc price · inputs: operator's real kg/price entries · VAT effect ${fmt.gel(beef.vatDiff)} (× 18/118)`,stake:beef.debtReal-beef.debtDoc,viz:'dumb',cat:beef,links:[['Purchase window','#sl-h'],['Change history','#sl-h']]},
+  {sev:'warn',title:`Exception (paper) debt of ${fmt.gel(61200)} across 9 documentation-only customers`,why:`rule: sales − payments for customers marked unreal · inputs: reconciliation rows · not receivable; kept out of real debt`,stake:61200,viz:'bar',links:[['Reconciliation','#dd-h']]},
+  {sev:'warn',title:`Sheep: 1 overage day and real purchases +${fmt.kg(sheep.purRealKg-sheep.purKg)}`,why:`same rules as Beef · money at stake ≈ ${fmt.gel(overageKg(sheep)*sheep.saleDocPrice + (sheep.debtReal-sheep.debtDoc))}`,stake:overageKg(sheep)*sheep.saleDocPrice+(sheep.debtReal-sheep.debtDoc),viz:'spark',cat:sheep,links:[['Daily ledger','#hm-h']]},
+  {sev:'warn',title:`VAT: filed ${fmt.gel(CATS.reduce((s,c)=>s+c.vatPayable,0))} vs projected ${fmt.gel(CATS.reduce((s,c)=>s+(c.vatProjected??c.vatPayable),0))} at current write-offs`,why:`rule: output − input (18 % inclusive); projection re-prices sold kg = purchased × (1 − write-off) · inputs: RS.ge amounts, write-off % per category`,stake:Math.abs(CATS.reduce((s,c)=>s+(c.vatProjected??c.vatPayable)-c.vatPayable,0)),viz:'bar',links:[['VAT table','#ctx-h']]},
+  {sev:'info',title:'Formal commission AR ₾410 for 1 customer (documented AR ₾21,650 ignored)',why:'rule: documented kg × commission/kg (₾0.50 default) · inputs: formal-customer list',stake:410,viz:'bar',links:[['Commission table','#ctx-h']]},
+  {sev:'info',title:'3 open reconciliation exceptions',why:'manual notes attached to customers; not money',stake:0,viz:'none',links:[['Exceptions','#ctx-h']]},
+];
+(function summary(){ const s=document.getElementById('summary'); const crit=ALERTS.filter(a=>a.sev==='crit').length,warn=ALERTS.filter(a=>a.sev==='warn').length; const stake=ALERTS.filter(a=>a.sev!=='info').reduce((x,a)=>x+a.stake,0);
+  [['Critical',crit,'ledger broken or money misstated','crit'],['Warnings',warn,'needs a decision','warn'],['₾ at stake',fmt.gel(stake),'sum of alert exposures (overlaps possible)','crit'],['Overage days',CATS.reduce((x,c)=>x+c.overage,0),'across all categories','crit']].forEach(([l,v,sub,cls])=>{const d=document.createElement('div');d.className='card stat '+(v===0?'':cls);d.innerHTML=`<div class="l">${l}</div><div class="v">${v}</div><div class="s">${sub}</div>`;s.appendChild(d)}); })();
+(function queue(){ const q=document.getElementById('queue');
+  ALERTS.sort((a,b)=>({crit:0,warn:1,info:2}[a.sev]-{crit:0,warn:1,info:2}[b.sev])||b.stake-a.stake).forEach(a=>{ const div=document.createElement('article'); div.className='alert '+a.sev;
+    div.innerHTML=`<span class="sev">${a.sev==='crit'?'Critical':a.sev==='warn'?'Warning':'Info'}</span><div><h3>${a.title}</h3><div class="why">${a.why}</div></div><div class="viz"></div><div></div><div class="act">${a.links.map(l=>`<a href="${l[1]}">${l[0]} →</a>`).join('')}</div>`;
+    const viz=div.querySelector('.viz');
+    if(a.viz==='spark'){ const c=a.cat; const svg=el('svg',{viewBox:'0 0 180 36','aria-hidden':'true'}); const vals=c.days.map(d=>d.end); const hi=Math.max(...vals,1),lo=Math.min(...vals,0); const x=d=>4+(d-1)/30*172,y=v=>4+(hi-v)/(hi-lo||1)*28; el('line',{x1:4,x2:176,y1:y(0),y2:y(0),stroke:'var(--grid)'},svg); el('polyline',{points:c.days.map(d=>`${x(d.d)},${y(d.end)}`).join(' '),fill:'none',stroke:'var(--real)','stroke-width':1.5},svg); c.days.filter(d=>d.over).forEach(d=>el('circle',{cx:x(d.d),cy:y(d.end),r:3.5,fill:'var(--crit)',stroke:'var(--surface)','stroke-width':1.5},svg)); viz.appendChild(svg); }
+    else if(a.viz==='dumb'){ const c=a.cat; const svg=el('svg',{viewBox:'0 0 180 36','aria-hidden':'true'}); const max=Math.max(c.debtDoc,c.debtReal)*1.1; const x=v=>8+v/max*164; el('line',{x1:x(c.debtDoc),x2:x(c.debtReal),y1:18,y2:18,stroke:'var(--real)','stroke-width':4,opacity:.5},svg); el('circle',{cx:x(c.debtDoc),cy:18,r:6,fill:'var(--surface)',stroke:'var(--doc)','stroke-width':3},svg); el('circle',{cx:x(c.debtReal),cy:18,r:6,fill:'var(--real)'},svg); viz.appendChild(svg); }
+    else if(a.viz==='bar'){ const svg=el('svg',{viewBox:'0 0 180 36','aria-hidden':'true'}); const max=Math.max(...ALERTS.map(z=>z.stake))||1; el('rect',{x:4,y:12,width:172,height:12,rx:3,fill:'var(--surface-2)'},svg); el('rect',{x:4,y:12,width:Math.max(3,a.stake/max*172),height:12,rx:3,fill:a.sev==='crit'?'var(--crit)':a.sev==='warn'?'var(--warn)':'var(--accent)'},svg); viz.appendChild(svg); }
+    q.appendChild(div); }); })();
+
+// ---- heatmap ----
+(function heat(){ const svg=document.getElementById('heatmap'); const W=560,left=74,top=22,cw=(W-left-8)/31,ch=26,H=top+CATS.length*ch+8; svg.setAttribute('viewBox',`0 0 ${W} ${H}`); svg.style.height='auto';
+  for(let d=1;d<=31;d++){ if(d===1||d%5===0){const t=el('text',{x:left+(d-1)*cw+cw/2,y:14,'text-anchor':'middle'},svg);t.textContent=d;} }
+  const step=p=>p<=0.2?'var(--heat-0)':p<=0.45?'var(--heat-1)':p<=0.7?'var(--heat-2)':p<=0.9?'var(--heat-3)':'var(--heat-4)';
+  CATS.forEach((c,i)=>{ const y=top+i*ch; const t=el('text',{x:left-8,y:y+ch/2+4,'text-anchor':'end',class:'lbl-strong'},svg); t.textContent=c.name;
+    c.days.forEach(d=>{ const x=left+(d.d-1)*cw; const r=el('rect',{x:x+1,y:y+1,width:cw-2,height:ch-2,rx:2,fill:step(d.pressure)},svg); if(d.over) el('rect',{x:x+1.5,y:y+1.5,width:cw-3,height:ch-3,rx:2,fill:'none',stroke:'var(--crit)','stroke-width':2},svg);
+      hover(r,`${c.name} · Aug ${d.d}: sold ${fmt.kg(d.sell)} of ${fmt.kg(Math.max(d.start+d.buy,0))} available (${fmt.pct(Math.min(d.pressure,9)*100)})${d.over?' — OVERAGE':''}`); }); });
+})();
+
+// ---- slopegraph ----
+const M={purchase:{doc:c=>c.debtDoc,real:c=>c.debtReal,u:fmt.gel,t:'Purchases ₾'},sales:{doc:c=>c.saleDocTotal,real:c=>c.saleRealTotal,u:fmt.gel,t:'Sales ₾'},kg:{doc:c=>c.purKg,real:c=>c.purRealKg,u:fmt.kg,t:'Purchases kg'}};
+function slope(key){ const m=M[key]; const svg=document.getElementById('slope'); svg.innerHTML=''; const W=560,H=300,L=150,R=410,top=26,bottom=20; svg.setAttribute('viewBox',`0 0 ${W} ${H}`); svg.style.height='auto';
+  const max=Math.max(...CATS.map(c=>Math.max(m.doc(c),m.real(c)))); const y=v=>top+(1-Math.sqrt(v/max))*(H-top-bottom); // sqrt scale so small categories are legible; stated on hover
+  [['Documented',L],['Real',R]].forEach(([l,x])=>{const t=el('text',{x,y:12,'text-anchor':'middle',class:'lbl-strong'},svg);t.textContent=l;});
+  el('line',{x1:L,x2:L,y1:top,y2:H-bottom,stroke:'var(--grid)'},svg); el('line',{x1:R,x2:R,y1:top,y2:H-bottom,stroke:'var(--grid)'},svg);
+  const placed=[]; const nudge=(yy)=>{let v=yy;while(placed.some(p=>Math.abs(p-v)<12))v+=12;placed.push(v);return v;};
+  CATS.forEach(c=>{ const d=m.doc(c),r=m.real(c),gap=r-d; const y1=y(d),y2=y(r); const col=Math.abs(gap)<0.5?'var(--ink-3)':gap>0?'var(--crit)':'var(--real)';
+    const g=el('g',{},svg); el('line',{x1:L,x2:R,y1,y2,stroke:col,'stroke-width':Math.abs(gap)<0.5?1.5:2.5},g); el('circle',{cx:L,cy:y1,r:5,fill:'var(--surface)',stroke:'var(--doc)','stroke-width':3},g); el('circle',{cx:R,cy:y2,r:5,fill:'var(--real)'},g);
+    const ly=nudge(y2); const t=el('text',{x:R+12,y:ly+4,class:Math.abs(gap)>0.5?'lbl-strong':''},svg); t.textContent=`${c.name} ${gap>0?'+':gap<0?'−':''}${Math.abs(gap)<0.5?'':m.u(Math.abs(gap))}`; if(Math.abs(gap)>0.5)t.setAttribute('fill',col);
+    const lt=el('text',{x:L-12,y:y1+4,'text-anchor':'end'},svg); lt.textContent=m.u(d);
+    hover(g,`${c.name}: documented ${m.u(d)} → real ${m.u(r)} (${gap>=0?'+':'−'}${m.u(Math.abs(gap))}). Vertical position uses a square-root scale so small categories stay legible; the numbers, not the heights, are the values.`); });
+  document.getElementById('slope-table').innerHTML=`<thead><tr><th>Category</th><th class="num">Documented</th><th class="num">Real</th><th class="num">Real − doc</th></tr></thead><tbody>`+CATS.map(c=>`<tr><td>${c.name}</td><td class="num">${m.u(m.doc(c))}</td><td class="num">${m.u(m.real(c))}</td><td class="num">${m.u(m.real(c)-m.doc(c))}</td></tr>`).join('')+'</tbody>'; }
+document.querySelectorAll('[data-m]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('[data-m]').forEach(x=>x.setAttribute('aria-selected','false'));b.setAttribute('aria-selected','true');slope(b.dataset.m)})); slope('purchase');
+
+// ---- diverging cash gap ----
+(function gap(){ const svg=document.getElementById('gap'); const W=560,rowH=32,padL=90,top=24,H=top+CATS.length*rowH+30; svg.setAttribute('viewBox',`0 0 ${W} ${H}`); svg.style.height='auto';
+  const max=Math.max(...CATS.map(c=>Math.max(Math.abs(c.purchaseShortage),Math.abs(c.saleSurplus))))*1.1; const mid=padL+(W-padL-10)/2, half=(W-padL-10)/2; const x=v=>mid+v/max*half;
+  const t1=el('text',{x:padL+4,y:12},svg);t1.textContent='← purchase shortage (doc − real)'; const t2=el('text',{x:W-10,y:12,'text-anchor':'end'},svg);t2.textContent='sales surplus (real − doc) →';
+  el('line',{x1:mid,x2:mid,y1:top-4,y2:H-24,stroke:'var(--ink-3)'},svg);
+  CATS.forEach((c,i)=>{ const y=top+i*rowH+6; const l=el('text',{x:padL-8,y:y+12,'text-anchor':'end',class:'lbl-strong'},svg);l.textContent=c.name;
+    const ps=-c.purchaseShortage; // real>doc → shortage negative → draw left as "shortage" only when doc>real
+    if(c.purchaseShortage!==0){ const w=Math.abs(c.purchaseShortage)/max*half; const r=el('rect',{x:c.purchaseShortage>0?mid-w:mid,y,width:w,height:9,rx:2,fill:c.purchaseShortage>0?'var(--real)':'var(--crit)'},svg); hover(r,`${c.name}: purchase ${c.purchaseShortage>0?'shortage':'excess'} ${fmt.gel(Math.abs(c.purchaseShortage))} (documented ${fmt.gel(c.debtDoc)} vs real ${fmt.gel(c.debtReal)})`); }
+    if(c.saleSurplus!==0){ const w=Math.abs(c.saleSurplus)/max*half; const r=el('rect',{x:c.saleSurplus>0?mid:mid-w,y:y+11,width:w,height:9,rx:2,fill:c.saleSurplus>0?'var(--doc)':'var(--warn)'},svg); hover(r,`${c.name}: sales ${c.saleSurplus>0?'surplus':'shortfall'} ${fmt.gel(Math.abs(c.saleSurplus))} (real ${fmt.gel(c.saleRealTotal)} vs documented ${fmt.gel(c.saleDocTotal)})`); }
+    void ps; });
+  const lg=el('text',{x:padL,y:H-6},svg); lg.textContent='Top bar: purchases (blue = doc above real, red = real above doc). Bottom bar: sales (light blue = real above doc).';
+  document.getElementById('gap-table').innerHTML='<thead><tr><th>Category</th><th class="num">Purchase shortage</th><th class="num">Sales surplus</th></tr></thead><tbody>'+CATS.map(c=>`<tr><td>${c.name}</td><td class="num">${fmt.gel(c.purchaseShortage)}</td><td class="num">${fmt.gel(c.saleSurplus)}</td></tr>`).join('')+`</tbody><tfoot><tr><th>Total</th><th class="num">${fmt.gel(CATS.reduce((s,c)=>s+c.purchaseShortage,0))}</th><th class="num">${fmt.gel(CATS.reduce((s,c)=>s+c.saleSurplus,0))}</th></tr></tfoot>`;
+})();
+
+// ---- ranked debtors ----
+(function debtors(){ const svg=document.getElementById('debtors'); const W=560,rowH=28,padL=170,top=8,H=top+DEBTORS.length*rowH+8; svg.setAttribute('viewBox',`0 0 ${W} ${H}`); svg.style.height='auto';
+  const max=Math.max(...DEBTORS.map(d=>d[1]+d[2]))*1.05; const x=v=>padL+v/max*(W-padL-60);
+  DEBTORS.forEach((d,i)=>{ const y=top+i*rowH+7; const t=el('text',{x:padL-8,y:y+10,'text-anchor':'end'},svg); t.textContent=d[0].length>22?d[0].slice(0,21)+'…':d[0];
+    const r=el('rect',{x:padL,y,width:x(d[1])-padL,height:12,rx:2,fill:'var(--real)'},svg); hover(r,`${d[0]}: real debt ${fmt.gel(d[1])}${d[2]?`, exception debt ${fmt.gel(d[2])}`:''}`);
+    if(d[2]){ el('rect',{x:x(d[1])+2,y:y+1,width:x(d[2])-padL-2,height:10,rx:2,fill:'none',stroke:'var(--doc)','stroke-width':2},svg); }
+    const v=el('text',{x:x(d[1]+d[2])+8,y:y+10},svg); v.textContent=fmt.gel(d[1]); });
+})();
+
+// ---- context totals ----
+(function ctx(){ const t=document.getElementById('ctx'); const rs=CATS.reduce((s,c)=>s+c.saleRealTotal,0),ds=CATS.reduce((s,c)=>s+c.saleDocTotal,0),rp=CATS.reduce((s,c)=>s+c.debtReal,0),dp=CATS.reduce((s,c)=>s+c.debtDoc,0);
+  t.innerHTML=`<thead><tr><th>Measure</th><th class="num">Real</th><th class="num">Documented</th><th class="num">Real − doc</th><th>Note</th></tr></thead><tbody>
+  <tr><td>Sales</td><td class="num">${fmt.gel(rs)}</td><td class="num">${fmt.gel(ds)}</td><td class="num">${fmt.gel(rs-ds)}</td><td class="note">63 real entities; unreal/formal excluded from real</td></tr>
+  <tr><td>Purchases</td><td class="num">${fmt.gel(rp)}</td><td class="num">${fmt.gel(dp)}</td><td class="num">${fmt.gel(rp-dp)}</td><td class="note">VAT effect ${fmt.gel(CATS.reduce((s,c)=>s+c.vatDiff,0))}</td></tr>
+  <tr><td>Receivable</td><td class="num">${fmt.gel(238400)}</td><td class="num">${fmt.gel(238400+61200)}</td><td class="num">−${fmt.gel(61200)}</td><td class="note">exception debt is paper, not money</td></tr>
+  <tr><td>VAT payable</td><td class="num">${fmt.gel(CATS.reduce((s,c)=>s+c.vatPayable,0))}</td><td class="num">${fmt.gel(CATS.reduce((s,c)=>s+(c.vatProjected??c.vatPayable),0))}</td><td class="num">${fmt.gel(CATS.reduce((s,c)=>s+c.vatPayable-(c.vatProjected??c.vatPayable),0))}</td><td class="note">"documented" column = projected at write-off; nets ₾587 supplies input VAT</td></tr></tbody>`; })();
+</script>
+</body>
+</html>

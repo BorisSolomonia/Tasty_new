@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audit Control · Category Workspace</title>
+<!--
+  BOR-87 concept 2 of 3 — ANALYTICAL WORKSPACE (standalone, mock data).
+  Chart strategy: inventory-identity WATERFALL · daily ledger STEP-AREA with overage band ·
+  doc|real TABLE WITH INLINE DELTA BARS · VAT BRIDGE waterfall · reconciliation with BAR-IN-CELL.
+  Two columns: a category rail (mini bars) and a deep panel for the selected category.
+-->
+<style>
+  :root { color-scheme: light;
+    --bg:#fbfaf7; --surface:#fff; --surface-2:#f3f1ea; --line:#e6e3dc; --grid:#edeae2;
+    --ink:#15171a; --ink-2:#4f5259; --ink-3:#7c8089;
+    --doc:#6da7ec; --real:#184f95; --accent:#2a78d6; --accent-soft:#e4effc;
+    --good:#0ca30c; --warn:#b7780a; --crit:#c8332f; --crit-soft:#fbe9e8; --warn-soft:#fff4d6; --shadow:0 1px 2px rgba(20,22,26,.06); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { color-scheme: dark;
+    --bg:#181a1c; --surface:#1f2224; --surface-2:#26292c; --line:#33373b; --grid:#2b2f33;
+    --ink:#f2f1ec; --ink-2:#c3c2b7; --ink-3:#8f9299; --doc:#86b6ef; --real:#3987e5; --accent:#5598e7; --accent-soft:#1b2b40;
+    --good:#3ec13e; --warn:#f0b429; --crit:#ef6b66; --crit-soft:#3a2323; --warn-soft:#3a3120; --shadow:none; } }
+  :root[data-theme="dark"] { color-scheme: dark;
+    --bg:#181a1c; --surface:#1f2224; --surface-2:#26292c; --line:#33373b; --grid:#2b2f33;
+    --ink:#f2f1ec; --ink-2:#c3c2b7; --ink-3:#8f9299; --doc:#86b6ef; --real:#3987e5; --accent:#5598e7; --accent-soft:#1b2b40;
+    --good:#3ec13e; --warn:#f0b429; --crit:#ef6b66; --crit-soft:#3a2323; --warn-soft:#3a3120; --shadow:none; }
+  * { box-sizing:border-box } html,body{margin:0}
+  body { background:var(--bg); color:var(--ink); font:14px/1.45 ui-sans-serif,system-ui,"Segoe UI",Roboto,Arial,sans-serif; font-variant-numeric:tabular-nums; }
+  .wrap { max-width:1320px; margin:0 auto; padding:20px 20px 64px; display:grid; gap:16px; }
+  header.top { display:flex; flex-wrap:wrap; align-items:end; justify-content:space-between; gap:12px 24px; }
+  h1 { font-size:20px; margin:0; letter-spacing:-.01em } h1 small{display:block;font-size:12px;color:var(--ink-3);font-weight:400;margin-top:2px}
+  .eyebrow { font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3); font-weight:600 }
+  .filters { display:flex; flex-wrap:wrap; gap:8px; align-items:center }
+  .filters button,.filters .field { border:1px solid var(--line); background:var(--surface); color:var(--ink); border-radius:6px; padding:7px 10px; font:inherit; min-height:36px }
+  .filters button.primary { background:var(--accent); border-color:var(--accent); color:#fff }
+  .filters .field { display:inline-flex; gap:6px; align-items:center; color:var(--ink-2) } .filters .field input{border:0;background:transparent;color:var(--ink);font:inherit}
+  .layout { display:grid; gap:16px; grid-template-columns:1fr; }
+  @media (min-width: 960px) { .layout { grid-template-columns:280px 1fr; align-items:start } .rail{position:sticky;top:12px} }
+  .card { background:var(--surface); border:1px solid var(--line); border-radius:8px; box-shadow:var(--shadow) }
+  .card > .head { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:6px 16px; padding:14px 16px 0 }
+  .card > .head h2 { font-size:15px; margin:0 } .card > .head p { margin:2px 0 0; color:var(--ink-3); font-size:12px; max-width:70ch }
+  .card > .body { padding:12px 16px 16px }
+  .rail ul { list-style:none; margin:0; padding:6px }
+  .rail li button { width:100%; text-align:left; border:0; background:transparent; color:inherit; font:inherit; padding:9px 10px; border-radius:6px; display:grid; gap:4px; cursor:pointer; min-height:44px }
+  .rail li button[aria-current="true"] { background:var(--accent-soft) }
+  .rail li button:hover { background:var(--surface-2) }
+  .rail .row1 { display:flex; justify-content:space-between; align-items:baseline } .rail .row1 b{font-weight:600} .rail .row1 span{font-size:11px;color:var(--ink-3)}
+  .rail svg { width:100%; height:10px; display:block }
+  .rail .flag { font-size:11px; color:var(--crit); font-weight:600 } .rail .flag.ok{color:var(--ink-3);font-weight:400}
+  .panel { display:grid; gap:16px }
+  .panel-head { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:end; gap:8px 16px }
+  .panel-head h2 { margin:0; font-size:22px; letter-spacing:-.01em } .panel-head .sub { color:var(--ink-3); font-size:12px }
+  .kpirow { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)) }
+  .kpi { padding:12px 14px } .kpi .label{font-size:11px;color:var(--ink-3);letter-spacing:.06em;text-transform:uppercase} .kpi .value{font-size:22px;font-weight:650;margin-top:2px} .kpi .sub{font-size:12px;color:var(--ink-2)}
+  .kpi.bad .value { color:var(--crit) }
+  .two { display:grid; gap:16px; grid-template-columns:1fr } @media (min-width:1100px){ .two{grid-template-columns:1fr 1fr} }
+  svg text { fill:var(--ink-2); font:11px ui-sans-serif,system-ui,sans-serif } svg .grid line{stroke:var(--grid)} svg .lbl-strong{fill:var(--ink);font-weight:600}
+  .legend { display:flex; flex-wrap:wrap; gap:14px; font-size:12px; color:var(--ink-2) } .legend i{display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:-2px;margin-right:6px}
+  table { width:100%; border-collapse:collapse; font-size:13px } th,td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+  th{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);font-weight:600} td.num,th.num{text-align:right}
+  th button { all:unset; cursor:pointer; display:inline-flex; gap:4px; align-items:center; min-height:28px } th[aria-sort="descending"] button::after{content:"↓"} th[aria-sort="ascending"] button::after{content:"↑"}
+  .table-wrap{overflow-x:auto}
+  .delta { display:inline-grid; grid-template-columns:70px 1fr; align-items:center; gap:8px; min-width:180px }
+  .delta .bar { position:relative; height:10px; background:var(--surface-2); border-radius:3px; overflow:hidden }
+  .delta .bar i { position:absolute; top:0; bottom:0; border-radius:3px } .delta .bar i.pos{background:var(--crit)} .delta .bar i.neg{background:var(--real)} .delta .bar b{position:absolute;top:0;bottom:0;width:1px;background:var(--ink-3);left:50%}
+  .inline-bar { position:relative; display:block; height:8px; background:var(--surface-2); border-radius:3px; min-width:120px } .inline-bar i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--real)} .inline-bar i.exc{background:var(--doc)}
+  input.edit { width:84px; border:1px solid var(--line); background:var(--surface); color:var(--ink); border-radius:4px; padding:5px 6px; text-align:right; font:inherit; min-height:32px }
+  .note{font-size:12px;color:var(--ink-3)} .note.honest{border-left:3px solid var(--warn);padding:6px 10px;background:var(--warn-soft);border-radius:4px;color:var(--ink-2)}
+  details.tv summary{cursor:pointer;color:var(--ink-3);font-size:12px;margin-top:8px}
+  .tip{position:fixed;pointer-events:none;z-index:10;background:var(--ink);color:var(--bg);padding:6px 8px;border-radius:6px;font-size:12px;opacity:0;transition:opacity .12s;max-width:280px} .tip.on{opacity:1}
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  @media (prefers-reduced-motion: reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div><div class="eyebrow">Tasty ERP · Audit Control</div>
+      <h1>Category workspace <small>Work one category at a time: enter reality, watch the ledger respond · 1–31 Aug 2026</small></h1></div>
+    <div class="filters" role="group" aria-label="Period">
+      <label class="field">from <input type="date" value="2026-08-01"></label>
+      <label class="field">to <input type="date" value="2026-08-31"></label>
+      <button type="button" class="primary">Apply</button><button type="button">Export ledger</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <!-- Rail: every category with a mini net-movement bar and its alarm state -->
+    <nav class="card rail" aria-label="Categories">
+      <div class="head"><h2>Categories</h2><p>Bar = documented net movement this month; red = overage days.</p></div>
+      <ul id="rail"></ul>
+    </nav>
+
+    <main class="panel" id="panel" aria-live="polite">
+      <div class="panel-head">
+        <div><h2 id="cat-title">Beef</h2><div class="sub" id="cat-sub"></div></div>
+        <div class="legend"><span><i style="background:var(--doc)"></i>Documented (RS.ge)</span><span><i style="background:var(--real)"></i>Real (recorded by operator)</span><span><i style="background:var(--crit)"></i>Overage</span></div>
+      </div>
+
+      <div class="kpirow" id="kpis"></div>
+
+      <div class="two">
+        <!-- Waterfall: inventory identity -->
+        <section class="card" aria-labelledby="wf-h">
+          <div class="head"><div><h2 id="wf-h">Where the kilograms went</h2><p>Purchases − write-off − sales = net movement. Opening stock is shown as a dashed "not recorded" step so the identity is honest.</p></div></div>
+          <div class="body"><svg id="waterfall" width="100%" role="img" aria-labelledby="wf-h"></svg><details class="tv"><summary>Table view</summary><div class="table-wrap"><table id="wf-table"></table></div></details></div>
+        </section>
+        <!-- VAT bridge -->
+        <section class="card" aria-labelledby="vb-h">
+          <div class="head"><div><h2 id="vb-h">VAT bridge</h2><p>Output VAT − input VAT = payable (filed). The hollow marker is the projected payable at this category's write-off %.</p></div></div>
+          <div class="body"><svg id="vatbridge" width="100%" role="img" aria-labelledby="vb-h"></svg><p class="note" id="vb-note"></p></div>
+        </section>
+      </div>
+
+      <!-- Daily ledger step-area -->
+      <section class="card" aria-labelledby="dl-h">
+        <div class="head"><div><h2 id="dl-h">Daily ledger</h2><p>Cumulative documented net kg, day by day. Days shaded red are overage days (sold more than could have been on hand). Hover any day for the ledger row; the full table is below.</p></div></div>
+        <div class="body">
+          <svg id="daily" width="100%" role="img" aria-labelledby="dl-h"></svg>
+          <details class="tv"><summary>Daily rows (table)</summary><div class="table-wrap"><table id="daily-table"></table></div></details>
+        </div>
+      </section>
+
+      <!-- Doc | real table with delta bars -->
+      <section class="card" aria-labelledby="dr-h">
+        <div class="head"><div><h2 id="dr-h">Documented vs real — the purchase and sales windows, side by side</h2><p>Editable "real" cells are the operator's inputs (write-off %, real kg, real prices). The delta bar is centred on zero: red to the right = real above documented.</p></div></div>
+        <div class="body"><div class="table-wrap"><table id="docreal"></table></div></div>
+      </section>
+
+      <!-- Reconciliation with bar-in-cell -->
+      <section class="card" aria-labelledby="rc-h">
+        <div class="head"><div><h2 id="rc-h">Debt reconciliation</h2><p>Sorted by real debt. Bar length is real debt; the lighter segment is exception (paper) debt. 12 of 312 customers shown — the cap is stated, never silent.</p></div></div>
+        <div class="body"><div class="table-wrap"><table id="recon"></table></div></div>
+      </section>
+    </main>
+  </div>
+  <p class="note">Mock data for design review only. Not connected to production.</p>
+</div>
+<div class="tip" id="tip" role="status" aria-live="polite"></div>
+
+<script>
+const CATS = [
+  { code:'BEEF', name:'Beef', purKg:18420, purDocPrice:19.80, purRealKg:19900, purRealPrice:21.10, wo:28, saleKg:12610, saleDocPrice:26.40, saleRealPrice:27.20, unrealKg:1150, formalKg:820, commission:410 },
+  { code:'PORK', name:'Pork', purKg:9760, purDocPrice:13.20, purRealKg:9760, purRealPrice:13.90, wo:25, saleKg:6940, saleDocPrice:17.90, saleRealPrice:17.90, unrealKg:0, formalKg:0, commission:0 },
+  { code:'SHEEP', name:'Sheep', purKg:2140, purDocPrice:24.50, purRealKg:2300, purRealPrice:24.50, wo:20, saleKg:1610, saleDocPrice:31.00, saleRealPrice:32.50, unrealKg:0, formalKg:0, commission:0 },
+  { code:'CHICKEN', name:'Chicken', purKg:4380, purDocPrice:8.10, purRealKg:4380, purRealPrice:8.10, wo:8, saleKg:3970, saleDocPrice:10.60, saleRealPrice:10.60, unrealKg:210, formalKg:0, commission:0 },
+  { code:'FAT', name:'Fat', purKg:1020, purDocPrice:4.20, purRealKg:1020, purRealPrice:4.20, wo:0, saleKg:860, saleDocPrice:6.10, saleRealPrice:6.10, unrealKg:0, formalKg:0, commission:0 },
+  { code:'OTHER_FOOD', name:'Other food', purKg:640, purDocPrice:9.40, purRealKg:640, purRealPrice:9.40, wo:0, saleKg:590, saleDocPrice:12.30, saleRealPrice:12.30, unrealKg:0, formalKg:0, commission:0 },
+];
+function derive(c){
+  c.debtDoc=c.purKg*c.purDocPrice; c.debtReal=c.purRealKg*c.purRealPrice; c.vatDiff=(c.debtReal-c.debtDoc)*18/118;
+  c.woKg=c.purKg*c.wo/100; c.netKg=c.purKg-c.woKg; c.saleDocTotal=c.saleKg*c.saleDocPrice; c.saleRealKg=c.saleKg-c.unrealKg-c.formalKg;
+  c.saleRealTotal=c.saleRealKg*c.saleRealPrice+c.commission; c.netMove=c.netKg-c.saleKg;
+  c.outVat=c.saleDocTotal*18/118; c.inVat=c.debtDoc*18/118; c.vatPayable=c.outVat-c.inVat; c.vatProjected=c.wo>0?(c.netKg*c.saleDocPrice*18/118)-c.inVat:null;
+}
+function rng(seed){let s=seed;return()=>{s=(s*1664525+1013904223)%4294967296;return s/4294967296}}
+CATS.forEach((c,i)=>{ derive(c); const r=rng(11+i*7); let stock=0; c.days=[]; c.overage=0;
+  for(let d=1;d<=31;d++){ const buy=(r()<0.55?c.purKg/17*(0.6+r()*0.8):0)*(1-c.wo/100); let sell=c.saleKg/27*(0.5+r());
+    if(i===0&&(d===9||d===23)) sell=stock+buy+180+r()*120; if(i===2&&d===17) sell=stock+buy+60;
+    const start=stock; stock=start+buy-sell; const over=stock<-0.5; if(over)c.overage++; c.days.push({d,start,buy,sell,end:stock,over}); } });
+const DEBTORS=[['შპს წისქვილი ჯგუფი',41200,3800,'real'],['შპს მარანი 2000',33750,0,'real'],['ი/მ გიორგი ბერიძე',28900,0,'real'],['შპს კახეთის ხორცი',24100,12000,'real'],['შპს ბაზისი',19800,0,'real'],['ი/მ ნინო კაპანაძე',17650,0,'real'],['შპს გლდანის ბაზარი',15200,0,'real'],['შპს საბა',12900,0,'real'],['ი/მ ლევან წულაია',11400,0,'real'],['შპს დიდუბე',9700,0,'real'],['შპს ქაღალდი',0,22400,'exception'],['ი/მ დ. მაისურაძე',0,18100,'exception']];
+const fmt={gel:v=>'₾'+Math.round(v).toLocaleString('en-US'),kg:v=>Math.round(v).toLocaleString('en-US')+' kg',pct:v=>(Math.round(v*10)/10)+'%',n:v=>Math.round(v).toLocaleString('en-US')};
+const NS='http://www.w3.org/2000/svg'; const el=(t,a={},p)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e};
+const tip=document.getElementById('tip');
+function hover(n,text){ n.addEventListener('pointerenter',()=>{tip.textContent=text;tip.classList.add('on')}); n.addEventListener('pointermove',ev=>{tip.style.left=Math.min(ev.clientX+12,innerWidth-290)+'px';tip.style.top=(ev.clientY+12)+'px'}); n.addEventListener('pointerleave',()=>tip.classList.remove('on')); n.setAttribute('tabindex','0'); n.addEventListener('focus',()=>{tip.textContent=text;tip.classList.add('on')}); n.addEventListener('blur',()=>tip.classList.remove('on')); }
+
+let current = CATS[0];
+
+// ---- rail ----
+function drawRail(){
+  const ul=document.getElementById('rail'); ul.innerHTML='';
+  const max=Math.max(...CATS.map(c=>Math.abs(c.netMove)));
+  CATS.forEach(c=>{ const li=document.createElement('li'); const b=document.createElement('button'); b.type='button'; b.setAttribute('aria-current', c===current?'true':'false');
+    b.innerHTML=`<div class="row1"><b>${c.name}</b><span>${fmt.kg(c.netMove)}</span></div>`;
+    const svg=el('svg',{viewBox:'0 0 100 10',preserveAspectRatio:'none','aria-hidden':'true'}); el('rect',{x:0,y:2,width:100,height:6,rx:2,fill:'var(--surface-2)'},svg); el('rect',{x:0,y:2,width:Math.abs(c.netMove)/max*100,height:6,rx:2,fill:c.netMove<0?'var(--crit)':'var(--real)'},svg); b.appendChild(svg);
+    const f=document.createElement('div'); f.className='flag'+(c.overage?'':' ok'); f.textContent=c.overage?`${c.overage} overage day${c.overage>1?'s':''} · VAT Δ ${fmt.gel(c.vatDiff)}`:`no overage · VAT Δ ${fmt.gel(c.vatDiff)}`; b.appendChild(f);
+    b.addEventListener('click',()=>{current=c;drawRail();drawPanel();document.getElementById('cat-title').focus({preventScroll:true})}); li.appendChild(b); ul.appendChild(li); });
+}
+
+// ---- panel ----
+function drawPanel(){
+  const c=current; document.getElementById('cat-title').textContent=c.name; document.getElementById('cat-title').tabIndex=-1;
+  document.getElementById('cat-sub').textContent=`Write-off ${c.wo}% · ${fmt.kg(c.purKg)} documented purchases · ${fmt.kg(c.saleKg)} documented sales`;
+  const k=document.getElementById('kpis'); k.innerHTML='';
+  [['Net movement (doc)',fmt.kg(c.netMove),c.netMove<0?'negative — sold more than net purchases':'positive',c.netMove<0],
+   ['Overage days',String(c.overage),c.overage?'see the daily ledger':'ledger conserved',c.overage>0],
+   ['Purchase gap real − doc',fmt.gel(c.debtReal-c.debtDoc),`VAT effect ${fmt.gel(c.vatDiff)}`,Math.abs(c.vatDiff)>1],
+   ['VAT payable (filed)',fmt.gel(c.vatPayable),c.vatProjected==null?'no write-off projection':`projected ${fmt.gel(c.vatProjected)}`,false],
+  ].forEach(([l,v,s,bad])=>{const d=document.createElement('div');d.className='card kpi'+(bad?' bad':'');d.innerHTML=`<div class="label">${l}</div><div class="value">${v}</div><div class="sub">${s}</div>`;k.appendChild(d)});
+  drawWaterfall(c); drawVatBridge(c); drawDaily(c); drawDocReal(c); drawRecon();
+}
+
+// ---- waterfall ----
+function drawWaterfall(c){
+  const svg=document.getElementById('waterfall'); svg.innerHTML=''; const W=520,H=250,padL=48,padR=16,top=18,bottom=44;
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`); svg.style.height='auto';
+  const steps=[{l:'Opening',v:0,kind:'unknown'},{l:'Purchases',v:c.purKg,kind:'up'},{l:`Write-off ${c.wo}%`,v:-c.woKg,kind:'down'},{l:'Sales',v:-c.saleKg,kind:'down'},{l:'Net movement',v:c.netMove,kind:'total'}];
+  let run=0; const bars=[]; steps.forEach(s=>{ if(s.kind==='total'){bars.push({...s,y0:0,y1:s.v});} else if(s.kind==='unknown'){bars.push({...s,y0:0,y1:0});} else {bars.push({...s,y0:run,y1:run+s.v}); run+=s.v;} });
+  const lo=Math.min(0,...bars.map(b=>Math.min(b.y0,b.y1))), hi=Math.max(...bars.map(b=>Math.max(b.y0,b.y1)))*1.08; const y=v=>top+(hi-v)/(hi-lo)*(H-top-bottom); const bw=(W-padL-padR)/bars.length;
+  const g=el('g',{class:'grid'},svg); for(let i=0;i<=4;i++){const v=lo+(hi-lo)/4*i; el('line',{x1:padL,x2:W-padR,y1:y(v),y2:y(v)},g); const t=el('text',{x:padL-6,y:y(v)+4,'text-anchor':'end'},svg); t.textContent=fmt.n(v)}
+  el('line',{x1:padL,x2:W-padR,y1:y(0),y2:y(0),stroke:'var(--ink-3)'},svg);
+  bars.forEach((b,i)=>{ const x=padL+bw*i+bw*0.18, w=bw*0.64; const t=Math.min(b.y0,b.y1), h=Math.max(2,Math.abs(y(b.y0)-y(b.y1)));
+    let fill=b.kind==='up'?'var(--doc)':b.kind==='down'?'var(--real)':b.kind==='total'?(b.v<0?'var(--crit)':'var(--ink)'):'none';
+    const r=el('rect',{x,y:y(Math.max(b.y0,b.y1)),width:w,height:h,rx:3,fill,stroke:b.kind==='unknown'?'var(--ink-3)':'none','stroke-dasharray':b.kind==='unknown'?'4 3':'none'},svg);
+    if(b.kind==='unknown'){r.setAttribute('height',24);r.setAttribute('y',y(0)-24);}
+    const lbl=el('text',{x:x+w/2,y:H-bottom+16,'text-anchor':'middle'},svg); lbl.textContent=b.l;
+    const val=el('text',{x:x+w/2,y:y(Math.max(b.y0,b.y1))-5,'text-anchor':'middle',class:'lbl-strong'},svg); val.textContent=b.kind==='unknown'?'not recorded':(b.v>0&&b.kind!=='total'?'+':'')+fmt.n(b.v);
+    if(i<bars.length-1&&b.kind!=='total'){ el('line',{x1:x+w,x2:padL+bw*(i+1)+bw*0.18,y1:y(b.kind==='unknown'?0:b.y1),y2:y(b.kind==='unknown'?0:b.y1),stroke:'var(--ink-3)','stroke-dasharray':'2 3'},svg); }
+    hover(r, b.kind==='unknown'?'Opening stock is not recorded in the system; the chain starts at 0. This is why the current page\'s "On hand" is really net movement.':`${b.l}: ${fmt.kg(Math.abs(b.v))}`);
+  });
+  document.getElementById('wf-table').innerHTML='<thead><tr><th>Step</th><th class="num">kg</th></tr></thead><tbody>'+steps.map(s=>`<tr><td>${s.l}</td><td class="num">${s.kind==='unknown'?'not recorded':fmt.n(s.v)}</td></tr>`).join('')+'</tbody>';
+}
+
+// ---- VAT bridge ----
+function drawVatBridge(c){
+  const svg=document.getElementById('vatbridge'); svg.innerHTML=''; const W=520,H=250,padL=56,padR=16,top=18,bottom=44; svg.setAttribute('viewBox',`0 0 ${W} ${H}`); svg.style.height='auto';
+  const bars=[{l:'Output VAT',y0:0,y1:c.outVat,fill:'var(--doc)'},{l:'− Input VAT',y0:c.outVat,y1:c.outVat-c.inVat,fill:'var(--real)'},{l:'Payable (filed)',y0:0,y1:c.vatPayable,fill:'var(--ink)'}];
+  const hi=Math.max(c.outVat,c.vatPayable,c.vatProjected??0)*1.12, lo=Math.min(0,c.vatPayable,c.vatProjected??0)*1.2; const y=v=>top+(hi-v)/(hi-lo)*(H-top-bottom); const bw=(W-padL-padR)/3;
+  const g=el('g',{class:'grid'},svg); for(let i=0;i<=4;i++){const v=lo+(hi-lo)/4*i;el('line',{x1:padL,x2:W-padR,y1:y(v),y2:y(v)},g);const t=el('text',{x:padL-6,y:y(v)+4,'text-anchor':'end'},svg);t.textContent=fmt.gel(v)}
+  el('line',{x1:padL,x2:W-padR,y1:y(0),y2:y(0),stroke:'var(--ink-3)'},svg);
+  bars.forEach((b,i)=>{const x=padL+bw*i+bw*0.2,w=bw*0.6; const r=el('rect',{x,y:y(Math.max(b.y0,b.y1)),width:w,height:Math.max(2,Math.abs(y(b.y0)-y(b.y1))),rx:3,fill:b.fill},svg); const t=el('text',{x:x+w/2,y:H-bottom+16,'text-anchor':'middle'},svg);t.textContent=b.l; const v=el('text',{x:x+w/2,y:y(Math.max(b.y0,b.y1))-5,'text-anchor':'middle',class:'lbl-strong'},svg); v.textContent=fmt.gel(b.y1-b.y0); hover(r,`${b.l}: ${fmt.gel(Math.abs(b.y1-b.y0))}`);
+    if(i===2&&c.vatProjected!=null){ const py=y(c.vatProjected); const m=el('circle',{cx:x+w/2,cy:py,r:6,fill:'var(--surface)',stroke:'var(--ink)','stroke-width':2},svg); hover(m,`Projected payable at ${c.wo}% write-off: ${fmt.gel(c.vatProjected)} (what-if; does not change the filed figure)`); const pl=el('text',{x:x+w+6,y:py+4},svg); pl.textContent='projected'; }
+  });
+  document.getElementById('vb-note').textContent = c.vatProjected==null ? 'No write-off applies to this category, so there is no projection.' : `Filed ${fmt.gel(c.vatPayable)} vs projected ${fmt.gel(c.vatProjected)} at ${c.wo}% write-off (Δ ${fmt.gel(c.vatProjected-c.vatPayable)}). Doc→real purchase gap adds a VAT effect of ${fmt.gel(c.vatDiff)}, shown in the table below.`;
+}
+
+// ---- daily step-area ----
+function drawDaily(c){
+  const svg=document.getElementById('daily'); svg.innerHTML=''; const W=1000,H=240,padL=56,padR=16,top=14,bottom=34; svg.setAttribute('viewBox',`0 0 ${W} ${H}`); svg.style.height='auto';
+  const vals=c.days.map(d=>d.end); const hi=Math.max(...vals,0)*1.1||1, lo=Math.min(...vals,0)*1.2; const x=d=>padL+(d-1)/30*(W-padL-padR), y=v=>top+(hi-v)/(hi-lo)*(H-top-bottom); const dw=(W-padL-padR)/30;
+  const g=el('g',{class:'grid'},svg); for(let i=0;i<=4;i++){const v=lo+(hi-lo)/4*i;el('line',{x1:padL,x2:W-padR,y1:y(v),y2:y(v)},g);const t=el('text',{x:padL-6,y:y(v)+4,'text-anchor':'end'},svg);t.textContent=fmt.n(v)}
+  c.days.filter(d=>d.over).forEach(d=>{ el('rect',{x:x(d.d)-dw/2,y:top,width:dw,height:H-top-bottom,fill:'var(--crit-soft)'},svg); });
+  el('line',{x1:padL,x2:W-padR,y1:y(0),y2:y(0),stroke:'var(--ink-3)'},svg);
+  // step path
+  let dpath=`M ${x(1)} ${y(0)}`; c.days.forEach(d=>{ dpath+=` L ${x(d.d)} ${y(d.start)} L ${x(d.d)} ${y(d.end)}`; }); const area=dpath+` L ${x(31)} ${y(0)} Z`;
+  el('path',{d:area,fill:'var(--accent-soft)'},svg); el('path',{d:dpath,fill:'none',stroke:'var(--real)','stroke-width':2},svg);
+  c.days.forEach(d=>{ const t=el('text',{x:x(d.d),y:H-bottom+16,'text-anchor':'middle'},svg); if(d.d%5===0||d.d===1)t.textContent='Aug '+d.d; const hit=el('rect',{x:x(d.d)-dw/2,y:top,width:dw,height:H-top-bottom,fill:'transparent'},svg);
+    hover(hit,`Aug ${d.d}: start ${fmt.kg(d.start)} + purchased ${fmt.kg(d.buy)} − sold ${fmt.kg(d.sell)} = ${fmt.kg(d.end)}${d.over?' — OVERAGE':''}`); if(d.over){el('circle',{cx:x(d.d),cy:y(d.end),r:5,fill:'var(--crit)',stroke:'var(--surface)','stroke-width':2},svg);} });
+  document.getElementById('daily-table').innerHTML='<thead><tr><th>Date</th><th class="num">Start</th><th class="num">Purchased (net)</th><th class="num">Sold</th><th class="num">Ending</th><th>Flag</th></tr></thead><tbody>'+c.days.map(d=>`<tr${d.over?' style="background:var(--crit-soft)"':''}><td>Aug ${d.d}</td><td class="num">${fmt.n(d.start)}</td><td class="num">${fmt.n(d.buy)}</td><td class="num">${fmt.n(d.sell)}</td><td class="num">${fmt.n(d.end)}</td><td>${d.over?'overage':'ok'}</td></tr>`).join('')+'</tbody>';
+}
+
+// ---- doc | real table with delta bars ----
+function deltaCell(doc, real, unit){ const gap=real-doc; const scale=Math.max(Math.abs(doc),Math.abs(real),1)*0.5; const w=Math.min(50,Math.abs(gap)/scale*50); const cls=gap>0?'pos':'neg'; const left=gap>0?50:50-w;
+  return `<span class="delta"><span class="num">${gap===0?'—':(gap>0?'+':'−')+unit(Math.abs(gap))}</span><span class="bar" aria-hidden="true"><b></b><i class="${cls}" style="left:${left}%;width:${w}%"></i></span></span>`; }
+function drawDocReal(c){
+  const t=document.getElementById('docreal');
+  const rows=[
+    ['Purchases','Purchase kg',fmt.kg(c.purKg),`<input class="edit" value="${fmt.n(c.purRealKg)}" aria-label="Real purchase kg">`,deltaCell(c.purKg,c.purRealKg,fmt.kg)],
+    ['Purchases','Purchase price /kg','₾'+c.purDocPrice.toFixed(2),`<input class="edit" value="${c.purRealPrice.toFixed(2)}" aria-label="Real purchase price">`,deltaCell(c.purDocPrice,c.purRealPrice,v=>'₾'+v.toFixed(2))],
+    ['Purchases','Purchase total (debt)',fmt.gel(c.debtDoc),fmt.gel(c.debtReal),deltaCell(c.debtDoc,c.debtReal,fmt.gel)],
+    ['Purchases','VAT effect of the gap','','',`<b>${fmt.gel(c.vatDiff)}</b> <span class="note">= gap × 18/118</span>`],
+    ['Purchases','Write-off %',`<input class="edit" value="${c.wo}" aria-label="Write-off percent">`,'—','<span class="note">applies to documented kg</span>'],
+    ['Sales','Sales kg',fmt.kg(c.saleKg),`${fmt.kg(c.saleRealKg)} <span class="note">(−${fmt.n(c.unrealKg)} unreal, −${fmt.n(c.formalKg)} formal)</span>`,deltaCell(c.saleKg,c.saleRealKg,fmt.kg)],
+    ['Sales','Sale price /kg','₾'+c.saleDocPrice.toFixed(2),`<input class="edit" value="${c.saleRealPrice.toFixed(2)}" aria-label="Real sale price">`,deltaCell(c.saleDocPrice,c.saleRealPrice,v=>'₾'+v.toFixed(2))],
+    ['Sales','Product sales',fmt.gel(c.saleDocTotal),fmt.gel(c.saleRealKg*c.saleRealPrice),deltaCell(c.saleDocTotal,c.saleRealKg*c.saleRealPrice,fmt.gel)],
+    ['Sales','Formal commission','—',fmt.gel(c.commission),'<span class="note">documented kg × commission/kg</span>'],
+    ['Sales','Sales total',fmt.gel(c.saleDocTotal),`<b>${fmt.gel(c.saleRealTotal)}</b>`,deltaCell(c.saleDocTotal,c.saleRealTotal,fmt.gel)],
+  ];
+  t.innerHTML='<thead><tr><th>Window</th><th>Measure</th><th class="num">Documented</th><th class="num">Real</th><th>Real − documented</th></tr></thead><tbody>'+rows.map(r=>`<tr><td class="note">${r[0]}</td><td>${r[1]}</td><td class="num">${r[2]}</td><td class="num">${r[3]}</td><td>${r[4]}</td></tr>`).join('')+'</tbody>';
+}
+
+// ---- reconciliation ----
+let sortKey='real', sortDir='desc';
+function drawRecon(){
+  const t=document.getElementById('recon'); const rows=[...DEBTORS].sort((a,b)=> (sortKey==='real'?(b[1]-a[1]):sortKey==='exc'?(b[2]-a[2]):a[0].localeCompare(b[0])) * (sortDir==='desc'?1:-1)); const max=Math.max(...DEBTORS.map(d=>d[1]+d[2]));
+  const th=(k,l,num)=>`<th class="${num?'num':''}" aria-sort="${sortKey===k?(sortDir==='desc'?'descending':'ascending'):'none'}"><button type="button" data-k="${k}">${l}</button></th>`;
+  t.innerHTML=`<thead><tr>${th('name','Customer')}<th>Type</th><th class="num">Real debt</th><th class="num">Exception debt</th><th>Balance</th><th>Actions</th></tr></thead><tbody>`+
+    rows.map(d=>`<tr><td><b>${d[0]}</b></td><td>${d[3]==='real'?'Real':'<span style="color:var(--warn);font-weight:600">Exception</span>'}</td><td class="num">${fmt.gel(d[1])}</td><td class="num">${fmt.gel(d[2])}</td><td><span class="inline-bar" aria-hidden="true"><i style="width:${d[1]/max*100}%"></i><i class="exc" style="left:${d[1]/max*100}%;width:${d[2]/max*100}%"></i></span></td><td><label style="margin-right:8px"><input type="checkbox" ${d[3]!=='real'?'checked':''}> Unreal</label><label style="margin-right:8px"><input type="checkbox"> Formal</label><button type="button" style="min-height:32px">Mark paid</button></td></tr>`).join('')+
+    `</tbody><tfoot><tr><td colspan="6" class="note">Showing 12 of 312 customers with a balance · <a href="#">show all</a></td></tr></tfoot>`;
+  t.querySelectorAll('th button').forEach(b=>b.addEventListener('click',()=>{ const k=b.dataset.k; if(sortKey===k) sortDir=sortDir==='desc'?'asc':'desc'; else {sortKey=k;sortDir='desc'} drawRecon(); }));
+}
+drawRail(); drawPanel();
+</script>
+</body>
+</html>

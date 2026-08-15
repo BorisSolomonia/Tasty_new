@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audit Control · Executive Tower</title>
+<!--
+  BOR-87 concept 1 of 3 — EXECUTIVE CONTROL TOWER (standalone, mock data).
+  Chart strategy: stat tiles with bullet graphs · dumbbell doc↔real per category ·
+  small-multiple sparklines of daily net kg with overage marks · Pareto of receivables.
+  No backend, no libraries. Inline SVG drawn from the MOCK dataset below.
+-->
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #fbfaf7; --surface: #ffffff; --surface-2: #f3f1ea; --line: #e6e3dc; --grid: #edeae2;
+    --ink: #15171a; --ink-2: #4f5259; --ink-3: #7c8089;
+    --doc: #6da7ec; --real: #184f95; --accent: #2a78d6; --accent-soft: #e4effc;
+    --good: #0ca30c; --warn: #b7780a; --crit: #c8332f; --crit-soft: #fbe9e8; --warn-soft: #fff4d6;
+    --shadow: 0 1px 2px rgba(20,22,26,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #181a1c; --surface: #1f2224; --surface-2: #26292c; --line: #33373b; --grid: #2b2f33;
+      --ink: #f2f1ec; --ink-2: #c3c2b7; --ink-3: #8f9299;
+      --doc: #86b6ef; --real: #3987e5; --accent: #5598e7; --accent-soft: #1b2b40;
+      --good: #3ec13e; --warn: #f0b429; --crit: #ef6b66; --crit-soft: #3a2323; --warn-soft: #3a3120;
+      --shadow: none;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #181a1c; --surface: #1f2224; --surface-2: #26292c; --line: #33373b; --grid: #2b2f33;
+    --ink: #f2f1ec; --ink-2: #c3c2b7; --ink-3: #8f9299;
+    --doc: #86b6ef; --real: #3987e5; --accent: #5598e7; --accent-soft: #1b2b40;
+    --good: #3ec13e; --warn: #f0b429; --crit: #ef6b66; --crit-soft: #3a2323; --warn-soft: #3a3120;
+    --shadow: none;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--bg); color: var(--ink); font: 14px/1.45 ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-variant-numeric: tabular-nums; }
+  a { color: var(--accent); }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 20px 20px 64px; display: grid; gap: 20px; }
+  header.top { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 24px; }
+  h1 { font-size: 20px; margin: 0; letter-spacing: -.01em; }
+  h1 small { display: block; font-size: 12px; color: var(--ink-3); font-weight: 400; margin-top: 2px; }
+  .eyebrow { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+  .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .filters button, .filters .field { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 6px; padding: 7px 10px; font: inherit; min-height: 36px; }
+  .filters button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .filters button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+  .filters .field { display: inline-flex; gap: 6px; align-items: center; color: var(--ink-2); }
+  .filters .field input, .filters .field select { border: 0; background: transparent; color: var(--ink); font: inherit; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); }
+  .card > .head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; padding: 14px 16px 0; }
+  .card > .head h2 { font-size: 15px; margin: 0; }
+  .card > .head p { margin: 2px 0 0; color: var(--ink-3); font-size: 12px; max-width: 70ch; }
+  .card > .body { padding: 12px 16px 16px; }
+  .alarms { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { display: inline-flex; align-items: center; gap: 8px; border-radius: 999px; padding: 6px 12px 6px 8px; font-size: 13px; border: 1px solid var(--line); background: var(--surface); min-height: 36px; text-decoration: none; color: inherit; }
+  .chip .n { font-weight: 700; min-width: 22px; height: 22px; display: inline-grid; place-items: center; border-radius: 999px; font-size: 12px; }
+  .chip.crit .n { background: var(--crit); color: #fff; } .chip.warn .n { background: var(--warn); color: #fff; } .chip.ok .n { background: var(--good); color: #fff; }
+  .kpis { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .kpi { padding: 14px 16px; }
+  .kpi .label { font-size: 12px; color: var(--ink-3); }
+  .kpi .value { font-size: 26px; font-weight: 650; letter-spacing: -.01em; margin: 2px 0 6px; }
+  .kpi .delta { font-size: 12px; color: var(--ink-2); }
+  .kpi svg { display: block; width: 100%; height: 34px; margin-top: 8px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--ink-2); }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 50%; vertical-align: -2px; margin-right: 6px; }
+  .legend i.doc { border: 2px solid var(--doc); background: var(--surface); } .legend i.real { background: var(--real); }
+  .legend i.crit { background: var(--crit); border-radius: 2px; }
+  svg text { fill: var(--ink-2); font: 11px ui-sans-serif, system-ui, sans-serif; }
+  svg .axis line, svg .grid line { stroke: var(--grid); stroke-width: 1; }
+  svg .lbl-strong { fill: var(--ink); font-weight: 600; }
+  .grid-2 { display: grid; gap: 20px; grid-template-columns: 1fr; }
+  @media (min-width: 1000px) { .grid-2 { grid-template-columns: 3fr 2fr; } }
+  .multiples { display: grid; gap: 12px 20px; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+  .mini { display: grid; gap: 4px; }
+  .mini .t { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; }
+  .mini .t b { font-weight: 600; color: var(--ink); }
+  .mini .t span { color: var(--ink-3); }
+  .mini svg { width: 100%; height: 64px; display: block; }
+  .mini .foot { font-size: 11px; color: var(--ink-3); }
+  .mini .foot.bad { color: var(--crit); font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 7px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
+  th { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+  td.num, th.num { text-align: right; }
+  .table-wrap { overflow-x: auto; }
+  details.tv summary { cursor: pointer; color: var(--ink-3); font-size: 12px; margin-top: 8px; }
+  .note { font-size: 12px; color: var(--ink-3); }
+  .note.honest { border-left: 3px solid var(--warn); padding: 6px 10px; background: var(--warn-soft); border-radius: 4px; color: var(--ink-2); }
+  .tip { position: fixed; pointer-events: none; z-index: 10; background: var(--ink); color: var(--bg); padding: 6px 8px; border-radius: 6px; font-size: 12px; opacity: 0; transition: opacity .12s; max-width: 260px; }
+  .tip.on { opacity: 1; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div>
+      <div class="eyebrow">Tasty ERP · Audit Control</div>
+      <h1>Executive tower <small>Documented (RS.ge) vs real, per category · 1–31 Aug 2026 · all products</small></h1>
+    </div>
+    <div class="filters" role="group" aria-label="Period and filters">
+      <button type="button" aria-pressed="true">This month</button>
+      <button type="button" aria-pressed="false">Last month</button>
+      <button type="button" aria-pressed="false">Quarter</button>
+      <label class="field">from <input type="date" value="2026-08-01"></label>
+      <label class="field">to <input type="date" value="2026-08-31"></label>
+      <label class="field">product <select><option>All products</option><option>Beef</option><option>Pork</option><option>Sheep</option><option>Chicken</option></select></label>
+      <button type="button" class="primary">Apply</button>
+      <button type="button">Export ledger</button>
+    </div>
+  </header>
+
+  <!-- 1. Alarm strip: what needs attention, with counts and jump links -->
+  <nav class="alarms" aria-label="Alarms" id="alarms"></nav>
+
+  <!-- 2. Headline KPIs as bullet graphs: bar = real, tick = documented -->
+  <section aria-labelledby="kpi-h">
+    <h2 id="kpi-h" class="sr-only">Headline figures</h2>
+    <div class="kpis" id="kpis"></div>
+  </section>
+
+  <div class="grid-2">
+    <!-- 3. The dual-ledger picture: dumbbell doc↔real per category -->
+    <section class="card" aria-labelledby="db-h">
+      <div class="head">
+        <div>
+          <h2 id="db-h">Documented vs real, per category</h2>
+          <p>Each row is one category on one ₾ axis. Hollow = what RS.ge documents; solid = what the operator recorded as real. The gap is labelled; its VAT effect (× 18/118) is in the tooltip.</p>
+        </div>
+        <div class="legend"><span><i class="doc"></i>Documented</span><span><i class="real"></i>Real</span></div>
+      </div>
+      <div class="body">
+        <div role="tablist" aria-label="Measure" class="filters" style="margin-bottom:8px">
+          <button type="button" role="tab" aria-selected="true" data-measure="purchase">Purchases ₾</button>
+          <button type="button" role="tab" aria-selected="false" data-measure="sales">Sales ₾</button>
+          <button type="button" role="tab" aria-selected="false" data-measure="kg">Purchases kg</button>
+        </div>
+        <svg id="dumbbell" width="100%" role="img" aria-labelledby="db-h"></svg>
+        <details class="tv"><summary>Table view</summary><div class="table-wrap"><table id="dumbbell-table"></table></div></details>
+      </div>
+    </section>
+
+    <!-- 4. Receivables Pareto -->
+    <section class="card" aria-labelledby="pareto-h">
+      <div class="head">
+        <div>
+          <h2 id="pareto-h">Where the real debt sits</h2>
+          <p>Customers ranked by real receivable; the line is cumulative share. Exception (paper) debt is kept out of this chart on purpose.</p>
+        </div>
+      </div>
+      <div class="body">
+        <svg id="pareto" width="100%" role="img" aria-labelledby="pareto-h"></svg>
+        <p class="note" id="pareto-note"></p>
+        <details class="tv"><summary>Table view</summary><div class="table-wrap"><table id="pareto-table"></table></div></details>
+      </div>
+    </section>
+  </div>
+
+  <!-- 5. Inventory conservation: small multiples of the daily ledger -->
+  <section class="card" aria-labelledby="sm-h">
+    <div class="head">
+      <div>
+        <h2 id="sm-h">Inventory conservation, day by day</h2>
+        <p>Net documented kg per category (purchases after write-off − sales, cumulative through the month). A red mark is an <b>overage day</b>: more was sold than the ledger says could have been on hand. Same kg scale within a row; each panel states its own end value.</p>
+      </div>
+      <div class="legend"><span><i class="crit"></i>Overage day</span></div>
+    </div>
+    <div class="body">
+      <p class="note honest" style="margin:0 0 12px">Opening stock is not recorded in the system yet, so every panel starts at 0 kg — these are period <em>net movements</em>, not stock levels. The current page labels this "On hand"; it should not.</p>
+      <div class="multiples" id="multiples"></div>
+    </div>
+  </section>
+
+  <!-- 6. VAT headline + per-category -->
+  <section class="card" aria-labelledby="vat-h">
+    <div class="head">
+      <div>
+        <h2 id="vat-h">VAT payable — filed vs projected at the current write-off</h2>
+        <p>Actual liability from documented amounts (output − input, 18 % inclusive). The projected figure is a what-if at the category's write-off % and does not change what is filed.</p>
+      </div>
+    </div>
+    <div class="body">
+      <div class="table-wrap"><table id="vat-table"></table></div>
+    </div>
+  </section>
+
+  <p class="note">Mock data for design review only. Not connected to production. Where the API has no history (prior period), the element says so.</p>
+</div>
+<div class="tip" id="tip" role="status" aria-live="polite"></div>
+
+<script>
+// ---------- MOCK DATA (deterministic) ----------
+const CATS = [
+  { code:'BEEF', name:'Beef', purKg:18420, purDocPrice:19.80, purRealKg:19900, purRealPrice:21.10, wo:28, saleKg:12610, saleDocPrice:26.40, saleRealPrice:27.20, unrealKg:1150, formalKg:820, commission:410 },
+  { code:'PORK', name:'Pork', purKg:9760, purDocPrice:13.20, purRealKg:9760, purRealPrice:13.90, wo:25, saleKg:6940, saleDocPrice:17.90, saleRealPrice:17.90, unrealKg:0, formalKg:0, commission:0 },
+  { code:'SHEEP', name:'Sheep', purKg:2140, purDocPrice:24.50, purRealKg:2300, purRealPrice:24.50, wo:20, saleKg:1610, saleDocPrice:31.00, saleRealPrice:32.50, unrealKg:0, formalKg:0, commission:0 },
+  { code:'CHICKEN', name:'Chicken', purKg:4380, purDocPrice:8.10, purRealKg:4380, purRealPrice:8.10, wo:8, saleKg:3970, saleDocPrice:10.60, saleRealPrice:10.60, unrealKg:210, formalKg:0, commission:0 },
+  { code:'FAT', name:'Fat', purKg:1020, purDocPrice:4.20, purRealKg:1020, purRealPrice:4.20, wo:0, saleKg:860, saleDocPrice:6.10, saleRealPrice:6.10, unrealKg:0, formalKg:0, commission:0 },
+  { code:'OTHER_FOOD', name:'Other food', purKg:640, purDocPrice:9.40, purRealKg:640, purRealPrice:9.40, wo:0, saleKg:590, saleDocPrice:12.30, saleRealPrice:12.30, unrealKg:0, formalKg:0, commission:0 },
+];
+CATS.forEach(c => {
+  c.debtDoc = c.purKg * c.purDocPrice; c.debtReal = c.purRealKg * c.purRealPrice;
+  c.vatDiff = (c.debtReal - c.debtDoc) * 18 / 118;
+  c.netKg = c.purKg * (1 - c.wo/100);
+  c.saleDocTotal = c.saleKg * c.saleDocPrice;
+  c.saleRealKg = c.saleKg - c.unrealKg - c.formalKg;
+  c.saleRealTotal = c.saleRealKg * c.saleRealPrice + c.commission;
+  c.netMove = c.netKg - c.saleKg;
+  const salesVat = c.saleDocTotal * 18/118, purVat = c.debtDoc * 18/118;
+  c.vatPayable = salesVat - purVat;
+  c.vatProjected = c.wo > 0 ? (c.netKg * c.saleDocPrice * 18/118) - purVat : null;
+});
+// daily rows: seeded pseudo-random
+function rng(seed){ let s = seed; return () => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; }; }
+CATS.forEach((c, i) => {
+  const r = rng(11 + i * 7); let stock = 0; c.days = []; c.overage = 0;
+  for (let d = 1; d <= 31; d++) {
+    const buy = (r() < 0.55 ? c.purKg / 17 * (0.6 + r()*0.8) : 0) * (1 - c.wo/100);
+    let sell = c.saleKg / 27 * (0.5 + r());
+    if (i === 0 && (d === 9 || d === 23)) sell = stock + buy + 180 + r()*120; // beef overage days
+    if (i === 2 && d === 17) sell = stock + buy + 60;
+    const start = stock; stock = start + buy - sell; const over = stock < -0.5;
+    if (over) c.overage++;
+    c.days.push({ d, start, buy, sell, end: stock, over });
+  }
+});
+const totals = {
+  realSales: CATS.reduce((s,c)=>s+c.saleRealTotal,0), docSales: CATS.reduce((s,c)=>s+c.saleDocTotal,0),
+  realPurchases: CATS.reduce((s,c)=>s+c.debtReal,0), docPurchases: CATS.reduce((s,c)=>s+c.debtDoc,0),
+  realDebt: 238400, exceptionDebt: 61200, vatPayable: CATS.reduce((s,c)=>s+c.vatPayable,0),
+  vatProjected: CATS.reduce((s,c)=>s+(c.vatProjected ?? c.vatPayable),0),
+  suppliesVat: 587, realEntities: 63, exceptionEntities: 9,
+};
+const DEBTORS = [
+  ['შპს წისქვილი ჯგუფი', 41200], ['შპს მარანი 2000', 33750], ['ი/მ გიორგი ბერიძე', 28900], ['შპს კახეთის ხორცი', 24100],
+  ['შპს ბაზისი', 19800], ['ი/მ ნინო კაპანაძე', 17650], ['შპს გლდანის ბაზარი', 15200], ['შპს საბა', 12900],
+  ['ი/მ ლევან წულაია', 11400], ['შპს დიდუბე', 9700], ['სხვა 27 მომხმარებელი', 23800],
+];
+const fmt = { gel: v => '₾' + Math.round(v).toLocaleString('en-US'), kg: v => Math.round(v).toLocaleString('en-US') + ' kg', pct: v => (Math.round(v*10)/10) + '%' };
+const NS = 'http://www.w3.org/2000/svg';
+const el = (t, a={}, parent) => { const e = document.createElementNS(NS, t); for (const k in a) e.setAttribute(k, a[k]); if (parent) parent.appendChild(e); return e; };
+const tip = document.getElementById('tip');
+function hover(node, text) {
+  node.addEventListener('pointerenter', ev => { tip.textContent = text; tip.classList.add('on'); });
+  node.addEventListener('pointermove', ev => { tip.style.left = Math.min(ev.clientX + 12, innerWidth - 270) + 'px'; tip.style.top = (ev.clientY + 12) + 'px'; });
+  node.addEventListener('pointerleave', () => tip.classList.remove('on'));
+  node.setAttribute('tabindex', '0'); node.addEventListener('focus', () => { tip.textContent = text; tip.classList.add('on'); }); node.addEventListener('blur', () => tip.classList.remove('on'));
+}
+
+// ---------- 1. Alarms ----------
+(function alarms(){
+  const overageDays = CATS.reduce((s,c)=>s+c.overage,0);
+  const negative = CATS.filter(c=>c.netMove < 0).map(c=>c.name);
+  const vatDiffs = CATS.filter(c=>Math.abs(c.vatDiff) > 1);
+  const items = [
+    { cls: overageDays ? 'crit' : 'ok', n: overageDays, text: `overage day${overageDays===1?'':'s'} (Beef ${CATS[0].overage}, Sheep ${CATS[2].overage})`, href: '#sm-h' },
+    { cls: negative.length ? 'crit' : 'ok', n: negative.length, text: negative.length ? `negative net movement: ${negative.join(', ')}` : 'no negative net movement', href: '#sm-h' },
+    { cls: vatDiffs.length ? 'warn' : 'ok', n: vatDiffs.length, text: `categories with a doc/real VAT difference (${fmt.gel(vatDiffs.reduce((s,c)=>s+c.vatDiff,0))})`, href: '#db-h' },
+    { cls: 'warn', n: 3, text: 'open reconciliation exceptions', href: '#pareto-h' },
+    { cls: 'ok', n: 0, text: 'unmapped supplies purchases', href: '#vat-h' },
+  ];
+  const nav = document.getElementById('alarms');
+  items.forEach(it => { const a = document.createElement('a'); a.className = 'chip ' + it.cls; a.href = it.href; a.innerHTML = `<span class="n">${it.n}</span><span>${it.text}</span>`; nav.appendChild(a); });
+})();
+
+// ---------- 2. KPI tiles with bullet graphs ----------
+(function kpis(){
+  const host = document.getElementById('kpis');
+  const tiles = [
+    { label:'Real sales', value: totals.realSales, ref: totals.docSales, refLabel:'documented', hint: `${totals.realEntities} real entities · ${fmt.gel(totals.docSales - totals.realSales)} unreal/formal excluded` },
+    { label:'Real purchases', value: totals.realPurchases, ref: totals.docPurchases, refLabel:'documented', hint: `${fmt.gel(totals.realPurchases - totals.docPurchases)} above documented → VAT effect ${fmt.gel((totals.realPurchases-totals.docPurchases)*18/118)}` },
+    { label:'Real debt (receivable)', value: totals.realDebt, ref: totals.realDebt + totals.exceptionDebt, refLabel:'incl. exception debt', hint: `${fmt.gel(totals.exceptionDebt)} exception (paper) debt · ${totals.exceptionEntities} entities` },
+    { label:'VAT payable', value: totals.vatPayable, ref: totals.vatProjected, refLabel:'projected at write-off', hint: `nets a supplies input-VAT credit of ${fmt.gel(totals.suppliesVat)}` },
+  ];
+  tiles.forEach(t => {
+    const card = document.createElement('div'); card.className = 'card kpi';
+    card.innerHTML = `<div class="label">${t.label}</div><div class="value">${fmt.gel(t.value)}</div><div class="delta">${t.refLabel}: <b>${fmt.gel(t.ref)}</b> · ${t.value>=t.ref?'+':'−'}${fmt.pct(Math.abs(t.value-t.ref)/Math.max(t.ref,1)*100)}</div>`;
+    const svg = el('svg', { viewBox:'0 0 300 34', preserveAspectRatio:'none', role:'img', 'aria-label': `${t.label} ${fmt.gel(t.value)} against ${t.refLabel} ${fmt.gel(t.ref)}` });
+    const max = Math.max(t.value, t.ref) * 1.15, x = v => 4 + v / max * 292;
+    el('rect', { x:4, y:10, width:292, height:14, rx:3, fill:'var(--surface-2)' }, svg);
+    el('rect', { x:4, y:13, width: x(t.value)-4, height:8, rx:2, fill:'var(--real)' }, svg);
+    el('line', { x1:x(t.ref), x2:x(t.ref), y1:5, y2:29, stroke:'var(--ink)', 'stroke-width':2 }, svg);
+    card.appendChild(svg);
+    const hint = document.createElement('div'); hint.className='delta'; hint.style.marginTop='6px'; hint.textContent = t.hint; card.appendChild(hint);
+    hover(svg, `${t.label}: ${fmt.gel(t.value)} · ${t.refLabel} ${fmt.gel(t.ref)}. Prior period: not available from the API (illustrative band omitted).`);
+    host.appendChild(card);
+  });
+})();
+
+// ---------- 3. Dumbbell doc ↔ real ----------
+const MEASURES = {
+  purchase: { title:'Purchases ₾', doc: c=>c.debtDoc, real: c=>c.debtReal, unit: fmt.gel, extra: c=>`VAT effect ${fmt.gel(c.vatDiff)}` },
+  sales: { title:'Sales ₾', doc: c=>c.saleDocTotal, real: c=>c.saleRealTotal, unit: fmt.gel, extra: c=>`unreal −${fmt.kg(c.unrealKg)}, formal −${fmt.kg(c.formalKg)}, commission ${fmt.gel(c.commission)}` },
+  kg: { title:'Purchases kg', doc: c=>c.purKg, real: c=>c.purRealKg, unit: fmt.kg, extra: c=>`write-off ${c.wo}% → net ${fmt.kg(c.netKg)}` },
+};
+function drawDumbbell(key){
+  const m = MEASURES[key]; const svg = document.getElementById('dumbbell'); svg.innerHTML = '';
+  const W = 720, rowH = 40, padL = 92, padR = 96, top = 22, H = top + CATS.length*rowH + 30;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.style.height = 'auto';
+  const max = Math.max(...CATS.map(c=>Math.max(m.doc(c), m.real(c)))) * 1.08; const x = v => padL + v / max * (W - padL - padR);
+  const g = el('g', { class:'grid' }, svg);
+  const ticks = 5; for (let i=0;i<=ticks;i++){ const v = max/ticks*i; el('line', { x1:x(v), x2:x(v), y1:top-6, y2:H-24 }, g); const t = el('text', { x:x(v), y:H-8, 'text-anchor':'middle' }, svg); t.textContent = m.unit(v).replace(' kg','k').replace(/,\d{3}(?= kg| |$)/,'k'); }
+  CATS.forEach((c, i) => {
+    const y = top + i*rowH + rowH/2, d = m.doc(c), r = m.real(c);
+    const lbl = el('text', { x: padL - 10, y: y+4, 'text-anchor':'end', class:'lbl-strong' }, svg); lbl.textContent = c.name;
+    const row = el('g', {}, svg);
+    el('line', { x1:x(Math.min(d,r)), x2:x(Math.max(d,r)), y1:y, y2:y, stroke: r>=d ? 'var(--real)' : 'var(--doc)', 'stroke-width':4, 'stroke-linecap':'round', opacity:.55 }, row);
+    el('circle', { cx:x(d), cy:y, r:7, fill:'var(--surface)', stroke:'var(--doc)', 'stroke-width':3 }, row);
+    el('circle', { cx:x(r), cy:y, r:7, fill:'var(--real)', stroke:'var(--surface)', 'stroke-width':2 }, row);
+    const gap = r - d; const gl = el('text', { x: W - padR + 8, y: y+4, class: Math.abs(gap) > 0.5 ? 'lbl-strong' : '' }, svg);
+    gl.textContent = Math.abs(gap) < 0.5 ? 'no gap' : (gap>0?'+':'−') + m.unit(Math.abs(gap));
+    if (Math.abs(gap) > 0.5) gl.setAttribute('fill', gap > 0 ? 'var(--crit)' : 'var(--ink)');
+    el('rect', { x:padL, y:y-rowH/2, width:W-padL-padR, height:rowH, fill:'transparent' }, row);
+    hover(row, `${c.name} · ${m.title}: documented ${m.unit(d)} → real ${m.unit(r)} (${gap>=0?'+':'−'}${m.unit(Math.abs(gap))}). ${m.extra(c)}`);
+  });
+  const tb = document.getElementById('dumbbell-table');
+  tb.innerHTML = `<thead><tr><th>Category</th><th class="num">Documented</th><th class="num">Real</th><th class="num">Gap</th><th>Detail</th></tr></thead><tbody>` +
+    CATS.map(c=>`<tr><td>${c.name}</td><td class="num">${m.unit(m.doc(c))}</td><td class="num">${m.unit(m.real(c))}</td><td class="num">${m.unit(m.real(c)-m.doc(c))}</td><td>${m.extra(c)}</td></tr>`).join('') + '</tbody>';
+}
+document.querySelectorAll('[data-measure]').forEach(b => b.addEventListener('click', () => { document.querySelectorAll('[data-measure]').forEach(x=>x.setAttribute('aria-selected','false')); b.setAttribute('aria-selected','true'); drawDumbbell(b.dataset.measure); }));
+drawDumbbell('purchase');
+
+// ---------- 4. Pareto of real debt ----------
+(function pareto(){
+  const svg = document.getElementById('pareto'); const W = 480, H = 260, padL = 44, padR = 40, top = 14, bottom = 58;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.style.height='auto';
+  const total = DEBTORS.reduce((s,d)=>s+d[1],0); const max = DEBTORS[0][1]*1.1; const n = DEBTORS.length; const bw = (W-padL-padR)/n; const y = v => top + (1 - v/max)*(H-top-bottom); const yp = p => top + (1-p)*(H-top-bottom);
+  const g = el('g', {class:'grid'}, svg); [0,.25,.5,.75,1].forEach(p=>{ el('line',{x1:padL,x2:W-padR,y1:yp(p),y2:yp(p)},g); const t=el('text',{x:W-padR+6,y:yp(p)+4},svg); t.textContent=Math.round(p*100)+'%'; });
+  let cum = 0; const pts = [];
+  DEBTORS.forEach((d,i)=>{ cum += d[1]; const cx = padL + bw*i + bw/2; pts.push([cx, yp(cum/total)]);
+    const bar = el('rect',{x:padL+bw*i+2,y:y(d[1]),width:bw-4,height:H-bottom-y(d[1]),rx:2,fill: i===n-1?'var(--doc)':'var(--real)'},svg);
+    hover(bar, `${d[0]}: ${fmt.gel(d[1])} real debt · ${fmt.pct(d[1]/total*100)} of total · cumulative ${fmt.pct(cum/total*100)}`);
+    const t = el('text',{x:cx,y:H-bottom+12,'text-anchor':'end',transform:`rotate(-40 ${cx} ${H-bottom+12})`,'font-size':10},svg); t.textContent = d[0].length>14 ? d[0].slice(0,13)+'…' : d[0];
+  });
+  el('polyline',{points:pts.map(p=>p.join(',')).join(' '),fill:'none',stroke:'var(--ink)','stroke-width':2},svg);
+  pts.forEach(p=>el('circle',{cx:p[0],cy:p[1],r:3,fill:'var(--ink)',stroke:'var(--surface)','stroke-width':2},svg));
+  const t80 = pts.findIndex((p,i)=>DEBTORS.slice(0,i+1).reduce((s,d)=>s+d[1],0)/total>=0.8);
+  document.getElementById('pareto-note').textContent = `${t80+1} customers carry 80 % of the ${fmt.gel(total)} real receivable. The last bar folds 27 small balances; the live table shows all of them (the current page silently caps at 200).`;
+  document.getElementById('pareto-table').innerHTML = `<thead><tr><th>Customer</th><th class="num">Real debt</th><th class="num">Share</th></tr></thead><tbody>`+DEBTORS.map(d=>`<tr><td>${d[0]}</td><td class="num">${fmt.gel(d[1])}</td><td class="num">${fmt.pct(d[1]/total*100)}</td></tr>`).join('')+'</tbody>';
+})();
+
+// ---------- 5. Small multiples ----------
+(function multiples(){
+  const host = document.getElementById('multiples');
+  const allMax = Math.max(...CATS.map(c=>Math.max(...c.days.map(x=>Math.abs(x.end)))));
+  CATS.forEach(c => {
+    const div = document.createElement('div'); div.className='mini';
+    div.innerHTML = `<div class="t"><b>${c.name}</b><span>${fmt.kg(c.netMove)} net</span></div>`;
+    const W=200,H=64,pad=6; const svg = el('svg',{viewBox:`0 0 ${W} ${H}`,role:'img','aria-label':`${c.name} daily net kg, ${c.overage} overage days`});
+    const scale = c.code==='BEEF'||c.code==='PORK' ? allMax : Math.max(...c.days.map(x=>Math.abs(x.end)))*1.1 || 1;
+    const x = d => pad + (d-1)/30*(W-2*pad), y = v => H/2 - v/scale*(H/2-pad);
+    el('line',{x1:pad,x2:W-pad,y1:y(0),y2:y(0),stroke:'var(--grid)'},svg);
+    const pts = c.days.map(r=>`${x(r.d)},${y(r.end)}`);
+    el('polygon',{points:`${x(1)},${y(0)} ${pts.join(' ')} ${x(31)},${y(0)}`,fill:'var(--accent-soft)'},svg);
+    el('polyline',{points:pts.join(' '),fill:'none',stroke:'var(--real)','stroke-width':2,'stroke-linejoin':'round'},svg);
+    c.days.filter(r=>r.over).forEach(r=>{ const m = el('circle',{cx:x(r.d),cy:y(r.end),r:4,fill:'var(--crit)',stroke:'var(--surface)','stroke-width':2},svg); hover(m, `${c.name} · Aug ${r.d}: sold ${fmt.kg(r.sell)} against ${fmt.kg(r.start+r.buy)} available → overage ${fmt.kg(-(r.end))}`); });
+    const last = c.days[30]; el('circle',{cx:x(31),cy:y(last.end),r:3,fill:'var(--real)'},svg);
+    hover(svg, `${c.name}: purchases after ${c.wo}% write-off ${fmt.kg(c.netKg)} − sales ${fmt.kg(c.saleKg)} = ${fmt.kg(c.netMove)}. Overage days: ${c.overage}. Opening stock: not recorded.`);
+    div.appendChild(svg);
+    const f = document.createElement('div'); f.className = 'foot' + (c.overage?' bad':''); f.textContent = c.overage ? `${c.overage} overage day${c.overage>1?'s':''} · write-off ${c.wo}%` : `no overage · write-off ${c.wo}%`; div.appendChild(f);
+    host.appendChild(div);
+  });
+  const legend = document.createElement('div'); legend.className='note'; legend.style.gridColumn='1 / -1'; legend.textContent = 'Beef and Pork share one kg scale; the four small categories are on their own scale (stated on hover). Never a dual axis.'; host.appendChild(legend);
+})();
+
+// ---------- 6. VAT table (headline + projected) ----------
+(function vat(){
+  const t = document.getElementById('vat-table');
+  t.innerHTML = `<thead><tr><th>Category</th><th class="num">Output VAT</th><th class="num">Input VAT</th><th class="num">Payable (filed)</th><th class="num">Projected @ write-off</th><th class="num">Δ</th></tr></thead><tbody>` +
+   CATS.map(c=>{ const out=c.saleDocTotal*18/118, inp=c.debtDoc*18/118; const proj=c.vatProjected; return `<tr><td>${c.name}</td><td class="num">${fmt.gel(out)}</td><td class="num">${fmt.gel(inp)}</td><td class="num"><b>${fmt.gel(c.vatPayable)}</b></td><td class="num">${proj==null?'<span class="note">— (no write-off)</span>':fmt.gel(proj)}</td><td class="num">${proj==null?'':fmt.gel(proj-c.vatPayable)}</td></tr>`;}).join('') +
+   `</tbody><tfoot><tr><th>Total</th><th></th><th></th><th class="num">${fmt.gel(totals.vatPayable)}</th><th class="num">${fmt.gel(totals.vatProjected)}</th><th class="num">${fmt.gel(totals.vatProjected-totals.vatPayable)}</th></tr></tfoot>`;
+})();
+</script>
+</body>
+</html>
