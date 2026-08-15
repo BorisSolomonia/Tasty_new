@@ -238,6 +238,7 @@ public class AuditSourceRowService {
                         .amount(decimal(m.get("amount")))
                         .waybillId((String) m.get("waybillId"))
                         .counterpartyId((String) m.get("counterpartyId"))
+                        .counterpartyName((String) m.get("counterpartyName"))
                         .build());
             }
             return movements;

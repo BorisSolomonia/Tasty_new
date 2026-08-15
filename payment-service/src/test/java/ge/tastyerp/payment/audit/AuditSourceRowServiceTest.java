@@ -26,11 +26,50 @@ import static org.mockito.Mockito.mock;
  */
 class AuditSourceRowServiceTest {
 
+    private final org.springframework.web.client.RestTemplate restTemplate =
+            mock(org.springframework.web.client.RestTemplate.class);
+
     private final AuditSourceRowService service = new AuditSourceRowService(
             mock(com.google.cloud.firestore.Firestore.class),
             mock(AuditMappingService.class),
             mock(AuditLayerRepository.class),
-            mock(org.springframework.web.client.RestTemplate.class));
+            restTemplate);
+
+    @Test
+    void movementFeedCopyKeepsEveryFieldTheWaybillServiceSent() {
+        // BOR-92 regression: the feed is copied field by field; a field added
+        // to ProductMovementDto but not to this copy silently vanishes (the
+        // supplier picker showed bare TINs in production for that reason).
+        java.util.Map<String, Object> line = new java.util.LinkedHashMap<>();
+        line.put("date", "2026-08-03");
+        line.put("type", "PURCHASE");
+        line.put("productName", "საქონლის ხორცი");
+        line.put("parentCategory", "BEEF");
+        line.put("quantityKg", 12.5);
+        line.put("unit", "კგ");
+        line.put("amount", 300.0);
+        line.put("waybillId", "w-1");
+        line.put("counterpartyId", "404737344");
+        line.put("counterpartyName", "შპს ერთგული ვაჟა პაპა");
+        org.mockito.Mockito.when(restTemplate.getForObject(org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.eq(java.util.Map.class)))
+                .thenReturn(java.util.Map.of("data", List.of(line)));
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "waybillServiceUrl", "http://waybill");
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "movementsCacheTtlMs", 1000L);
+
+        List<ProductMovementDto> movements = service.loadProductMovements(
+                LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 31));
+
+        assertEquals(1, movements.size());
+        ProductMovementDto m = movements.get(0);
+        ProductMovementDto expected = ProductMovementDto.builder()
+                .date(LocalDate.of(2026, 8, 3)).type(WaybillType.PURCHASE)
+                .productName("საქონლის ხორცი").parentCategory("BEEF")
+                .quantityKg(new BigDecimal("12.5")).unit("კგ").amount(new BigDecimal("300.0"))
+                .waybillId("w-1").counterpartyId("404737344").counterpartyName("შპს ერთგული ვაჟა პაპა")
+                .build();
+        assertEquals(expected, m, "every field of the feed must survive the copy");
+    }
 
     private static ProductMovementDto line(String waybillId, String product,
                                            String qty, String amount) {
