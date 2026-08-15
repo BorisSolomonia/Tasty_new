@@ -2,6 +2,8 @@ import { createRootRoute, createRoute, createRouter, lazyRouteComponent, Outlet 
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClient } from '@/lib/query-client'
 import { AppShell } from '@/components/layout/app-shell'
+import { ErrorBoundary, ErrorFallback, NotFound } from '@/components/error-boundary'
+import { Toaster } from '@/components/ui/toaster'
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -64,6 +66,10 @@ export const router = createRouter({
   routeTree,
   defaultPreload: 'intent',
   defaultPreloadStaleTime: 30_000,
+  // A route that throws (including a failed lazy-chunk fetch after a deploy
+  // pruned old assets) renders this instead of unmounting the whole app.
+  defaultErrorComponent: ({ error, reset }) => <ErrorFallback error={error} reset={reset} />,
+  defaultNotFoundComponent: NotFound,
 })
 
 declare module '@tanstack/react-router' {
@@ -75,9 +81,12 @@ declare module '@tanstack/react-router' {
 function RootLayout() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AppShell>
-        <Outlet />
-      </AppShell>
+      <ErrorBoundary>
+        <AppShell>
+          <Outlet />
+        </AppShell>
+      </ErrorBoundary>
+      <Toaster />
     </QueryClientProvider>
   )
 }

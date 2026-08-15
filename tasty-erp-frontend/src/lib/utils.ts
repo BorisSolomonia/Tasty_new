@@ -14,26 +14,45 @@ export function canonicalId(id: string | null | undefined): string {
   return digits.replace(/^0+(\d)/, '$1')
 }
 
+/*
+ * Formatters are built once at module scope and reused. Constructing an
+ * Intl.NumberFormat is ~20–50× the cost of using one, and these two functions
+ * sit under every audit table cell (fmtGel/fmtKg/fmtCount → here); a 1000-row
+ * feed was ~4,000 formatter constructions per render (BOR-82 finding FE-5).
+ */
+const GEL_FORMAT = new Intl.NumberFormat('ka-GE', {
+  style: 'currency',
+  currency: 'GEL',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})
+
+const NUMBER_FORMATS = new Map<number, Intl.NumberFormat>()
+
+function numberFormat(decimals: number): Intl.NumberFormat {
+  let fmt = NUMBER_FORMATS.get(decimals)
+  if (!fmt) {
+    fmt = new Intl.NumberFormat('ka-GE', {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    })
+    NUMBER_FORMATS.set(decimals, fmt)
+  }
+  return fmt
+}
+
 /**
  * Format amount in Georgian Lari
  */
 export function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat('ka-GE', {
-    style: 'currency',
-    currency: 'GEL',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amount)
+  return GEL_FORMAT.format(amount)
 }
 
 /**
  * Format number with Georgian locale
  */
 export function formatNumber(num: number, decimals = 2): string {
-  return new Intl.NumberFormat('ka-GE', {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  }).format(num)
+  return numberFormat(decimals).format(num)
 }
 
 /**

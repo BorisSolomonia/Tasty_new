@@ -2,7 +2,7 @@ import * as React from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { startOfMonth } from 'date-fns'
 import { productSalesApi, configApi, waybillsApi } from '@/lib/api-client'
-import { formatDateISO } from '@/lib/utils'
+import { canonicalId, formatDateISO, formatNumber } from '@/lib/utils'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -50,12 +50,6 @@ type SortField = 'name' | 'beef' | 'pork' | 'total'
 // e.g. "01008057492" from RS.ge becomes "1008057492".
 // We normalize both sides before comparing so IDs always match.
 
-function normId(id: string): string {
-  if (!id) return ''
-  const digits = id.replace(/\D/g, '')
-  // Strip leading zeros but keep at least one digit
-  return digits.replace(/^0+(\d)/, '$1')
-}
 
 // ─── LocalStorage helpers ─────────────────────────────────────────────────────
 
@@ -77,10 +71,7 @@ function saveCustomersToLocalStorage(list: CustomerState[]) {
 
 function formatKg(val: number | undefined | null): string {
   if (val == null) return '0.0'
-  return new Intl.NumberFormat('ka-GE', {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
-  }).format(val)
+  return formatNumber(val, 1)
 }
 
 function SortIcon({ field, current, dir }: { field: SortField; current: SortField; dir: 'asc' | 'desc' }) {
@@ -167,25 +158,25 @@ export function ProductSalesPage() {
     // Add from config customers
     const cfgList = (customersListQuery.data ?? []) as Array<{ identification: string; customerName: string }>
     cfgList.forEach(c => {
-      if (c.identification) map.set(normId(c.identification), `(${c.identification}) ${c.customerName}`)
+      if (c.identification) map.set(canonicalId(c.identification), `(${c.identification}) ${c.customerName}`)
     })
     // Add from RS.ge waybill customer totals (all customers with sales)
     const salesTotals = (salesTotalsQuery.data ?? []) as import('@/types/domain').CustomerSalesTotals[]
     salesTotals.forEach(c => {
-      if (c.customerId && !map.has(normId(c.customerId))) {
-        map.set(normId(c.customerId), `(${c.customerId}) ${c.customerName}`)
+      if (c.customerId && !map.has(canonicalId(c.customerId))) {
+        map.set(canonicalId(c.customerId), `(${c.customerId}) ${c.customerName}`)
       }
     })
     // Add from product-sales API results (already fetched)
     const apiData = (query.data ?? []) as ProductSales[]
     apiData.forEach(r => {
-      if (r.customerId && !map.has(normId(r.customerId))) {
-        map.set(normId(r.customerId), `(${r.customerId}) ${r.customerName}`)
+      if (r.customerId && !map.has(canonicalId(r.customerId))) {
+        map.set(canonicalId(r.customerId), `(${r.customerId}) ${r.customerName}`)
       }
     })
     // Always include DEFAULT_CUSTOMERS as fallback
     DEFAULT_CUSTOMERS.forEach(c => {
-      if (!map.has(normId(c.id))) map.set(normId(c.id), c.name)
+      if (!map.has(canonicalId(c.id))) map.set(canonicalId(c.id), c.name)
     })
 
     return Array.from(map.entries()).map(([nid, name]) => ({ nid, name }))
@@ -237,7 +228,7 @@ export function ProductSalesPage() {
 
   const addCustomerFromOption = (option: { nid: string; name: string }) => {
     // Check if already in list (by normalized ID)
-    if (customers.some(c => normId(c.id) === option.nid)) {
+    if (customers.some(c => canonicalId(c.id) === option.nid)) {
       setNewCustomerInput('')
       setDropdownOpen(false)
       setShowAddInput(false)
@@ -257,7 +248,7 @@ export function ProductSalesPage() {
     if (!trimmed) return
     // Check if it matches an autocomplete option exactly
     const match = autocompleteOptions.find(
-      o => o.name.toLowerCase() === trimmed.toLowerCase() || o.nid === normId(trimmed)
+      o => o.name.toLowerCase() === trimmed.toLowerCase() || o.nid === canonicalId(trimmed)
     )
     if (match) {
       addCustomerFromOption(match)
@@ -266,7 +257,7 @@ export function ProductSalesPage() {
     // Free-text add: extract TIN from format "(TIN) Name" or just use as-is
     const tinMatch = trimmed.match(/\((\d{9,11})\)/)
     const id = tinMatch ? tinMatch[1] : trimmed
-    if (customers.some(c => normId(c.id) === normId(id))) {
+    if (customers.some(c => canonicalId(c.id) === canonicalId(id))) {
       setNewCustomerInput('')
       setDropdownOpen(false)
       setShowAddInput(false)
@@ -288,9 +279,9 @@ export function ProductSalesPage() {
   }
 
   // Build a normalized set of visible customer IDs for matching
-  // Uses normId() so "01008057492" and "1008057492" both resolve to the same key
+  // Uses canonicalId() so "01008057492" and "1008057492" both resolve to the same key
   const visibleNormIds = React.useMemo(
-    () => new Set(customers.filter((c) => c.visible).map((c) => normId(c.id))),
+    () => new Set(customers.filter((c) => c.visible).map((c) => canonicalId(c.id))),
     [customers]
   )
 
@@ -298,7 +289,7 @@ export function ProductSalesPage() {
     if (!query.data) return []
     // Match by normalized ID — fixes leading-zero mismatches from RS.ge
     const filtered = (query.data as ProductSales[]).filter(
-      (row) => visibleNormIds.has(normId(row.customerId))
+      (row) => visibleNormIds.has(canonicalId(row.customerId))
     )
     return [...filtered].sort((a, b) => {
       let cmp = 0
@@ -403,7 +394,7 @@ export function ProductSalesPage() {
                       <div className="px-3 py-2 text-xs text-muted-foreground">იტვირთება...</div>
                     )}
                     {autocompleteOptions.map((opt) => {
-                      const alreadyAdded = customers.some(c => normId(c.id) === opt.nid)
+                      const alreadyAdded = customers.some(c => canonicalId(c.id) === opt.nid)
                       return (
                         <button
                           key={opt.nid}
@@ -560,13 +551,22 @@ function TableHeader({
   sortDir: 'asc' | 'desc'
   onSort: (f: SortField) => void
 }) {
+  // A real <button> inside the <th> plus aria-sort: keyboard-reachable and
+  // announced. The former <th onClick> was mouse-only (BOR-82 finding FE-13).
   const th = (label: React.ReactNode, field: SortField, align = 'text-right') => (
     <th
-      className={`cursor-pointer select-none whitespace-nowrap px-3 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground ${align}`}
-      onClick={() => onSort(field)}
+      scope="col"
+      aria-sort={sortField === field ? (sortDir === 'desc' ? 'descending' : 'ascending') : 'none'}
+      className={`whitespace-nowrap px-1 py-1 text-xs font-medium uppercase tracking-wide text-muted-foreground ${align}`}
     >
-      {label}
-      <SortIcon field={field} current={sortField} dir={sortDir} />
+      <button
+        type="button"
+        onClick={() => onSort(field)}
+        className={`min-h-9 w-full select-none rounded px-2 py-2 uppercase hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${align}`}
+      >
+        {label}
+        <SortIcon field={field} current={sortField} dir={sortDir} />
+      </button>
     </th>
   )
 

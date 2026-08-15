@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
@@ -48,6 +49,21 @@ export default defineConfig(({ mode }) => {
                 changeOrigin: true,
               },
             }),
+      },
+    },
+    // Vitest reads this file directly (BOR-81/82: the frontend had no test
+    // runner at all; the audit page's data hooks now carry regression tests).
+    test: {
+      environment: 'jsdom',
+      globals: true,
+      setupFiles: ['./src/test/setup.ts'],
+      include: ['src/**/*.test.{ts,tsx}'],
+      css: false,
+      coverage: {
+        provider: 'v8',
+        reporter: ['text', 'html'],
+        include: ['src/**/*.{ts,tsx}'],
+        exclude: ['src/**/*.test.{ts,tsx}', 'src/test/**', 'src/types/**'],
       },
     },
     build: {

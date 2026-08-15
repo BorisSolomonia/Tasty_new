@@ -4,6 +4,9 @@ import { RouterProvider } from '@tanstack/react-router'
 import './index.css'
 import './i18n'
 import { router } from './router'
+import { installGlobalErrorCapture } from './lib/client-errors'
+
+installGlobalErrorCapture()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

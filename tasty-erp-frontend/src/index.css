@@ -114,3 +114,17 @@
     @apply animate-pulse bg-muted rounded;
   }
 }
+
+/* Users who asked their OS for reduced motion get it: the audit page keeps
+   skeletons pulsing for the 10-20 s of a wide flows scan and spinners running
+   in four places, with no opt-out before this (BOR-82 finding FE-18). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

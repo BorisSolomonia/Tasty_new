@@ -19,7 +19,7 @@ import { ArrowDown, ArrowUp } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/cn'
 import type { AuditSourceRow } from '@/lib/audit-api'
-import { RuleBadge } from './rule-badge'
+import { RuleBadge, useMappingRuleIndex } from './rule-badge'
 import { StatusBadge } from './status-badge'
 import { EM_DASH, fmtDate, fmtGel, fmtKgSigned, fmtText, gapTone, toneClass } from './format'
 
@@ -46,6 +46,8 @@ export function SourceRowTable({
   className?: string
 }) {
   const [sorting, setSorting] = React.useState<SortingState>([{ id: 'date', desc: true }])
+  // One rules lookup for the whole table, handed to every row's badge.
+  const rulesById = useMappingRuleIndex()
 
   const columns = React.useMemo(() => {
     // Eleven columns needed ~1,428px and never fitted a 950px container, so the
@@ -130,7 +132,7 @@ export function SourceRowTable({
           <div className="flex flex-col items-start gap-0.5">
             <StatusBadge status={row.original.status} />
             {/* Why this row says what it says, when a rule and not a person said it. */}
-            <RuleBadge mapping={row.original.mapping} />
+            <RuleBadge mapping={row.original.mapping} rulesById={rulesById} />
           </div>
         ),
       }),
@@ -159,7 +161,7 @@ export function SourceRowTable({
         ),
       }),
     ]
-  }, [onMap])
+  }, [onMap, rulesById])
 
   const table = useReactTable({
     data: rows,

@@ -28,7 +28,7 @@ import type {
 import { useSaveMapping, useVoidMapping } from '@/hooks/use-audit-flows'
 import { useAudit } from './audit-context'
 import { useOperatorGuard } from './operator-picker'
-import { RuleBadge } from './rule-badge'
+import { RuleBadge, useMappingRuleIndex } from './rule-badge'
 import { StatusBadge } from './status-badge'
 import { ChangeHistory } from './change-history'
 import { EM_DASH, fmtDate, fmtGel, fmtKgSigned, fmtText, hasValue } from './format'
@@ -79,6 +79,7 @@ export function MappingEditor({
   onProposeMapping?: (payload: AuditMapping) => void
   submitLabel?: string
 }) {
+  const rulesById = useMappingRuleIndex()
   const { categories, operator } = useAudit()
   const { ready, message } = useOperatorGuard()
   const saveMutation = useSaveMapping(operator)
@@ -205,7 +206,7 @@ export function MappingEditor({
             {row.sourceType ?? 'SOURCE'} · {fmtText(row.reference)}
           </span>
           <span className="ml-auto flex flex-wrap items-center gap-2">
-            <RuleBadge mapping={row.mapping} />
+            <RuleBadge mapping={row.mapping} rulesById={rulesById} />
             <StatusBadge status={row.status} />
           </span>
         </div>

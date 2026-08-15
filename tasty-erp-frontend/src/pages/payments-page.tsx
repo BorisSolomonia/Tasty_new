@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { addDays } from 'date-fns'
-import { paymentsApi, waybillsApi, configApi, debtsApi, ApiError } from '@/lib/api-client'
+import { paymentsApi, waybillsApi, configApi, debtsApi, apiErrorMessage } from '@/lib/api-client'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
@@ -21,19 +21,42 @@ type PaymentDetail = {
 type DebtRow = CustomerDebt & { waybills: Waybill[]; payments: PaymentDetail[] }
 type SortKey = 'currentDebt' | 'totalPayments' | 'totalSales' | 'startingDebt' | 'customerId' | 'customerName'
 
-function getApiErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) {
-    const data = error.data as unknown
-    if (data && typeof data === 'object') {
-      const maybeMessage = (data as { message?: unknown }).message
-      if (typeof maybeMessage === 'string' && maybeMessage.trim()) return maybeMessage
-      const maybeError = (data as { error?: unknown }).error
-      if (typeof maybeError === 'string' && maybeError.trim()) return maybeError
-    }
-    return `${error.status} ${error.statusText}`
-  }
-  if (error instanceof Error) return error.message
-  return 'Unknown error'
+/**
+ * A sortable column header that is a real button: keyboard-reachable,
+ * announced with `aria-sort`, and with one consistent arrow direction. The
+ * previous `<th onClick>` was unreachable without a mouse and one column drew
+ * its arrow the wrong way round (BOR-82 finding FE-13).
+ */
+function SortableTh({
+  label,
+  column,
+  sortBy,
+  sortOrder,
+  onSort,
+}: {
+  label: string
+  column: SortKey
+  sortBy: SortKey
+  sortOrder: 'asc' | 'desc'
+  onSort: (column: SortKey) => void
+}) {
+  const active = sortBy === column
+  return (
+    <th
+      scope="col"
+      aria-sort={active ? (sortOrder === 'desc' ? 'descending' : 'ascending') : 'none'}
+      className="px-2 py-1 text-left text-xs font-medium uppercase"
+    >
+      <button
+        type="button"
+        onClick={() => onSort(column)}
+        className="flex min-h-9 w-full items-center gap-1 rounded px-2 py-2 text-left uppercase hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {label}
+        <span aria-hidden="true">{active ? (sortOrder === 'desc' ? '↓' : '↑') : ''}</span>
+      </button>
+    </th>
+  )
 }
 
 const PAYMENT_CUTOFF_DATE = '2025-04-29'
@@ -93,8 +116,12 @@ export function PaymentsPage() {
   })
 
   const overview = debtsQuery.data
-  const waybills = (waybillsQuery.data || []) as Waybill[]
-  const payments = (paymentsQuery.data || []) as Payment[]
+  // Memoised: a fresh `[]` fallback per render changed the deps of the
+  // detailsByCanonical memo below on every render (react-hooks/exhaustive-deps).
+  const waybillsData = waybillsQuery.data
+  const paymentsData = paymentsQuery.data
+  const waybills = React.useMemo(() => (waybillsData || []) as Waybill[], [waybillsData])
+  const payments = React.useMemo(() => (paymentsData || []) as Payment[], [paymentsData])
   const paymentStatus = (paymentStatusQuery.data || {}) as Record<string, import('@/types/domain').PaymentStatus>
 
   const excludeMutation = useMutation({
@@ -138,6 +165,14 @@ export function PaymentsPage() {
         description: p.description ?? undefined,
       })
     })
+    // Newest first, sorted ONCE here. The render used to call `.sort()` on
+    // these arrays in place — and they are the very arrays the React Query
+    // cache owns, so expanding one customer permanently reordered cached data
+    // that the Dashboard also reads (BOR-82 finding FE-10).
+    for (const entry of map.values()) {
+      entry.waybills.sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+      entry.payments.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    }
     return map
   }, [waybills, payments, paymentWindowStart])
 
@@ -191,7 +226,7 @@ export function PaymentsPage() {
   const uploadMutation = useMutation({
     mutationFn: ({ file, bank }: { file: File; bank: 'tbc' | 'bog' }) =>
       paymentsApi.uploadExcel(file, bank),
-    onSuccess: (data: any) => {
+    onSuccess: (data: { addedCount?: number; newCount?: number; duplicateCount?: number }) => {
       const addedCount = data.addedCount || data.newCount || 0
       const duplicateCount = data.duplicateCount || 0
       setUploadStatus(`✅ ${addedCount} ახალი გადახდა, ${duplicateCount} დუბლიკატი`)
@@ -200,7 +235,7 @@ export function PaymentsPage() {
       if (fileInputRef.current) fileInputRef.current.value = ''
     },
     onError: (err) => {
-      setUploadStatus(`❌ შეცდომა: ${getApiErrorMessage(err)}`)
+      setUploadStatus(`❌ შეცდომა: ${apiErrorMessage(err)}`)
     },
   })
 
@@ -213,7 +248,7 @@ export function PaymentsPage() {
       if (manualFileInputRef.current) manualFileInputRef.current.value = ''
     },
     onError: (err) => {
-      setManualUploadStatus(`Error: ${getApiErrorMessage(err)}`)
+      setManualUploadStatus(`Error: ${apiErrorMessage(err)}`)
     },
   })
 
@@ -225,7 +260,7 @@ export function PaymentsPage() {
       void queryClient.invalidateQueries({ queryKey: ['debts'] })
     },
     onError: (err) => {
-      setUploadStatus(`❌ წაშლა ვერ მოხერხდა: ${getApiErrorMessage(err)}`)
+      setUploadStatus(`❌ წაშლა ვერ მოხერხდა: ${apiErrorMessage(err)}`)
     },
   })
 
@@ -303,7 +338,7 @@ export function PaymentsPage() {
       void queryClient.invalidateQueries({ queryKey: ['payments'] })
       void queryClient.invalidateQueries({ queryKey: ['debts'] })
     } catch (error) {
-      window.alert(`Failed to add manual payment: ${getApiErrorMessage(error)}`)
+      window.alert(`Failed to add manual payment: ${apiErrorMessage(error)}`)
     }
   }
 
@@ -317,7 +352,7 @@ export function PaymentsPage() {
       void queryClient.invalidateQueries({ queryKey: ['payments'] })
       void queryClient.invalidateQueries({ queryKey: ['debts'] })
     } catch (error) {
-      window.alert(`Failed to delete manual payment: ${getApiErrorMessage(error)}`)
+      window.alert(`Failed to delete manual payment: ${apiErrorMessage(error)}`)
     }
   }
 
@@ -373,37 +408,42 @@ export function PaymentsPage() {
             <thead className="bg-muted">
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase">სახელი</th>
-                <th
-                  onClick={() => handleSort('currentDebt')}
-                  className="px-4 py-3 text-left text-xs font-medium uppercase cursor-pointer hover:bg-accent"
-                >
-                  ვალი {sortBy === 'currentDebt' && (sortOrder === 'desc' ? '↓' : '↑')}
-                </th>
+                <SortableTh
+                  label="ვალი"
+                  column="currentDebt"
+                  sortBy={sortBy}
+                  sortOrder={sortOrder}
+                  onSort={handleSort}
+                />
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase">ხელით</th>
-                <th
-                  onClick={() => handleSort('totalPayments')}
-                  className="px-4 py-3 text-left text-xs font-medium uppercase cursor-pointer hover:bg-accent"
-                >
-                  გადახდები {sortBy === 'totalPayments' && (sortOrder === 'desc' ? '↑' : '↓')}
-                </th>
-                <th
-                  onClick={() => handleSort('totalSales')}
-                  className="px-4 py-3 text-left text-xs font-medium uppercase cursor-pointer hover:bg-accent"
-                >
-                  გაყიდვები {sortBy === 'totalSales' && (sortOrder === 'desc' ? '↓' : '↑')}
-                </th>
-                <th
-                  onClick={() => handleSort('startingDebt')}
-                  className="px-4 py-3 text-left text-xs font-medium uppercase cursor-pointer hover:bg-accent"
-                >
-                  საწყისი {sortBy === 'startingDebt' && (sortOrder === 'desc' ? '↓' : '↑')}
-                </th>
-                <th
-                  onClick={() => handleSort('customerId')}
-                  className="px-4 py-3 text-left text-xs font-medium uppercase cursor-pointer hover:bg-accent"
-                >
-                  ID {sortBy === 'customerId' && (sortOrder === 'desc' ? '↓' : '↑')}
-                </th>
+                <SortableTh
+                  label="გადახდები"
+                  column="totalPayments"
+                  sortBy={sortBy}
+                  sortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <SortableTh
+                  label="გაყიდვები"
+                  column="totalSales"
+                  sortBy={sortBy}
+                  sortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <SortableTh
+                  label="საწყისი"
+                  column="startingDebt"
+                  sortBy={sortBy}
+                  sortOrder={sortOrder}
+                  onSort={handleSort}
+                />
+                <SortableTh
+                  label="ID"
+                  column="customerId"
+                  sortBy={sortBy}
+                  sortOrder={sortOrder}
+                  onSort={handleSort}
+                />
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase">ჩართვა</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase">დეტალები</th>
               </tr>
@@ -477,10 +517,8 @@ export function PaymentsPage() {
 
                               {customer.waybills && customer.waybills.length > 0 ? (
                                 <div className="space-y-3">
-                                  {customer.waybills
-                                    .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-                                    .map((waybill, idx) => (
-                                      <div key={idx} className="rounded-lg p-4 border-2 bg-blue-50 dark:bg-blue-900/20 border-blue-200">
+                                  {customer.waybills.map((waybill, idx) => (
+                                      <div key={waybill.waybillId ?? waybill.id ?? idx} className="rounded-lg p-4 border-2 bg-blue-50 dark:bg-blue-900/20 border-blue-200">
                                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                                           <div>
                                             <span className="font-medium text-muted-foreground">თარიღი:</span>
@@ -530,14 +568,12 @@ export function PaymentsPage() {
 
                               {customer.payments && customer.payments.length > 0 ? (
                                 <div className="space-y-3">
-                                  {customer.payments
-                                    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                                    .map((payment, idx) => {
+                                  {customer.payments.map((payment, idx) => {
                                       const isAfterCutoff = payment.date >= paymentWindowStart
                                       const isManual = (payment.source || '').toLowerCase() === 'manual-cash'
 
                                       return (
-                                        <div key={idx} className={`rounded-lg p-4 border-2 ${
+                                        <div key={payment.paymentId ?? payment.uniqueCode ?? idx} className={`rounded-lg p-4 border-2 ${
                                           isAfterCutoff
                                             ? 'bg-green-50 dark:bg-green-900/20 border-green-200'
                                             : 'bg-orange-50 dark:bg-orange-900/20 border-orange-200'
@@ -696,24 +732,30 @@ export function PaymentsPage() {
             </Button>
           </div>
 
-          <div
-            className="relative rounded-lg border-2 border-dashed p-8 text-center transition-colors hover:border-primary hover:bg-accent cursor-pointer"
-            onClick={() => fileInputRef.current?.click()}
+          {/* A <label> forwards clicks to the input natively, and `sr-only`
+              (not `hidden`) keeps the input in the tab order and the
+              accessibility tree — the old div+hidden pair made uploading, the
+              page's primary action, mouse-only (BOR-82 finding FE-14). */}
+          <label
+            htmlFor="bank-statement-file"
+            className="relative block rounded-lg border-2 border-dashed p-8 text-center transition-colors hover:border-primary hover:bg-accent cursor-pointer focus-within:ring-2 focus-within:ring-ring"
           >
             <input
+              id="bank-statement-file"
               ref={fileInputRef}
               type="file"
               accept=".xlsx,.xls"
               onChange={handleFileSelect}
-              className="hidden"
+              className="sr-only"
+              aria-describedby="bank-statement-file-help"
             />
             <div className="text-sm text-muted-foreground">
               დააჭირეთ Excel ფაილის ასარჩევად
             </div>
-            <div className="mt-1 text-xs text-muted-foreground">
+            <div id="bank-statement-file-help" className="mt-1 text-xs text-muted-foreground">
               არჩეული ბანკი: {selectedBank.toUpperCase()} | მაქს. ზომა: 10MB
             </div>
-          </div>
+          </label>
 
           {uploadStatus && (
             <div className={`text-sm p-3 rounded-md ${
@@ -746,21 +788,22 @@ export function PaymentsPage() {
       <Card className="p-4 md:p-5">
         <div className="text-sm font-medium mb-3">ნაღდი გადახდები (Excel)</div>
         <div className="flex flex-col gap-3">
-          <div
-            className="relative rounded-lg border-2 border-dashed p-8 text-center transition-colors hover:border-primary hover:bg-accent cursor-pointer"
-            onClick={() => manualFileInputRef.current?.click()}
+          <label
+            htmlFor="manual-cash-file"
+            className="relative block rounded-lg border-2 border-dashed p-8 text-center transition-colors hover:border-primary hover:bg-accent cursor-pointer focus-within:ring-2 focus-within:ring-ring"
           >
             <input
+              id="manual-cash-file"
               ref={manualFileInputRef}
               type="file"
               accept=".xlsx,.xls"
               onChange={handleManualFileSelect}
-              className="hidden"
+              className="sr-only"
             />
             <div className="text-sm text-muted-foreground">
               Excel ფაილის ატვირთვა (A=თარიღი, C=თანხა, E=მომხმარებელი)
             </div>
-          </div>
+          </label>
 
           {manualUploadStatus && (
             <div className={`text-sm p-3 rounded-md ${
@@ -778,8 +821,8 @@ export function PaymentsPage() {
         <Card className="border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive md:p-4">
           <div className="font-medium">მონაცემების ჩატვირთვა ვერ მოხერხდა</div>
           <div className="mt-1 text-xs">
-            {waybillsQuery.isError && <div>ზედნადებები (RS.ge): {getApiErrorMessage(waybillsQuery.error)}</div>}
-            {paymentsQuery.isError && <div>გადახდები: {getApiErrorMessage(paymentsQuery.error)}</div>}
+            {waybillsQuery.isError && <div>ზედნადებები (RS.ge): {apiErrorMessage(waybillsQuery.error)}</div>}
+            {paymentsQuery.isError && <div>გადახდები: {apiErrorMessage(paymentsQuery.error)}</div>}
           </div>
         </Card>
       )}

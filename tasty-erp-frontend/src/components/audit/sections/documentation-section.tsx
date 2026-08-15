@@ -25,7 +25,7 @@ import { CollapsiblePanel } from '../collapsible-panel'
 import { SectionEvidence } from '../evidence-panel'
 import { MetricRow, SectionCard, FormulaNote } from '../metric'
 import { StatusBadge } from '../status-badge'
-import { RuleBadge } from '../rule-badge'
+import { RuleBadge, useMappingRuleIndex } from '../rule-badge'
 import { MappingDialog } from '../mapping-dialog'
 import { JumpLink } from '../section-nav'
 import {
@@ -83,6 +83,7 @@ function cashEffect(
 
 export function DocumentationSection() {
   const { flows, sourceRows, sourceRowsQuery, categories, showEvidence } = useAudit()
+  const rulesById = useMappingRuleIndex()
   const [search, setSearch] = React.useState('')
   const [onlyUnmapped, setOnlyUnmapped] = React.useState(false)
   const [mappingRow, setMappingRow] = React.useState<AuditSourceRow | null>(null)
@@ -224,7 +225,7 @@ export function DocumentationSection() {
                       <td className="py-1 pr-2">
                         <div className="flex flex-col items-start gap-1">
                           <StatusBadge status={row.status} />
-                          <RuleBadge mapping={row.mapping} />
+                          <RuleBadge mapping={row.mapping} rulesById={rulesById} />
                         </div>
                       </td>
                       <td className="py-1">

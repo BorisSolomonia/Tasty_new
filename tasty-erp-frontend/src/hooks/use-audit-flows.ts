@@ -12,10 +12,15 @@
  *    is keyed on the same period as the flows payload, so a row visible in one
  *    variant is visible in all of them.
  *
- * Every query key starts with `audit-layer`, so one `invalidateQueries` after a
- * mutation refreshes aggregates, rows and manual inputs together — a mapping
- * saved in the Workbench moves the numbers in the Control Tower.
+ * Every query key starts with `audit-layer`, so `refreshAll` can refresh
+ * aggregates, rows and manual inputs together. Mutations, however, invalidate
+ * only the scopes they can actually change (BOR-82 finding FE-2): a blanket
+ * `['audit-layer']` invalidation after every save refetched 5–8 query families —
+ * including the 10–20 s flows scan — for a mapping edit that could not have
+ * touched categories, rules or supplier debt. Clearing a 20-row queue cost
+ * ~100 refetches and ~20 full-period scans.
  */
+import { useCallback } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   auditLayerApi,
@@ -151,20 +156,21 @@ export function useSaveMappingRule(
   operator: string,
   period: { startDate: string; endDate: string }
 ) {
-  const invalidate = useInvalidateAuditLayer()
+  const invalidate = useInvalidateAuditScopes()
   return useMutation({
     mutationFn: (rule: AuditMappingRule) =>
       auditLayerApi.saveMappingRule(rule, operator, period),
-    onSuccess: invalidate,
+    // A rule maps rows, so everything a mapping moves, plus the rule list.
+    onSuccess: () => invalidate(['mapping-rules', ...MAPPING_SCOPES]),
   })
 }
 
 export function useRevokeMappingRule(operator: string) {
-  const invalidate = useInvalidateAuditLayer()
+  const invalidate = useInvalidateAuditScopes()
   return useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) =>
       auditLayerApi.revokeMappingRule(id, operator, reason),
-    onSuccess: invalidate,
+    onSuccess: () => invalidate(['mapping-rules', ...MAPPING_SCOPES]),
   })
 }
 
@@ -211,10 +217,57 @@ export function useCheckEvidence(params: { startDate: string; endDate: string },
   })
 }
 
-/** Invalidates the whole audit layer — aggregates, rows and manual inputs. */
+/**
+ * The query families under `audit-layer`. Each mutation names the ones it can
+ * change; nothing else is refetched.
+ */
+export type AuditScope =
+  | 'flows'
+  | 'source-rows'
+  | 'categories'
+  | 'drilldown'
+  | 'mapping-rules'
+  | 'mapping-rule-preview'
+  | 'mapping-history'
+  | 'real-inventory'
+  | 'supplier-debt'
+  | 'check-evidence'
+
+/** What a change to one row's mapping can move: aggregates, the feed, open drill-downs, that row's history. */
+export const MAPPING_SCOPES: readonly AuditScope[] = [
+  'flows',
+  'source-rows',
+  'drilldown',
+  'mapping-history',
+  'mapping-rule-preview',
+]
+
+/**
+ * Invalidates the whole audit layer — aggregates, rows and manual inputs.
+ *
+ * Returned callback is referentially stable (`useCallback`): it is placed in the
+ * `AuditContext` value and listed in that value's `useMemo` deps, so a fresh
+ * closure per render made the memo never hit and re-rendered every consumer on
+ * every keystroke (BOR-82 finding FE-1).
+ */
 export function useInvalidateAuditLayer() {
   const queryClient = useQueryClient()
-  return () => void queryClient.invalidateQueries({ queryKey: [AUDIT_LAYER_KEY] })
+  return useCallback(
+    () => void queryClient.invalidateQueries({ queryKey: [AUDIT_LAYER_KEY] }),
+    [queryClient]
+  )
+}
+
+/** Invalidates only the named scopes. Stable across renders. */
+export function useInvalidateAuditScopes() {
+  const queryClient = useQueryClient()
+  return useCallback(
+    (scopes: readonly AuditScope[]) =>
+      Promise.all(
+        scopes.map((scope) => queryClient.invalidateQueries({ queryKey: [AUDIT_LAYER_KEY, scope] }))
+      ).then(() => undefined),
+    [queryClient]
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -224,10 +277,19 @@ export function useInvalidateAuditLayer() {
 // ---------------------------------------------------------------------------
 
 export function useSaveMapping(operator: string) {
-  const invalidate = useInvalidateAuditLayer()
+  const invalidate = useInvalidateAuditScopes()
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (mapping: AuditMapping) => auditLayerApi.saveMapping(mapping, operator),
+    // Stop any source-rows refetch that is still in flight from a PREVIOUS save.
+    // Without this, that older response landed after the patch below and
+    // overwrote it wholesale, flipping the row the operator just classified
+    // back to UNMAPPED (BOR-82 finding FE-8) — indistinguishable from a failed
+    // save. Cancelling here means the only refetch that can land is the one
+    // this mutation schedules after it has patched.
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: [AUDIT_LAYER_KEY, 'source-rows'] })
+    },
     onSuccess: (saved) => {
       // The refetch this triggers can take ten to twenty seconds on a wide date
       // range, and until it lands the row still reads UNMAPPED — which looks
@@ -252,49 +314,50 @@ export function useSaveMapping(operator: string) {
           }
         }
       )
-      invalidate()
+      void invalidate(MAPPING_SCOPES)
     },
   })
 }
 
 export function useVoidMapping(operator: string) {
-  const invalidate = useInvalidateAuditLayer()
+  const invalidate = useInvalidateAuditScopes()
   return useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) =>
       auditLayerApi.deleteMapping(id, operator, reason),
-    onSuccess: invalidate,
+    onSuccess: () => invalidate(MAPPING_SCOPES),
   })
 }
 
 export function useSaveRealInventory(operator: string) {
-  const invalidate = useInvalidateAuditLayer()
+  const invalidate = useInvalidateAuditScopes()
   return useMutation({
     mutationFn: (override: RealInventoryOverride) =>
       auditLayerApi.saveRealInventory(override, operator),
-    onSuccess: invalidate,
+    onSuccess: () => invalidate(['real-inventory', 'flows']),
   })
 }
 
 export function useSaveSupplierDebt(operator: string) {
-  const invalidate = useInvalidateAuditLayer()
+  const invalidate = useInvalidateAuditScopes()
   return useMutation({
     mutationFn: (debt: RealSupplierDebt) => auditLayerApi.saveSupplierDebt(debt, operator),
-    onSuccess: invalidate,
+    onSuccess: () => invalidate(['supplier-debt', 'flows']),
   })
 }
 
 export function useSaveCheckEvidence(operator: string) {
-  const invalidate = useInvalidateAuditLayer()
+  const invalidate = useInvalidateAuditScopes()
   return useMutation({
     mutationFn: (evidence: CheckEvidence) => auditLayerApi.saveCheckEvidence(evidence, operator),
-    onSuccess: invalidate,
+    onSuccess: () => invalidate(['check-evidence', 'flows', 'drilldown']),
   })
 }
 
 export function useCreateCategory(operator: string) {
-  const invalidate = useInvalidateAuditLayer()
+  const invalidate = useInvalidateAuditScopes()
   return useMutation({
     mutationFn: (category: AuditCategory) => auditLayerApi.createCategory(category, operator),
-    onSuccess: invalidate,
+    // A brand-new category has no mappings yet, so no aggregate can move.
+    onSuccess: () => invalidate(['categories']),
   })
 }

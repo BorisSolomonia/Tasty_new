@@ -2,26 +2,11 @@ import * as React from 'react'
 import { Link } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { startOfMonth } from 'date-fns'
-import { ApiError, waybillsApi, debtsApi } from '@/lib/api-client'
+import { apiErrorMessage, waybillsApi, debtsApi } from '@/lib/api-client'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { formatCurrency, formatDate, formatDateISO } from '@/lib/utils'
-
-function getApiErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) {
-    const data = error.data as unknown
-    if (data && typeof data === 'object') {
-      const maybeMessage = (data as { message?: unknown }).message
-      if (typeof maybeMessage === 'string' && maybeMessage.trim()) return maybeMessage
-      const maybeError = (data as { error?: unknown }).error
-      if (typeof maybeError === 'string' && maybeError.trim()) return maybeError
-    }
-    return `${error.status} ${error.statusText}`
-  }
-  if (error instanceof Error) return error.message
-  return 'Unknown error'
-}
 
 export function WaybillsPage() {
   const queryClient = useQueryClient()
@@ -81,7 +66,7 @@ export function WaybillsPage() {
       void queryClient.invalidateQueries({ queryKey: ['waybills', 'sale'] })
       void queryClient.invalidateQueries({ queryKey: ['waybills', 'vat'] })
     },
-    onError: (err) => setSyncMessage(getApiErrorMessage(err)),
+    onError: (err) => setSyncMessage(apiErrorMessage(err)),
   })
 
   const syncPurchasesMutation = useMutation({
@@ -91,7 +76,7 @@ export function WaybillsPage() {
       void queryClient.invalidateQueries({ queryKey: ['waybills', 'purchase'] })
       void queryClient.invalidateQueries({ queryKey: ['waybills', 'vat'] })
     },
-    onError: (err) => setSyncMessage(getApiErrorMessage(err)),
+    onError: (err) => setSyncMessage(apiErrorMessage(err)),
   })
 
   return (
@@ -261,7 +246,7 @@ export function WaybillsPage() {
             Ensure backend is reachable via `VITE_API_URL`.
           </div>
           <div className="mt-2 text-xs">
-            VAT summary: {getApiErrorMessage(vatSummaryQuery.error)}
+            VAT summary: {apiErrorMessage(vatSummaryQuery.error)}
           </div>
         </Card>
       )}

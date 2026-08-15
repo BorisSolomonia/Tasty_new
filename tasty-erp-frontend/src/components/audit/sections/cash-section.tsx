@@ -25,7 +25,7 @@ import { useAudit } from '../audit-context'
 import { CollapsiblePanel } from '../collapsible-panel'
 import { MetricRow, SectionCard, FormulaNote } from '../metric'
 import { StatusBadge } from '../status-badge'
-import { RuleBadge } from '../rule-badge'
+import { RuleBadge, useMappingRuleIndex } from '../rule-badge'
 import { SupplierDebtPanel } from '../supplier-debt-panel'
 import { MappingDialog } from '../mapping-dialog'
 import { isUnresolved } from '../cross-flow'
@@ -34,6 +34,7 @@ import { fmtCount, fmtGel, fmtDate, fmtText, gapTone } from '../format'
 
 export function CashSection() {
   const { flows, sourceRows, sourceRowsQuery, showEvidence } = useAudit()
+  const rulesById = useMappingRuleIndex()
   const [mappingRow, setMappingRow] = React.useState<AuditSourceRow | null>(null)
 
   const cash = flows?.cash ?? null
@@ -305,7 +306,7 @@ export function CashSection() {
                     <div className="truncate text-muted-foreground" title={row.description ?? ''}>
                       {fmtText(row.description)}
                     </div>
-                    <RuleBadge mapping={row.mapping} className="mt-1" />
+                    <RuleBadge mapping={row.mapping} rulesById={rulesById} className="mt-1" />
                   </div>
                   <StatusBadge status={row.status} />
                   <Button

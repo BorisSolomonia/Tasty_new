@@ -131,8 +131,11 @@ export function InventorySection() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((product) => (
-                  <ProductRow key={product.productName ?? Math.random()} product={product} />
+                {rows.map((product, index) => (
+                  // A stable key. `Math.random()` here remounted every row whose
+                  // productName was null on each render, wiping the operator's
+                  // half-typed real-stock entry (BOR-82 finding FE-6).
+                  <ProductRow key={product.productName ?? `__unnamed_${index}`} product={product} />
                 ))}
               </tbody>
             </table>

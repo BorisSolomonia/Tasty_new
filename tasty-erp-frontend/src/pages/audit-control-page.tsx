@@ -17,7 +17,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { formatCurrency, formatNumber, formatDate, formatDateISO } from '@/lib/utils'
+import { canonicalId, formatCurrency, formatNumber, formatDate, formatDateISO } from '@/lib/utils'
 
 const PRODUCT_FILTERS = [
   { value: '', label: 'All products' },
@@ -227,16 +227,6 @@ type DualQuery = {
   isLoading: boolean
   isError: boolean
   error: unknown
-}
-
-/**
- * Mirror of backend TinValidator.canonicalId: digits only, leading zeros
- * stripped (RS.ge drops leading zeros from individual TINs). Non-numeric ids
- * fall back to the trimmed string.
- */
-function canonicalId(id: string): string {
-  const digits = id.replace(/\D/g, '')
-  return digits ? digits.replace(/^0+(?=\d)/, '') : id.trim()
 }
 
 // One collapsible split-card per category: Purchases | Sales | On-hand footer.
