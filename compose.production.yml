@@ -75,6 +75,15 @@ services:
           cpus: "0.5"
     volumes:
       - ./secrets/firebase-sa.json:/secrets/firebase-sa.json:ro
+    # payment-service answers /debts and the audit layer by calling the other two
+    # services; without this ordering it passed its own health check ~50 s before
+    # config-service was up and the first requests after a deploy 502'd
+    # ("fetch initial debts"). Costs ~1 min of deploy time, removes the window.
+    depends_on:
+      config-service:
+        condition: service_healthy
+      waybill-service:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8082/actuator/health"]
       interval: 30s
