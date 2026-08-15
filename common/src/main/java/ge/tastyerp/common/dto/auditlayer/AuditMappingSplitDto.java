@@ -30,6 +30,14 @@ public class AuditMappingSplitDto {
     /** Counterparty TIN, when known. Identity for supplier/customer rollups. */
     private String counterpartyTin;
 
+    /**
+     * Level-2 classification: the document-status subgroup this slice sits in
+     * ("Purchase act needed", "Check needed", "Got check", "Unmapped", or a
+     * user-created one — see {@link AuditSubgroupDto}). Null means no subgroup
+     * was chosen; the overview shows such slices under "no document status".
+     */
+    private String subgroupCode;
+
     /** Standardised product, for slices that carry an inventory meaning. */
     private String productName;
 

@@ -13,6 +13,7 @@ import ge.tastyerp.common.dto.auditlayer.MappingRuleCriterion;
 import ge.tastyerp.common.dto.auditlayer.AuditMappingSplitDto;
 import ge.tastyerp.common.dto.auditlayer.AuditMappingStatus;
 import ge.tastyerp.common.dto.auditlayer.AuditSourceType;
+import ge.tastyerp.common.dto.auditlayer.AuditSubgroupDto;
 import ge.tastyerp.common.dto.auditlayer.CheckEvidenceDto;
 import ge.tastyerp.common.dto.auditlayer.CounterpartyAliasDto;
 import ge.tastyerp.common.dto.auditlayer.RealInventoryOverrideDto;
@@ -63,6 +64,7 @@ public class AuditLayerRepository {
     static final String COLLECTION_CHANGE_LOG = "audit_change_log";
     static final String COLLECTION_COUNTERPARTY_ALIAS = "audit_counterparty_alias";
     static final String COLLECTION_MAPPING_RULES = "audit_mapping_rules";
+    static final String COLLECTION_SUBGROUPS = "audit_subgroups";
 
     /** Firestore hard limit on operations per WriteBatch. */
     private static final int FIRESTORE_BATCH_LIMIT = 500;
@@ -93,6 +95,8 @@ public class AuditLayerRepository {
             SimpleTtlCache.named("audit.aliases", READ_CACHE_TTL_MS, 1);
     private final SimpleTtlCache<String, List<AuditMappingRuleDto>> rulesCache =
             SimpleTtlCache.named("audit.rules", READ_CACHE_TTL_MS, 1);
+    private final SimpleTtlCache<String, List<AuditSubgroupDto>> subgroupsCache =
+            SimpleTtlCache.named("audit.subgroups", READ_CACHE_TTL_MS, 1);
 
     /** Every write path calls this; see the field javadoc for why that makes caching safe. */
     void invalidateReadCaches() {
@@ -100,6 +104,7 @@ public class AuditLayerRepository {
         categoriesCache.invalidateAll();
         aliasesCache.invalidateAll();
         rulesCache.invalidateAll();
+        subgroupsCache.invalidateAll();
     }
 
     // ==================== mappings ====================
@@ -261,6 +266,41 @@ public class AuditLayerRepository {
 
     public void deleteCategory(String code) {
         delete(COLLECTION_CATEGORIES, code);
+        invalidateReadCaches();
+    }
+
+    // ==================== subgroups (level 2) ====================
+
+    /** User-created subgroups only. Built-ins live in {@link AuditSubgroups}. */
+    public List<AuditSubgroupDto> findCustomSubgroups() {
+        return new ArrayList<>(subgroupsCache.getOrCompute(ALL, this::readCustomSubgroups));
+    }
+
+    private List<AuditSubgroupDto> readCustomSubgroups() {
+        List<AuditSubgroupDto> result = new ArrayList<>();
+        QuerySnapshot snapshot = FutureResults.await(
+                firestore.collection(COLLECTION_SUBGROUPS).get(), "load audit subgroups");
+        for (QueryDocumentSnapshot doc : snapshot.getDocuments()) {
+            result.add(AuditSubgroupDto.builder()
+                    .code(doc.getId())
+                    .label(doc.getString("label"))
+                    .description(doc.getString("description"))
+                    .builtIn(false)
+                    .build());
+        }
+        return result;
+    }
+
+    public void saveSubgroup(AuditSubgroupDto subgroup) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("label", subgroup.getLabel());
+        data.put("description", subgroup.getDescription());
+        write(COLLECTION_SUBGROUPS, subgroup.getCode(), data);
+        invalidateReadCaches();
+    }
+
+    public void deleteSubgroup(String code) {
+        delete(COLLECTION_SUBGROUPS, code);
         invalidateReadCaches();
     }
 
@@ -569,6 +609,7 @@ public class AuditLayerRepository {
                             .categoryCode(str(m.get("categoryCode")))
                             .counterpartyName(str(m.get("counterpartyName")))
                             .counterpartyTin(str(m.get("counterpartyTin")))
+                            .subgroupCode(str(m.get("subgroupCode")))
                             .productName(str(m.get("productName")))
                             .amount(num(m.get("amount")))
                             .quantityKg(num(m.get("quantityKg")))
@@ -613,6 +654,7 @@ public class AuditLayerRepository {
             m.put("categoryCode", split.getCategoryCode());
             m.put("counterpartyName", split.getCounterpartyName());
             m.put("counterpartyTin", split.getCounterpartyTin());
+            m.put("subgroupCode", split.getSubgroupCode());
             m.put("productName", split.getProductName());
             m.put("amount", toDouble(split.getAmount()));
             m.put("quantityKg", toDouble(split.getQuantityKg()));

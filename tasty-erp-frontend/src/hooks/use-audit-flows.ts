@@ -25,6 +25,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   auditLayerApi,
   type AuditCategory,
+  type AuditSubgroup,
   type AuditMapping,
   type AuditMappingRule,
   type AuditPeriodParams,
@@ -71,6 +72,43 @@ export function useAuditSourceRows(params: AuditSourceRowParams, enabled = true)
     staleTime: STALE,
     retry: false,
     enabled,
+  })
+}
+
+/** BOR-92: the top strip. Keyed by period and the chosen supplier. */
+export function useAuditOverview(params: { startDate: string; endDate: string; supplierTin?: string }, enabled = true) {
+  return useQuery({
+    queryKey: [AUDIT_LAYER_KEY, 'overview', params.startDate, params.endDate, params.supplierTin ?? ''],
+    queryFn: () => auditLayerApi.getOverview(params),
+    staleTime: STALE,
+    retry: false,
+    enabled,
+  })
+}
+
+/** BOR-92: level-2 subgroups (built-in + custom). */
+export function useAuditSubgroups() {
+  return useQuery({
+    queryKey: [AUDIT_LAYER_KEY, 'subgroups'],
+    queryFn: () => auditLayerApi.getSubgroups(),
+    staleTime: 1000 * 60 * 10,
+    retry: 1,
+  })
+}
+
+export function useCreateSubgroup(operator: string) {
+  const invalidate = useInvalidateAuditScopes()
+  return useMutation({
+    mutationFn: (subgroup: AuditSubgroup) => auditLayerApi.createSubgroup(subgroup, operator),
+    onSuccess: () => invalidate(['subgroups', 'overview']),
+  })
+}
+
+export function useDeleteSubgroup(operator: string) {
+  const invalidate = useInvalidateAuditScopes()
+  return useMutation({
+    mutationFn: (code: string) => auditLayerApi.deleteSubgroup(code, operator),
+    onSuccess: () => invalidate(['subgroups', 'overview']),
   })
 }
 
@@ -225,6 +263,8 @@ export type AuditScope =
   | 'flows'
   | 'source-rows'
   | 'categories'
+  | 'subgroups'
+  | 'overview'
   | 'drilldown'
   | 'mapping-rules'
   | 'mapping-rule-preview'
@@ -240,6 +280,7 @@ export const MAPPING_SCOPES: readonly AuditScope[] = [
   'drilldown',
   'mapping-history',
   'mapping-rule-preview',
+  'overview',
 ]
 
 /**
@@ -333,7 +374,7 @@ export function useSaveRealInventory(operator: string) {
   return useMutation({
     mutationFn: (override: RealInventoryOverride) =>
       auditLayerApi.saveRealInventory(override, operator),
-    onSuccess: () => invalidate(['real-inventory', 'flows']),
+    onSuccess: () => invalidate(['real-inventory', 'flows', 'overview']),
   })
 }
 
@@ -349,7 +390,7 @@ export function useSaveCheckEvidence(operator: string) {
   const invalidate = useInvalidateAuditScopes()
   return useMutation({
     mutationFn: (evidence: CheckEvidence) => auditLayerApi.saveCheckEvidence(evidence, operator),
-    onSuccess: () => invalidate(['check-evidence', 'flows', 'drilldown']),
+    onSuccess: () => invalidate(['check-evidence', 'flows', 'drilldown', 'overview']),
   })
 }
 

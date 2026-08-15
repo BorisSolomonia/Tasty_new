@@ -70,6 +70,8 @@ import { ThreeFlowStrip } from '@/components/audit/three-flow-strip'
 import { ProblemsPanel } from '@/components/audit/problems-panel'
 import { RulesPanel } from '@/components/audit/rules-panel'
 import { CategoryManager } from '@/components/audit/category-manager'
+import { SubgroupManager } from '@/components/audit/subgroup-manager'
+import { OverviewStrip } from '@/components/audit/overview/overview-strip'
 import { AUDIT_SECTIONS, PageSection } from '@/components/audit/section-nav'
 import { CashSection } from '@/components/audit/sections/cash-section'
 import { InventorySection } from '@/components/audit/sections/inventory-section'
@@ -176,6 +178,9 @@ function AuditWorkspace() {
       <DataWarnings warnings={flows?.dataWarnings} error={flowsQuery.error} />
       <FeedCapNotice />
 
+      {/* BOR-92: purchases | bank payments to suppliers | cash outflow | sales, each total | chosen */}
+      <OverviewStrip />
+
       <ThreeFlowStrip />
 
       {/* Sticky in-page navigation ---------------------------------------- */}
@@ -253,12 +258,13 @@ function AuditWorkspace() {
 
           <PageSection
             id="rules"
-            title="Rules & categories"
+            title="Rules, categories & statuses"
             description="Classifications that apply beyond the transaction they were made on, and the categories they assert. A rule is created only by explicit choice and can be revoked, which un-maps everything it created."
           >
             <div className="space-y-4">
               <RulesPanel />
               <CategoryManager />
+              <SubgroupManager />
             </div>
           </PageSection>
         </div>

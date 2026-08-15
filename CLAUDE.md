@@ -612,6 +612,16 @@ that itself is worse than no tool.
   are unmapped or were classified by automation.
 - **Every automated classification records what produced it**, and withdrawing
   that rule undoes exactly what it created and nothing else.
+- **A cash-outflow mapping has two levels plus a counterparty** (BOR-92): the
+  group (category — what the money is), the document status (subgroup — what
+  paper is still owed: purchase act needed, check needed, check received,
+  unmapped, or a user-added status) and the counterparty the document must come
+  from. Statuses change no total; they only sort money inside the outflow tree.
+  Both lists are user-extensible; a status still on a live split cannot be
+  deleted.
+- **Paper flows sit beside real money, never inside it.** An unreal sale
+  chained to a supplier shows as *paper* cash-out under that supplier; the
+  bank's debit total is untouched by it.
 
 ### Drill-downs
 

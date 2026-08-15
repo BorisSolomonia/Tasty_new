@@ -7,6 +7,7 @@ import ge.tastyerp.common.dto.auditlayer.AuditMappingSplitDto;
 import ge.tastyerp.common.dto.auditlayer.AuditMappingStatus;
 import ge.tastyerp.common.dto.auditlayer.AuditSourceRowDto;
 import ge.tastyerp.common.dto.auditlayer.AuditSourceType;
+import ge.tastyerp.common.dto.auditlayer.AuditSubgroupDto;
 import ge.tastyerp.common.exception.ValidationException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -89,6 +90,61 @@ public class AuditMappingService {
         }
         repository.deleteCategory(code);
         log(operator, "CATEGORY", code, "category", code, null, "deleted");
+    }
+
+    // ==================== subgroups (level 2, BOR-92) ====================
+
+    /** Built-in subgroups first, then user-created ones. */
+    public List<AuditSubgroupDto> getSubgroups() {
+        List<AuditSubgroupDto> all = new ArrayList<>(AuditSubgroups.builtIns());
+        all.addAll(repository.findCustomSubgroups());
+        return all;
+    }
+
+    public Map<String, AuditSubgroupDto> subgroupsByCode() {
+        Map<String, AuditSubgroupDto> byCode = new LinkedHashMap<>();
+        for (AuditSubgroupDto s : getSubgroups()) {
+            byCode.put(s.getCode(), s);
+        }
+        return byCode;
+    }
+
+    public AuditSubgroupDto saveSubgroup(AuditSubgroupDto subgroup, String operator) {
+        if (subgroup.getCode() == null || subgroup.getCode().isBlank()) {
+            throw new ValidationException("code", "Subgroup code is required");
+        }
+        if (subgroup.getLabel() == null || subgroup.getLabel().isBlank()) {
+            throw new ValidationException("label", "Subgroup label is required");
+        }
+        String code = subgroup.getCode().trim().toUpperCase().replaceAll("[^A-Z0-9_]", "_");
+        if (AuditSubgroups.isBuiltIn(code) || AuditSubgroups.NONE.equals(code)) {
+            throw new ValidationException("code",
+                    "'" + code + "' is a built-in subgroup and cannot be redefined");
+        }
+        subgroup.setCode(code);
+        subgroup.setBuiltIn(false);
+        repository.saveSubgroup(subgroup);
+        log(operator, "SUBGROUP", code, "subgroup", null, subgroup.getLabel(), null);
+        return subgroup;
+    }
+
+    public void deleteSubgroup(String code, String operator) {
+        if (AuditSubgroups.isBuiltIn(code)) {
+            throw new ValidationException("code", "Built-in subgroups cannot be deleted");
+        }
+        // A status that is still on a live split must not vanish: the split
+        // would keep a code nobody can label, and the outflow tree would show
+        // an unexplained bucket. Say which mappings hold it instead.
+        long inUse = repository.findAllMappings().stream()
+                .filter(m -> m.getSplits() != null)
+                .filter(m -> m.getSplits().stream().anyMatch(s -> code.equals(s.getSubgroupCode())))
+                .count();
+        if (inUse > 0) {
+            throw new ValidationException("code",
+                    "Subgroup " + code + " is used by " + inUse + " mapping(s); re-map them first");
+        }
+        repository.deleteSubgroup(code);
+        log(operator, "SUBGROUP", code, "subgroup", code, null, "deleted");
     }
 
     // ==================== mappings ====================
@@ -392,6 +448,15 @@ public class AuditMappingService {
                 throw new ValidationException("splits",
                         "Split amount must be greater than zero for category "
                                 + split.getCategoryCode());
+            }
+            // Level 2 (BOR-92): a subgroup, when given, must exist — an unknown
+            // code would silently vanish from the overview tree.
+            if (split.getSubgroupCode() != null && !split.getSubgroupCode().isBlank()
+                    && !AuditSubgroups.isBuiltIn(split.getSubgroupCode())
+                    && repository.findCustomSubgroups().stream()
+                            .noneMatch(sg -> sg.getCode().equals(split.getSubgroupCode()))) {
+                throw new ValidationException("splits",
+                        "Unknown subgroup '" + split.getSubgroupCode() + "'");
             }
         }
         BigDecimal total = splitTotal(splits);

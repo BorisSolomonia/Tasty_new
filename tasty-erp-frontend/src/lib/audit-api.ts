@@ -89,6 +89,115 @@ export interface AuditCategory {
 }
 
 // ---------------------------------------------------------------------------
+// AuditSubgroupDto (BOR-92 level 2)
+// ---------------------------------------------------------------------------
+
+export interface AuditSubgroup {
+  code: string
+  label: string | null
+  description: string | null
+  builtIn: boolean
+}
+
+export const SUBGROUP_NONE = 'NONE'
+
+// ---------------------------------------------------------------------------
+// AuditOverviewDto (BOR-92 top strip)
+// ---------------------------------------------------------------------------
+
+export interface OverviewCounterparty {
+  tin: string | null
+  name: string | null
+  purchases: number | null
+  bankPayments: number | null
+  paperOutflow: number | null
+  quantityKg: number | null
+  rowCount: number
+}
+
+export interface OverviewCategoryAmount {
+  category: string
+  amount: number | null
+  quantityKg: number | null
+  chosenAmount: number | null
+  chosenQuantityKg: number | null
+  rowCount: number
+}
+
+/** group → subgroup → counterparty; `children` on group/subgroup nodes, `tin` on counterparty nodes. */
+export interface OverviewBucket {
+  code: string
+  label: string
+  amount: number | null
+  rowCount: number
+  children: OverviewBucket[] | null
+  tin: string | null
+}
+
+export interface OverviewSupplierKg {
+  tin: string | null
+  name: string | null
+  quantityKg: number | null
+  lastPurchaseDate: string | null
+}
+
+export interface OverviewInventoryCategory {
+  category: string
+  purchasedKg: number | null
+  writeOffPercent: number | null
+  writeOffKg: number | null
+  soldKg: number | null
+  netKg: number | null
+  stockBySupplier: OverviewSupplierKg[]
+}
+
+export interface AuditOverview {
+  startDate: string
+  endDate: string
+  supplierTin: string | null
+  supplierName: string | null
+  suppliers: OverviewCounterparty[]
+  purchases: {
+    total: number | null
+    totalKg: number | null
+    chosen: number | null
+    chosenKg: number | null
+    byCategory: OverviewCategoryAmount[]
+    bySupplier: OverviewCounterparty[]
+  }
+  bankPaymentsToSuppliers: {
+    total: number | null
+    toChosen: number | null
+    bySupplier: OverviewCounterparty[]
+  }
+  cashOutflow: {
+    total: number | null
+    unmapped: number | null
+    mapped: number | null
+    toChosen: number | null
+    groups: OverviewBucket[]
+    paperGroups: OverviewBucket[]
+    paperTotal: number | null
+    debitRowCount: number
+    unmappedRowCount: number
+  }
+  sales: {
+    total: number | null
+    totalKg: number | null
+    unreal: number | null
+    real: number | null
+    unrealMapped: number | null
+    unrealUnmapped: number | null
+    byCategory: OverviewCategoryAmount[]
+    unrealCustomers: OverviewCounterparty[]
+    unrealRowCount: number
+  }
+  inventory: { byCategory: OverviewInventoryCategory[]; netKgTotal: number | null }
+  subgroups: AuditSubgroup[]
+  notes: string[]
+}
+
+// ---------------------------------------------------------------------------
 // AuditChangeLogDto
 // ---------------------------------------------------------------------------
 
@@ -113,6 +222,11 @@ export interface AuditMappingSplit {
   categoryCode: string | null
   counterpartyName: string | null
   counterpartyTin: string | null
+  /**
+   * Level-2 document status (BOR-92): PURCHASE_ACT_NEEDED | CHECK_NEEDED |
+   * CHECK_RECEIVED | UNMAPPED | a user-created code. Null = no status chosen.
+   */
+  subgroupCode?: string | null
   productName: string | null
   /** Always positive. */
   amount: number | null
@@ -529,6 +643,34 @@ export const auditLayerApi = {
       method: 'DELETE',
       params: { operator },
     })
+  },
+
+  // ---- BOR-92: level-2 subgroups and the top-strip overview ----
+
+  getSubgroups: async () => {
+    const response = await fetchWithAuth(`${BASE}/subgroups`)
+    return jsonData<AuditSubgroup[]>(response)
+  },
+
+  createSubgroup: async (subgroup: AuditSubgroup, operator: string) => {
+    const response = await fetchWithAuth(`${BASE}/subgroups`, {
+      method: 'POST',
+      params: { operator },
+      body: JSON.stringify(subgroup),
+    })
+    return jsonData<AuditSubgroup>(response)
+  },
+
+  deleteSubgroup: async (code: string, operator: string) => {
+    await fetchWithAuth(`${BASE}/subgroups/${encodeURIComponent(code)}`, {
+      method: 'DELETE',
+      params: { operator },
+    })
+  },
+
+  getOverview: async (params: { startDate: string; endDate: string; supplierTin?: string }) => {
+    const response = await fetchWithAuth(`${BASE}/overview`, { params: { ...params } })
+    return jsonData<AuditOverview>(response)
   },
 
   /** Creates or updates the mapping for one immutable source row. */

@@ -10,6 +10,8 @@ import ge.tastyerp.common.dto.auditlayer.AuditMappingRuleDto;
 import ge.tastyerp.common.dto.auditlayer.AuditMappingStatus;
 import ge.tastyerp.common.dto.auditlayer.AuditSourceRowPageDto;
 import ge.tastyerp.common.dto.auditlayer.AuditSourceType;
+import ge.tastyerp.common.dto.auditlayer.AuditSubgroupDto;
+import ge.tastyerp.common.dto.auditlayer.AuditOverviewDto;
 import ge.tastyerp.common.dto.auditlayer.CheckEvidenceDto;
 import ge.tastyerp.common.dto.auditlayer.CounterpartyAliasDto;
 import ge.tastyerp.common.dto.auditlayer.RealInventoryOverrideDto;
@@ -51,8 +53,19 @@ public class AuditLayerController {
     private final AuditSuggestionEngine suggestionEngine;
     private final AuditMappingRuleService mappingRuleService;
     private final AuditConfigClient configClient;
+    private final AuditOverviewService overviewService;
 
     // ==================== canonical payload ====================
+
+    @GetMapping("/overview")
+    @Operation(summary = "Top strip: purchases, bank payments to suppliers, cash outflow, sales — total vs chosen supplier, with drill-down trees")
+    public ResponseEntity<ApiResponse<AuditOverviewDto>> getOverview(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) String supplierTin) {
+        return ResponseEntity.ok(ApiResponse.success(
+                overviewService.overview(startDate, endDate, supplierTin)));
+    }
 
     @GetMapping("/flows")
     @Operation(summary = "The canonical three-flow payload every UX variant renders")
@@ -212,6 +225,32 @@ public class AuditLayerController {
             @RequestParam String operator) {
         mappingService.deleteCategory(code, operator);
         return ResponseEntity.ok(ApiResponse.success(null, "Category deleted"));
+    }
+
+    // ==================== subgroups (level 2, BOR-92) ====================
+
+    @GetMapping("/subgroups")
+    @Operation(summary = "Built-in and user-created level-2 subgroups (document status)")
+    public ResponseEntity<ApiResponse<List<AuditSubgroupDto>>> getSubgroups() {
+        return ResponseEntity.ok(ApiResponse.success(mappingService.getSubgroups()));
+    }
+
+    @PostMapping("/subgroups")
+    @Operation(summary = "Create a custom subgroup")
+    public ResponseEntity<ApiResponse<AuditSubgroupDto>> saveSubgroup(
+            @RequestBody AuditSubgroupDto subgroup,
+            @RequestParam String operator) {
+        return ResponseEntity.ok(ApiResponse.success(
+                mappingService.saveSubgroup(subgroup, operator), "Subgroup saved"));
+    }
+
+    @DeleteMapping("/subgroups/{code}")
+    @Operation(summary = "Delete a custom subgroup")
+    public ResponseEntity<ApiResponse<Void>> deleteSubgroup(
+            @PathVariable String code,
+            @RequestParam String operator) {
+        mappingService.deleteSubgroup(code, operator);
+        return ResponseEntity.ok(ApiResponse.success(null, "Subgroup deleted"));
     }
 
     // ==================== mappings ====================

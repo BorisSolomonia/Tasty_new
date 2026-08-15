@@ -73,6 +73,58 @@ public class AuditConfigClient {
         internalRestTemplate.put(configServiceUrl + "/api/config/product-categories", body);
     }
 
+    /**
+     * The shared "unreal / documentation-only" customer set (canonical TINs), as
+     * maintained on /audit-control. Degrades to empty when config-service is
+     * unreachable — the overview then says so in its notes rather than failing.
+     */
+    @SuppressWarnings("unchecked")
+    public java.util.Set<String> unrealCustomers() {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        try {
+            Map<String, Object> response = internalRestTemplate
+                    .getForObject(configServiceUrl + "/api/config/unreal-customers", Map.class);
+            if (response != null && response.get("data") instanceof List) {
+                for (Object id : (List<Object>) response.get("data")) {
+                    if (id != null) {
+                        out.add(ge.tastyerp.common.util.TinValidator.canonicalId(String.valueOf(id)));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Could not fetch unreal customers; treating all customers as real: {}", e.getMessage());
+        }
+        return out;
+    }
+
+    private final ge.tastyerp.common.util.SimpleTtlCache<String, Map<String, String>> namesCache =
+            ge.tastyerp.common.util.SimpleTtlCache.named("audit.customerNames", 60_000, 1);
+
+    /** Canonical TIN -> customer name from the customers collection (60 s cache). Empty on failure. */
+    @SuppressWarnings("unchecked")
+    public Map<String, String> customerNames() {
+        return namesCache.getOrCompute("all", () -> {
+            Map<String, String> names = new HashMap<>();
+            try {
+                Map<String, Object> response = internalRestTemplate
+                        .getForObject(configServiceUrl + "/api/config/customers", Map.class);
+                if (response != null && response.get("data") instanceof List) {
+                    for (Map<String, Object> c : (List<Map<String, Object>>) response.get("data")) {
+                        Object id = c.get("identification");
+                        Object name = c.get("customerName");
+                        if (id != null && name != null) {
+                            names.put(ge.tastyerp.common.util.TinValidator.canonicalId(String.valueOf(id)),
+                                    String.valueOf(name));
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("Could not fetch customer names: {}", e.getMessage());
+            }
+            return names;
+        });
+    }
+
     /** Product name -> user-assigned category override. */
     @SuppressWarnings("unchecked")
     public Map<String, String> categoryOverrides() {

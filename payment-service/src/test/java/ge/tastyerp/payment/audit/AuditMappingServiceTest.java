@@ -17,6 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -173,5 +174,54 @@ class AuditMappingServiceTest {
     void builtInCategoriesCannotBeDeleted() {
         assertThrows(ValidationException.class,
                 () -> service.deleteCategory(AuditCategories.CUSTOMER_RECEIPT, OPERATOR));
+    }
+
+    // ==================== BOR-92: level-2 subgroups ====================
+
+    @Test
+    void splitWithUnknownSubgroupIsRejected() {
+        when(repository.findCustomSubgroups()).thenReturn(List.of());
+        AuditMappingSplitDto s = split(AuditCategories.SUPPLIER_CASH_PAYMENT, "100");
+        s.setSubgroupCode("NOT_A_STATUS");
+
+        ValidationException error = assertThrows(ValidationException.class,
+                () -> service.saveMapping(mapping("100", s), OPERATOR));
+        assertTrue(error.getMessage().contains("NOT_A_STATUS"), error.getMessage());
+    }
+
+    @Test
+    void builtInAndCustomSubgroupsAreAcceptedOnSplits() {
+        when(repository.findCustomSubgroups()).thenReturn(List.of(
+                ge.tastyerp.common.dto.auditlayer.AuditSubgroupDto.builder().code("INVOICE_NEEDED").label("Invoice needed").build()));
+        AuditMappingSplitDto a = split(AuditCategories.SUPPLIER_CASH_PAYMENT, "60");
+        a.setSubgroupCode(AuditSubgroups.CHECK_NEEDED);
+        AuditMappingSplitDto b = split(AuditCategories.SUPPLIER_CASH_PAYMENT, "40");
+        b.setSubgroupCode("INVOICE_NEEDED");
+
+        AuditMappingDto saved = service.saveMapping(mapping("100", a, b), OPERATOR);
+        assertEquals(AuditSubgroups.CHECK_NEEDED, saved.getSplits().get(0).getSubgroupCode());
+        assertEquals("INVOICE_NEEDED", saved.getSplits().get(1).getSubgroupCode());
+    }
+
+    @Test
+    void subgroupStillUsedByAMappingCannotBeDeleted() {
+        AuditMappingSplitDto s = split(AuditCategories.SUPPLIER_CASH_PAYMENT, "100");
+        s.setSubgroupCode("INVOICE_NEEDED");
+        when(repository.findAllMappings()).thenReturn(List.of(mapping("100", s)));
+
+        ValidationException error = assertThrows(ValidationException.class,
+                () -> service.deleteSubgroup("INVOICE_NEEDED", OPERATOR));
+        assertTrue(error.getMessage().contains("1 mapping"), error.getMessage());
+        verify(repository, never()).deleteSubgroup(anyString());
+    }
+
+    @Test
+    void unusedCustomSubgroupIsDeleted_builtInNever() {
+        when(repository.findAllMappings()).thenReturn(List.of());
+        service.deleteSubgroup("INVOICE_NEEDED", OPERATOR);
+        verify(repository).deleteSubgroup("INVOICE_NEEDED");
+
+        assertThrows(ValidationException.class,
+                () -> service.deleteSubgroup(AuditSubgroups.CHECK_NEEDED, OPERATOR));
     }
 }

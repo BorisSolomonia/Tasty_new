@@ -25,7 +25,7 @@ import type {
   AuditMappingStatus,
   AuditSourceRow,
 } from '@/lib/audit-api'
-import { useSaveMapping, useVoidMapping } from '@/hooks/use-audit-flows'
+import { useAuditSubgroups, useSaveMapping, useVoidMapping } from '@/hooks/use-audit-flows'
 import { useAudit } from './audit-context'
 import { useOperatorGuard } from './operator-picker'
 import { RuleBadge, useMappingRuleIndex } from './rule-badge'
@@ -33,6 +33,7 @@ import { StatusBadge } from './status-badge'
 import { ChangeHistory } from './change-history'
 import { EM_DASH, fmtDate, fmtGel, fmtKgSigned, fmtText, hasValue } from './format'
 import { sourceRowKey } from './source-row-table'
+import { CounterpartyField } from './counterparty-picker'
 
 const TOLERANCE = 0.005
 
@@ -44,6 +45,7 @@ function emptySplit(): AuditMappingSplit {
     categoryCode: null,
     counterpartyName: null,
     counterpartyTin: null,
+    subgroupCode: null,
     productName: null,
     amount: null,
     quantityKg: null,
@@ -81,6 +83,7 @@ export function MappingEditor({
 }) {
   const rulesById = useMappingRuleIndex()
   const { categories, operator } = useAudit()
+  const subgroups = useAuditSubgroups().data ?? []
   const { ready, message } = useOperatorGuard()
   const saveMutation = useSaveMapping(operator)
   const voidMutation = useVoidMapping(operator)
@@ -302,14 +305,15 @@ export function MappingEditor({
                 </select>
               </div>
               <div>
-                <Label className="text-[11px] text-muted-foreground">Counterparty</Label>
-                <input
+                <Label htmlFor={`${rowKey}-cp-${index}`} className="text-[11px] text-muted-foreground">
+                  Counterparty
+                </Label>
+                <CounterpartyField
+                  id={`${rowKey}-cp-${index}`}
                   className={inputClass}
-                  value={split.counterpartyName ?? ''}
-                  placeholder="Name as written in the source"
-                  onChange={(event) =>
-                    updateSplit(index, { counterpartyName: event.target.value || null })
-                  }
+                  name={split.counterpartyName ?? null}
+                  tin={split.counterpartyTin ?? null}
+                  onChange={(patch) => updateSplit(index, patch)}
                 />
               </div>
               <div>
@@ -339,7 +343,24 @@ export function MappingEditor({
               </div>
             </div>
 
-            <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,0.6fr)_minmax(0,1.4fr)]">
+            <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.6fr)_minmax(0,1.2fr)]">
+              <div>
+                <Label className="text-[11px] text-muted-foreground">Document status</Label>
+                <select
+                  className={inputClass}
+                  value={split.subgroupCode ?? ''}
+                  aria-label="Document status"
+                  onChange={(event) => updateSplit(index, { subgroupCode: event.target.value || null })}
+                >
+                  <option value="">— none —</option>
+                  {subgroups.map((subgroup) => (
+                    <option key={subgroup.code} value={subgroup.code}>
+                      {subgroup.label ?? subgroup.code}
+                      {subgroup.builtIn ? '' : ' (custom)'}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div>
                 <Label className="text-[11px] text-muted-foreground">Product (optional)</Label>
                 <input
