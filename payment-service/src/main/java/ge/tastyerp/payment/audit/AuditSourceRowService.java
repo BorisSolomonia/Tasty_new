@@ -261,6 +261,7 @@ public class AuditSourceRowService {
                     .quantityKg(movement.getQuantityKg())
                     .productName(movement.getProductName())
                     .counterpartyTin(movement.getCounterpartyId())
+                    .counterpartyName(movement.getCounterpartyName())
                     .description(movement.getProductName())
                     .reference(movement.getWaybillId())
                     .build(), mappings));

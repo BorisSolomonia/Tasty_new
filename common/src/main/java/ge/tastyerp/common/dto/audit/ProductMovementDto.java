@@ -36,4 +36,5 @@ public class ProductMovementDto {
 
     private String waybillId;
     private String counterpartyId;    // buyer TIN (sale) or seller TIN (purchase)
+    private String counterpartyName;  // buyer / seller name as RS.ge stated it (BOR-92: names the supplier picker)
 }

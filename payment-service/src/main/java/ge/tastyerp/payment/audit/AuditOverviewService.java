@@ -107,8 +107,19 @@ public class AuditOverviewService {
                            Set<String> unrealCustomers,
                            Map<String, String> names) {
         List<String> notes = new ArrayList<>();
+        // RS.ge documents state the seller / buyer name. That beats the register
+        // for suppliers, who are not in the customer collection at all — so the
+        // document name wins, then whatever the caller knew, then the bare TIN.
+        Map<String, String> known = new LinkedHashMap<>();
+        for (ProductMovementDto m : movements) {
+            String tin = canonical(m.getCounterpartyId());
+            if (tin != null && m.getCounterpartyName() != null && !m.getCounterpartyName().isBlank()) {
+                known.putIfAbsent(tin, m.getCounterpartyName().trim());
+            }
+        }
+        names.forEach(known::putIfAbsent);
         Function<String, String> nameOf = tin -> {
-            String n = names.get(tin);
+            String n = known.get(tin);
             return n != null ? n : tin;
         };
 

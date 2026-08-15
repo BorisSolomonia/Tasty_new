@@ -201,6 +201,9 @@ public class InventoryMovementService {
             String counterpartyId = type == WaybillType.PURCHASE
                     ? waybill.getSellerTin()
                     : waybill.getBuyerTin();
+            String counterpartyName = type == WaybillType.PURCHASE
+                    ? waybill.getSellerName()
+                    : waybill.getBuyerName();
 
             for (WaybillGoodDto good : goods) {
                 BigDecimal qty = good.getQuantity();
@@ -220,6 +223,7 @@ public class InventoryMovementService {
                         .amount(signedAmount)
                         .waybillId(waybill.getWaybillId())
                         .counterpartyId(counterpartyId)
+                        .counterpartyName(counterpartyName)
                         .build());
             }
         }

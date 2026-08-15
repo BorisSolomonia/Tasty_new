@@ -44,6 +44,11 @@ class AuditOverviewServiceTest {
                 .quantityKg(new BigDecimal(kg)).unit("კგ").amount(new BigDecimal(amount)).counterpartyId(tin).waybillId("w").build();
     }
 
+    private static ProductMovementDto named(ProductMovementDto m, String counterpartyName) {
+        m.setCounterpartyName(counterpartyName);
+        return m;
+    }
+
     private static AuditMappingSplitDto split(String cat, String sub, String tin, String amount) {
         return AuditMappingSplitDto.builder().categoryCode(cat).subgroupCode(sub).counterpartyTin(tin).amount(new BigDecimal(amount)).build();
     }
@@ -65,7 +70,7 @@ class AuditOverviewServiceTest {
     private AuditOverviewDto run(String chosen) {
         List<ProductMovementDto> movements = List.of(
                 mv(WaybillType.PURCHASE, D1, "beef carcass", "BEEF", "100", "2000", SUP_A),
-                mv(WaybillType.PURCHASE, D5, "beef carcass", "BEEF", "50", "1100", SUP_B),
+                named(mv(WaybillType.PURCHASE, D5, "beef carcass", "BEEF", "50", "1100", SUP_B), "შპს B (RS.ge)"),
                 mv(WaybillType.PURCHASE, D9, "pork half", "PORK", "40", "600", SUP_A),
                 mv(WaybillType.SALE, D5, "beef carcass", "BEEF", "60", "1800", CUST_REAL),
                 mv(WaybillType.SALE, D9, "beef carcass", "BEEF", "20", "700", CUST_UNREAL));
@@ -88,6 +93,16 @@ class AuditOverviewServiceTest {
         return service.build(D1, D9, chosen, movements, bankRows, documentRows, categories, subgroups,
                 Map.of(), Map.of("BEEF", new BigDecimal("28"), "PORK", new BigDecimal("25")),
                 Set.of(CUST_UNREAL), Map.of(SUP_A, "Supplier A", SUP_B, "Supplier B"));
+    }
+
+    @Test
+    @DisplayName("names: the RS.ge document's seller name wins over the register, then the register, then the bare TIN")
+    void supplierNames() {
+        AuditOverviewDto o = run(null);
+        Map<String, String> byTin = new LinkedHashMap<>();
+        o.getSuppliers().forEach(c -> byTin.put(c.getTin(), c.getName()));
+        assertEquals("შპს B (RS.ge)", byTin.get(SUP_B), "document-stated name beats the register's 'Supplier B'");
+        assertEquals("Supplier A", byTin.get(SUP_A), "register name when the document carries none");
     }
 
     @Test
