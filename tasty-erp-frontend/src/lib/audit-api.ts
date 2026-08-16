@@ -83,6 +83,8 @@ export interface AuditCategory {
   customerReceipt: boolean
   nonSupplierExpense: boolean
   cashReturn: boolean
+  /** The money left the bank as cash (BOR-92 v3): feeds the statement's withdrawals line. */
+  cashWithdrawal?: boolean
   paperOnly: boolean
   unresolved: boolean
   description: string | null
@@ -118,6 +120,11 @@ export interface StatementSelection {
   customers: string[]
 }
 
+export interface StatementFigure {
+  label: string
+  amount: number | null
+}
+
 export interface StatementParty {
   /** TIN, or `name:<label>` for a counterparty the source gave no TIN for (never choosable). */
   tin: string
@@ -126,6 +133,14 @@ export interface StatementParty {
   quantityKg: number | null
   /** Row-specific: unmapped GEL for cash outflow. */
   secondary: number | null
+  /** Bank rows: money on this party's own rows / attributed to it from other rows. */
+  directAmount: number | null
+  directCount: number
+  mappedAmount: number | null
+  mappedCount: number
+  /** Purchases: bank money mapped to this supplier, and purchases minus that. */
+  bankPaid: number | null
+  unpaidAfterBank: number | null
   rowCount: number
   chosen: boolean
   unreal: boolean
@@ -153,9 +168,24 @@ export interface StatementRow {
   chosenKg: number | null
   secondary: number | null
   secondaryLabel: string | null
+  extras: StatementFigure[] | null
   rowCount: number
   parties: StatementParty[]
   products: StatementProductGroup[] | null
+}
+
+export interface StatementSummary {
+  purchases: number | null
+  bankPaymentsToSuppliers: number | null
+  possibleChecksNeeded: number | null
+  withdrawals: number | null
+  withdrawalsToSuppliers: number | null
+  withdrawalsUnresolved: number | null
+  sales: number | null
+  bankReceiptsFromCustomers: number | null
+  receivables: number | null
+  cashToReceiveFromCustomers: number | null
+  cashToPaySuppliers: number | null
 }
 
 export interface StatementSupplierKg {
@@ -201,6 +231,7 @@ export interface AuditStatement {
   sales: StatementRow
   bankInflow: StatementRow
   cashInflow: StatementRow
+  summary: StatementSummary | null
   notes: string[]
 }
 
@@ -225,6 +256,10 @@ export interface StatementTransaction {
   mappingStatus: AuditMappingStatus | null
   mappingSummary: string | null
   unresolvedAmount: number | null
+  mappedCounterparties: string[] | null
+  withdrawal: boolean
+  attribution: 'DIRECT' | 'MAPPED' | null
+  sourceRow: AuditSourceRow | null
 }
 
 // ---------------------------------------------------------------------------
@@ -709,6 +744,8 @@ export const auditLayerApi = {
     endDate: string
     tin?: string
     category?: string
+    attribution?: 'DIRECT' | 'MAPPED'
+    withdrawalsOnly?: boolean
     limit?: number
   }) => {
     const response = await fetchWithAuth(`${BASE}/statement/transactions`, { params: { ...params } })

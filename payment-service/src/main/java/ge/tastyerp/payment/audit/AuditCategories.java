@@ -49,12 +49,12 @@ public final class AuditCategories {
 
                 cat(SUPPLIER_CASH_PAYMENT, "Supplier real cash payment",
                         "Part of a cash withdrawal the operator confirms reached a supplier.",
-                        b -> b.supplierSettlement(true)),
+                        b -> b.supplierSettlement(true).cashWithdrawal(true)),
 
                 cat(CASH_WITHDRAWAL_UNRESOLVED, "Cash withdrawal — unresolved",
                         "Withdrawn cash whose destination is not yet established. "
                                 + "Stays visible as a gap; never quietly assigned to a supplier.",
-                        b -> b.unresolved(true)),
+                        b -> b.unresolved(true).cashWithdrawal(true)),
 
                 cat(CASH_REDEPOSIT, "Cash returned / redeposited",
                         "Cash that left the bank and came back. Nets out of real spending.",

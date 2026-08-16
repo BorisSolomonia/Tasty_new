@@ -52,7 +52,7 @@ class AuditStatementServiceTest {
 
     private final AuditStatementService service = new AuditStatementService(
             mock(AuditSourceRowService.class), mock(AuditMappingService.class), mock(AuditConfigClient.class),
-            mock(AuditLayerRepository.class), mock(PaymentRepository.class));
+            mock(AuditLayerRepository.class), mock(PaymentRepository.class), mock(ge.tastyerp.payment.service.DebtService.class));
 
     private static ProductMovementDto mv(WaybillType type, LocalDate d, String product, String cat, String kg, String amount, String tin, String name) {
         return ProductMovementDto.builder().type(type).date(d).productName(product).parentCategory(cat)
@@ -98,8 +98,14 @@ class AuditStatementServiceTest {
                         split(AuditCategories.NON_SUPPLIER_EXPENSE, null, null, "200"))),          // 300 unmapped
                 bank("b2", "DEBIT", "400", SUP_B, List.of(
                         split(AuditCategories.SUPPLIER_BANK_PAYMENT, AuditSubgroups.CHECK_RECEIVED, SUP_B, "400"))),
-                bank("b3", "CREDIT", "999", CUST_REAL, null),
-                bank("b4", "DEBIT", "250", null, null));                                              // fully unmapped, no TIN
+                bank("b3", "CREDIT", "999", CUST_REAL, List.of(
+                        split(AuditCategories.CUSTOMER_RECEIPT, null, CUST_REAL, "900"))),           // 99 unmapped income
+                bank("b4", "DEBIT", "250", null, null),                                              // fully unmapped, no TIN
+                bank("b5", "DEBIT", "600", "500000001", List.of(                                     // ATM-style withdrawal to a person
+                        split(AuditCategories.SUPPLIER_CASH_PAYMENT, null, SUP_B, "350"),
+                        split(AuditCategories.CASH_WITHDRAWAL_UNRESOLVED, null, null, "250"))),
+                bank("b6", "CREDIT", "50", null, List.of(
+                        split(AuditCategories.OTHER_INCOME, null, null, "50"))));                       // mapped, not a customer receipt
         List<PaymentDto> bankPayments = List.of(
                 pay("p1", CUST_REAL, "Real Customer", "500", "tbc"),
                 pay("p2", CUST_UNREAL, "Unreal Customer", "120", "tbc"));
@@ -110,7 +116,7 @@ class AuditStatementServiceTest {
         AuditSubgroups.builtIns().forEach(s -> subgroups.put(s.getCode(), s));
         return new AuditStatementService.Inputs(movements, docs, bankRows, bankPayments, cashPayments, categories, subgroups,
                 Map.of(), Map.of("BEEF", new BigDecimal("28"), "PORK", new BigDecimal("25")),
-                Set.of(CUST_UNREAL), Map.of());
+                Set.of(CUST_UNREAL), Map.of(), new BigDecimal("400"));
     }
 
     private AuditStatementDto run(List<String> suppliers, List<String> customers) {
@@ -146,6 +152,10 @@ class AuditStatementServiceTest {
         assertTrue(party(s.getPurchases().getParties(), SUP_A).isChosen());
         assertFalse(party(s.getPurchases().getParties(), SUP_B).isChosen());
         assertEquals("Supplier B", party(s.getPurchases().getParties(), SUP_B).getName(), "name from the RS.ge document");
+        assertEquals(new BigDecimal("1000.00"), party(s.getPurchases().getParties(), SUP_A).getBankPaid());
+        assertEquals(new BigDecimal("1600.00"), party(s.getPurchases().getParties(), SUP_A).getUnpaidAfterBank(), "2600 − 1000");
+        assertEquals(new BigDecimal("750.00"), party(s.getPurchases().getParties(), SUP_B).getBankPaid(), "400 by bank + 350 cash slice");
+        assertEquals(new BigDecimal("350.00"), party(s.getPurchases().getParties(), SUP_B).getUnpaidAfterBank());
         assertEquals("BEEF", s.getPurchases().getProducts().get(0).getCategory());
         assertEquals(new BigDecimal("3100.00"), s.getPurchases().getProducts().get(0).getAmount());
         assertEquals(new BigDecimal("2000.00"), s.getPurchases().getProducts().get(0).getChosenAmount());
@@ -156,23 +166,31 @@ class AuditStatementServiceTest {
     @DisplayName("bank payments to suppliers: only supplier-settlement slices count (1400); chosen A → 1000")
     void bankPaymentsToSuppliers() {
         AuditStatementDto s = run(List.of(SUP_A), List.of());
-        assertEquals(new BigDecimal("1400.00"), s.getBankPaymentsToSuppliers().getTotal());
+        assertEquals(new BigDecimal("1750.00"), s.getBankPaymentsToSuppliers().getTotal());
         assertEquals(new BigDecimal("1000.00"), s.getBankPaymentsToSuppliers().getChosen());
-        assertEquals(2, s.getBankPaymentsToSuppliers().getParties().size());
+        assertEquals(2, s.getBankPaymentsToSuppliers().getParties().size(), "A and B (the withdrawal's cash slice is B's)");
     }
 
     @Test
-    @DisplayName("cash outflow: every debit (2150), unmapped 550 on 3 rows; chosen A = whole row b1 (1500); nameless row listed as its own party")
+    @DisplayName("cash outflow: every debit (2750), unmapped 550 on 4 rows; chosen A = whole row b1 (1500); nameless row listed as its own party; direct vs mapped per party")
     void cashOutflow() {
         AuditStatementDto s = run(List.of(SUP_A), List.of());
-        assertEquals(new BigDecimal("2150.00"), s.getCashOutflow().getTotal());
+        assertEquals(new BigDecimal("2750.00"), s.getCashOutflow().getTotal());
         assertEquals(new BigDecimal("550.00"), s.getCashOutflow().getSecondary());
         assertEquals("unmapped", s.getCashOutflow().getSecondaryLabel());
         assertEquals(new BigDecimal("1500.00"), s.getCashOutflow().getChosen());
-        assertEquals(3, s.getCashOutflow().getRowCount());
+        assertEquals(4, s.getCashOutflow().getRowCount());
         Party a = party(s.getCashOutflow().getParties(), SUP_A);
         assertEquals(new BigDecimal("1500.00"), a.getAmount());
         assertEquals(new BigDecimal("300.00"), a.getSecondary(), "unmapped part of A's row");
+        assertEquals(new BigDecimal("1500.00"), a.getDirectAmount());
+        assertEquals(1, a.getDirectCount());
+        Party b = party(s.getCashOutflow().getParties(), SUP_B);
+        assertEquals(new BigDecimal("400.00"), b.getDirectAmount(), "B's own row");
+        assertEquals(new BigDecimal("350.00"), b.getMappedAmount(), "cash from the withdrawal row attributed to B");
+        assertEquals(1, b.getMappedCount());
+        assertEquals("withdrawals", s.getCashOutflow().getExtras().get(1).getLabel());
+        assertEquals(new BigDecimal("600.00"), s.getCashOutflow().getExtras().get(1).getAmount());
         Party atm = party(s.getCashOutflow().getParties(), "name:ATM");
         assertEquals(new BigDecimal("250.00"), atm.getAmount());
         assertFalse(atm.isChosen(), "a party without a TIN can never be chosen");
@@ -191,17 +209,43 @@ class AuditStatementServiceTest {
     }
 
     @Test
-    @DisplayName("inflows come from the payments module as-is: bank 620 (chosen unreal 120), cash 80")
+    @DisplayName("bank inflow = every credit row (1049): mapped from customers 900, unmapped income 149; chosen = ticked customers' receipts; cash inflow from the payments module (80)")
     void inflows() {
-        AuditStatementDto s = run(List.of(), List.of(CUST_UNREAL));
-        assertEquals(new BigDecimal("620.00"), s.getBankInflow().getTotal());
-        assertEquals(new BigDecimal("120.00"), s.getBankInflow().getChosen());
+        AuditStatementDto s = run(List.of(), List.of(CUST_REAL));
+        assertEquals(new BigDecimal("1049.00"), s.getBankInflow().getTotal());
+        assertEquals(new BigDecimal("900.00"), s.getBankInflow().getExtras().get(0).getAmount());
+        assertEquals("mapped from customers", s.getBankInflow().getExtras().get(0).getLabel());
+        assertEquals(new BigDecimal("149.00"), s.getBankInflow().getExtras().get(1).getAmount(), "99 unresolved + 50 other income");
+        assertEquals(new BigDecimal("999.00"), s.getBankInflow().getChosen(), "row b3 is the ticked customer's: its slice and its remainder");
         assertEquals(new BigDecimal("80.00"), s.getCashInflow().getTotal());
-        assertEquals(new BigDecimal("0.00"), s.getCashInflow().getChosen());
+        assertEquals(new BigDecimal("80.00"), s.getCashInflow().getChosen(), "the cash payment is the ticked customer's");
         assertEquals("Real Customer", party(s.getCashInflow().getParties(), CUST_REAL).getName());
+        AuditStatementDto none = run(List.of(), List.of());
+        assertNull(none.getBankInflow().getChosen());
     }
 
     @Test
+    @DisplayName("summary lines: purchases − bank to suppliers = possible checks; withdrawals (600) of which to suppliers 350 / unresolved 250; sales − receipts − AR = cash to receive; withdrawals + that = cash to pay suppliers")
+    void summary() {
+        AuditStatementDto.Summary sm = run(List.of(), List.of()).getSummary();
+        assertEquals(new BigDecimal("3700.00"), sm.getPurchases());
+        assertEquals(new BigDecimal("1750.00"), sm.getBankPaymentsToSuppliers());
+        assertEquals(new BigDecimal("1950.00"), sm.getPossibleChecksNeeded());
+        assertEquals(new BigDecimal("600.00"), sm.getWithdrawals());
+        assertEquals(new BigDecimal("350.00"), sm.getWithdrawalsToSuppliers());
+        assertEquals(new BigDecimal("250.00"), sm.getWithdrawalsUnresolved());
+        assertEquals(new BigDecimal("2500.00"), sm.getSales());
+        assertEquals(new BigDecimal("900.00"), sm.getBankReceiptsFromCustomers());
+        assertEquals(new BigDecimal("400.00"), sm.getReceivables());
+        assertEquals(new BigDecimal("1200.00"), sm.getCashToReceiveFromCustomers());   // 2500 − 900 − 400
+        assertEquals(new BigDecimal("1800.00"), sm.getCashToPaySuppliers());           // 600 + 1200
+
+        AuditStatementDto.Summary noAr = AuditStatementService.summary(new BigDecimal("1"), new BigDecimal("1"), new BigDecimal("1"),
+                new BigDecimal("0"), new BigDecimal("0"), new BigDecimal("1"), new BigDecimal("1"), null);
+        assertNull(noAr.getCashToReceiveFromCustomers(), "no AR → the derived lines are empty, not zero");
+        assertNull(noAr.getCashToPaySuppliers());
+    }
+
     @DisplayName("inventory: BEEF net 28 kg valued at the period's avg purchase price (3100/150 = 20.67 → 578.67); LIFO from B; PORK unpriced sold nothing")
     void inventory() {
         AuditStatementDto s = run(List.of(), List.of());
@@ -231,16 +275,29 @@ class AuditStatementServiceTest {
 
         List<AuditStatementTransactionDto> outA = service.transactions("cashOutflow", SUP_A, null, 0, in);
         assertEquals(1, outA.size());
+        assertEquals("DIRECT", outA.get(0).getAttribution());
+        assertNotNull(outA.get(0).getSourceRow(), "the editor opens on the full source row");
+        List<AuditStatementTransactionDto> outB = service.transactions("cashOutflow", SUP_B, null, 0, in);
+        assertEquals(2, outB.size(), "B's own row and the withdrawal row with a slice to B");
+        assertEquals(1, service.transactions("cashOutflow", SUP_B, null, "MAPPED", false, 0, in).size());
+        assertEquals("b5", service.transactions("cashOutflow", SUP_B, null, "MAPPED", false, 0, in).get(0).getId());
+        assertEquals(1, service.transactions("cashOutflow", SUP_B, null, "DIRECT", false, 0, in).size());
+        List<AuditStatementTransactionDto> wd = service.transactions("cashOutflow", null, null, null, true, 0, in);
+        assertEquals(1, wd.size(), "only the row with a cash-withdrawal slice");
+        assertTrue(wd.get(0).isWithdrawal());
+        assertTrue(wd.get(0).getMappedCounterparties().contains(SUP_B));
         assertEquals(0, new BigDecimal("300").compareTo(outA.get(0).getUnresolvedAmount()));
         assertTrue(outA.get(0).getMappingSummary().contains("Check needed"), outA.get(0).getMappingSummary());
         List<AuditStatementTransactionDto> atm = service.transactions("cashOutflow", "name:ATM", null, 0, in);
         assertEquals(1, atm.size());
         List<AuditStatementTransactionDto> supB = service.transactions("bankPaymentsToSuppliers", SUP_B, null, 0, in);
-        assertEquals(1, supB.size());
+        assertEquals(2, supB.size(), "B's bank transfer and the withdrawal whose cash slice reached B");
 
         List<AuditStatementTransactionDto> in1 = service.transactions("bankInflow", CUST_REAL, null, 0, in);
         assertEquals(1, in1.size());
-        assertEquals("PAYMENT", in1.get(0).getKind());
+        assertEquals("BANK_ROW", in1.get(0).getKind());
+        assertEquals("CREDIT", in1.get(0).getDirection());
+        assertEquals(2, service.transactions("bankInflow", null, null, 0, in).size(), "every credit row");
         assertEquals(1, service.transactions("cashInflow", null, null, 0, in).size());
         assertThrows(ValidationException.class, () -> service.transactions("nope", null, null, 0, in));
     }

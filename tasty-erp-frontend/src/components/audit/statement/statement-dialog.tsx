@@ -91,7 +91,9 @@ export function StatementDialog({
               value={row.chosen === null ? EM_DASH : fmtGel(row.chosen)}
               sub={row.chosen === null ? 'nothing ticked' : row.chosenKg !== null ? fmtKg(row.chosenKg, 0) : undefined}
             />
-            {row.secondary !== null && row.secondaryLabel ? <Stat label={row.secondaryLabel} value={fmtGel(row.secondary)} /> : null}
+            {(row.extras ?? (row.secondary !== null && row.secondaryLabel ? [{ label: row.secondaryLabel, amount: row.secondary }] : [])).map((f) => (
+              <Stat key={f.label} label={f.label} value={fmtGel(f.amount)} />
+            ))}
           </div>
         ) : inv ? (
           <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
@@ -161,8 +163,13 @@ function PartiesSheet({
   const chosenSet = new Set(selection[set])
   const [needle, setNeedle] = React.useState('')
   const [open, setOpen] = React.useState<string | null>(null)
+  const [attribution, setAttribution] = React.useState<'ALL' | 'DIRECT' | 'MAPPED'>('ALL')
+  const [withdrawalsOnly, setWithdrawalsOnly] = React.useState(false)
   const hasKg = row.key === 'purchases' || row.key === 'sales'
   const hasSecondary = row.key === 'cashOutflow'
+  const isBankRow = row.key === 'cashOutflow' || row.key === 'bankPaymentsToSuppliers' || row.key === 'bankInflow'
+  const isPurchases = row.key === 'purchases'
+  const withdrawalsFigure = row.extras?.find((f) => f.label === 'withdrawals')
 
   const q = needle.trim().toLowerCase()
   const visible = q ? row.parties.filter((p) => p.name.toLowerCase().includes(q) || p.tin.toLowerCase().includes(q)) : row.parties
@@ -182,7 +189,23 @@ function PartiesSheet({
             aria-label={`Filter ${PARTY_LABEL[row.key]}`}
           />
         </label>
-        <div className="flex items-center gap-2 text-xs">
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          {isBankRow ? (
+            <label className="inline-flex items-center gap-1 text-muted-foreground" title="Only the rows attributed to a party by a slice on someone else's row, or only its own rows">
+              <span>Show</span>
+              <select className="h-7 rounded border border-input bg-background px-1 text-xs" value={attribution} onChange={(e) => setAttribution(e.target.value as 'ALL' | 'DIRECT' | 'MAPPED')} aria-label="Attribution filter">
+                <option value="ALL">all transactions</option>
+                <option value="DIRECT">direct only (party's own rows)</option>
+                <option value="MAPPED">mapped only (attributed by a slice)</option>
+              </select>
+            </label>
+          ) : null}
+          {row.key === 'cashOutflow' ? (
+            <label className="inline-flex items-center gap-1 text-muted-foreground">
+              <input type="checkbox" className="h-3.5 w-3.5" checked={withdrawalsOnly} onChange={(e) => setWithdrawalsOnly(e.target.checked)} aria-label="Withdrawals only" />
+              withdrawals only{withdrawalsFigure ? ` (${fmtGel(withdrawalsFigure.amount)})` : ''}
+            </label>
+          ) : null}
           <span className="text-muted-foreground">
             {fmtCount(choosable.filter((p) => chosenSet.has(p.tin)).length)} of {fmtCount(choosable.length)} listed are chosen
           </span>
@@ -208,6 +231,26 @@ function PartiesSheet({
               {hasKg ? (
                 <th scope="col" className="px-2 py-1.5 text-right font-medium">
                   kg
+                </th>
+              ) : null}
+              {isPurchases ? (
+                <th scope="col" className="px-2 py-1.5 text-right font-medium" title="Real bank money mapped to this supplier in the period (supplier-settlement slices)">
+                  bank paid ₾
+                </th>
+              ) : null}
+              {isPurchases ? (
+                <th scope="col" className="px-2 py-1.5 text-right font-medium" title="Documented purchases minus bank paid — what the bank has not settled: cash, checks, or still owed">
+                  unpaid after bank ₾
+                </th>
+              ) : null}
+              {isBankRow ? (
+                <th scope="col" className="px-2 py-1.5 text-right font-medium" title="On this party's own rows">
+                  direct ₾
+                </th>
+              ) : null}
+              {isBankRow ? (
+                <th scope="col" className="px-2 py-1.5 text-right font-medium" title="Attributed to this party by slices on other counterparties' rows">
+                  mapped ₾
                 </th>
               ) : null}
               {hasSecondary ? (
@@ -262,6 +305,24 @@ function PartiesSheet({
                     </td>
                     <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{fmtGel(p.amount)}</td>
                     {hasKg ? <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{fmtKg(p.quantityKg, 0)}</td> : null}
+                    {isPurchases ? <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{fmtGel(p.bankPaid)}</td> : null}
+                    {isPurchases ? (
+                      <td className={cn('px-2 py-1.5 text-right tabular-nums whitespace-nowrap', (p.unpaidAfterBank ?? 0) < 0 && 'text-destructive')} title={(p.unpaidAfterBank ?? 0) < 0 ? 'Bank paid more than the documents show — paid, undocumented' : undefined}>
+                        {fmtGel(p.unpaidAfterBank)}
+                      </td>
+                    ) : null}
+                    {isBankRow ? (
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
+                        {fmtGel(p.directAmount)}
+                        <span className="ml-1 text-[10px] text-muted-foreground">·{fmtCount(p.directCount)}</span>
+                      </td>
+                    ) : null}
+                    {isBankRow ? (
+                      <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
+                        {fmtGel(p.mappedAmount)}
+                        <span className="ml-1 text-[10px] text-muted-foreground">·{fmtCount(p.mappedCount)}</span>
+                      </td>
+                    ) : null}
                     {hasSecondary ? (
                       <td className={cn('px-2 py-1.5 text-right tabular-nums whitespace-nowrap', (p.secondary ?? 0) > 0 && 'text-destructive')}>
                         {p.secondary === null ? EM_DASH : fmtGel(p.secondary)}
@@ -272,8 +333,15 @@ function PartiesSheet({
                   </tr>
                   {isOpen ? (
                     <tr>
-                      <td colSpan={7} className="bg-muted/20 px-3 py-2">
-                        <TransactionsTable row={row.key} startDate={statement.startDate} endDate={statement.endDate} tin={p.tin} />
+                      <td colSpan={11} className="bg-muted/20 px-3 py-2">
+                        <TransactionsTable
+                          row={row.key}
+                          startDate={statement.startDate}
+                          endDate={statement.endDate}
+                          tin={p.tin}
+                          attribution={attribution === 'ALL' ? undefined : attribution}
+                          withdrawalsOnly={withdrawalsOnly || undefined}
+                        />
                       </td>
                     </tr>
                   ) : null}
@@ -282,7 +350,7 @@ function PartiesSheet({
             })}
             {!visible.length ? (
               <tr>
-                <td colSpan={7} className="px-3 py-3 text-muted-foreground">
+                <td colSpan={11} className="px-3 py-3 text-muted-foreground">
                   {row.parties.length ? 'No counterparty matches the filter.' : 'Nothing in this period.'}
                 </td>
               </tr>
@@ -290,6 +358,12 @@ function PartiesSheet({
           </tbody>
         </table>
       </div>
+      {withdrawalsOnly ? (
+        <div className="rounded-md border border-border bg-muted/20 p-2">
+          <div className="mb-1 text-xs font-medium">All withdrawals in the period{withdrawalsFigure ? ` — ${fmtGel(withdrawalsFigure.amount)}` : ''}</div>
+          <TransactionsTable row={row.key} startDate={statement.startDate} endDate={statement.endDate} withdrawalsOnly />
+        </div>
+      ) : null}
     </div>
   )
 }

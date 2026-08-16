@@ -89,7 +89,15 @@ export function useAuditStatement(params: { startDate: string; endDate: string; 
 }
 
 export function useStatementTransactions(
-  params: { row: StatementRowKey; startDate: string; endDate: string; tin?: string; category?: string },
+  params: {
+    row: StatementRowKey
+    startDate: string
+    endDate: string
+    tin?: string
+    category?: string
+    attribution?: 'DIRECT' | 'MAPPED'
+    withdrawalsOnly?: boolean
+  },
   enabled = true
 ) {
   return useQuery({
@@ -101,6 +109,8 @@ export function useStatementTransactions(
       params.endDate,
       params.tin ?? '',
       params.category ?? '',
+      params.attribution ?? '',
+      params.withdrawalsOnly ? 'wd' : '',
     ],
     queryFn: () => auditLayerApi.getStatementTransactions(params),
     staleTime: STALE,
@@ -127,7 +137,7 @@ export function useSetProductCategory(operator: string) {
   return useMutation({
     mutationFn: (input: { productName: string; category: string }) =>
       auditLayerApi.setProductCategory(input.productName, input.category, operator),
-    onSuccess: () => invalidate(['statement', 'flows', 'source-rows', 'drilldown']),
+    onSuccess: () => invalidate(['statement', 'statement-transactions', 'flows', 'source-rows', 'drilldown']),
   })
 }
 
@@ -319,6 +329,7 @@ export type AuditScope =
   | 'categories'
   | 'subgroups'
   | 'statement'
+  | 'statement-transactions'
   | 'drilldown'
   | 'mapping-rules'
   | 'mapping-rule-preview'
@@ -335,6 +346,7 @@ export const MAPPING_SCOPES: readonly AuditScope[] = [
   'mapping-history',
   'mapping-rule-preview',
   'statement',
+  'statement-transactions',
 ]
 
 /**

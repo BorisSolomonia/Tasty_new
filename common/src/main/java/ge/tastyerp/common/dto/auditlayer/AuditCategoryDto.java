@@ -46,6 +46,13 @@ public class AuditCategoryDto {
     /** Explicitly unresolved — the amount stays visible as a gap. */
     private boolean unresolved;
 
+    /**
+     * The money left the bank as cash (ATM, cash-out to a person). Feeds the
+     * statement's "withdrawals" line; with supplierSettlement it also feeds
+     * "withdrawals mapped to suppliers" (BOR-92 v3).
+     */
+    private boolean cashWithdrawal;
+
     /** Longer explanation shown in the mapping UI. */
     private String description;
 }

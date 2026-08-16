@@ -31,6 +31,7 @@ type FlagKey =
   | 'cashReturn'
   | 'paperOnly'
   | 'unresolved'
+  | 'cashWithdrawal'
 
 /** The flag, and the total it feeds. One line, because that is the whole rule. */
 const FLAGS: { key: FlagKey; label: string; feeds: string }[] = [
@@ -64,6 +65,11 @@ const FLAGS: { key: FlagKey; label: string; feeds: string }[] = [
     label: 'Unresolved',
     feeds: 'Keeps the amount counted as unexplained instead of claiming it is accounted for.',
   },
+  {
+    key: 'cashWithdrawal',
+    label: 'Cash withdrawal',
+    feeds: 'The money left the bank as cash (ATM, cash-out). Feeds the withdrawals line of the statement; with Supplier settlement also "withdrawals mapped to suppliers".',
+  },
 ]
 
 /** Flag update kept in one typed place — a computed key would widen the draft. */
@@ -82,6 +88,7 @@ function emptyDraft(): AuditCategory {
     cashReturn: false,
     paperOnly: false,
     unresolved: false,
+    cashWithdrawal: false,
     description: '',
   }
 }

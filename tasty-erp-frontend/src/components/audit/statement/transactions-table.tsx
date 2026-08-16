@@ -8,11 +8,14 @@
  * says exactly that and how many of the loaded lines carry the name.
  */
 import * as React from 'react'
+import { Pencil } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/lib/cn'
 import { apiErrorMessage } from '@/lib/api-client'
-import type { StatementRowKey } from '@/lib/audit-api'
+import type { AuditSourceRow, StatementRowKey } from '@/lib/audit-api'
+import { MappingDialog } from '../mapping-dialog'
 import { useProductCategoryCodes, useSetProductCategory, useStatementTransactions } from '@/hooks/use-audit-flows'
 import { CATEGORY_LABELS } from '@/features/audit-control/labels'
 import { useAudit } from '../audit-context'
@@ -32,6 +35,8 @@ export function TransactionsTable({
   endDate,
   tin,
   category,
+  attribution,
+  withdrawalsOnly,
   allowRecategorise = false,
 }: {
   row: StatementRowKey
@@ -39,11 +44,16 @@ export function TransactionsTable({
   endDate: string
   tin?: string
   category?: string
+  /** Bank rows narrowed to a party: only its own rows, or only rows attributed to it by a slice. */
+  attribution?: 'DIRECT' | 'MAPPED'
+  /** Bank debits with a slice in a cash-withdrawal group only. */
+  withdrawalsOnly?: boolean
   /** Show the group select on document lines (Products sheet). */
   allowRecategorise?: boolean
 }) {
-  const query = useStatementTransactions({ row, startDate, endDate, tin, category })
+  const query = useStatementTransactions({ row, startDate, endDate, tin, category, attribution, withdrawalsOnly })
   const [shown, setShown] = React.useState(PAGE)
+  const [editing, setEditing] = React.useState<AuditSourceRow | null>(null)
   const rows = query.data ?? []
   const visible = rows.slice(0, shown)
   const kind = rows[0]?.kind ?? (row === 'purchases' || row === 'sales' ? 'DOCUMENT_LINE' : row === 'bankInflow' ? 'PAYMENT' : row === 'cashInflow' ? 'CASH_PAYMENT' : 'BANK_ROW')
@@ -63,6 +73,7 @@ export function TransactionsTable({
           {rows.length >= 5000 ? ' · capped at 5000 — narrow the period' : ''}
         </span>
         {allowRecategorise ? <span>Change a line's group to correct that product everywhere.</span> : null}
+        {isBank ? <span>“Map…” opens the editor: group, document status, counterparty — then only this row or all like it.</span> : null}
       </div>
       <div className="overflow-x-auto rounded border border-border bg-card">
         <table className="w-full min-w-[56rem] text-xs">
@@ -78,6 +89,12 @@ export function TransactionsTable({
               {!isDoc ? <th className="px-2 py-1 text-left font-medium">{isBank ? 'Reference' : 'Source'}</th> : null}
               <th className="px-2 py-1 text-right font-medium">₾</th>
               {isDoc || isBank ? <th className="px-2 py-1 text-left font-medium">Mapping</th> : null}
+              {isBank ? <th className="px-2 py-1 text-left font-medium">Mapped to</th> : null}
+              {isBank ? (
+                <th className="px-2 py-1 text-left font-medium">
+                  <span className="sr-only">Edit</span>
+                </th>
+              ) : null}
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -133,6 +150,40 @@ export function TransactionsTable({
                     {t.unresolvedAmount != null && t.unresolvedAmount > 0.005 && t.mappingSummary ? (
                       <div className="text-[10px] text-destructive">unmapped {fmtGel(t.unresolvedAmount)}</div>
                     ) : null}
+                    {t.withdrawal ? (
+                      <Badge variant="outline" className="mt-0.5 h-4 px-1 text-[9px] uppercase">
+                        withdrawal
+                      </Badge>
+                    ) : null}
+                    {t.attribution === 'MAPPED' ? (
+                      <Badge variant="secondary" className="ml-1 mt-0.5 h-4 px-1 text-[9px] uppercase" title="Attributed to this party by a slice on another counterparty's row">
+                        mapped here
+                      </Badge>
+                    ) : null}
+                  </td>
+                ) : null}
+                {isBank ? (
+                  <td className="px-2 py-1">
+                    {t.mappedCounterparties?.length ? (
+                      <div className="max-w-[14rem]">
+                        {t.mappedCounterparties.map((c) => (
+                          <div key={c} className="truncate" title={c}>
+                            {c}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">{EM_DASH}</span>
+                    )}
+                  </td>
+                ) : null}
+                {isBank ? (
+                  <td className="px-2 py-1">
+                    {t.sourceRow ? (
+                      <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" onClick={() => setEditing(t.sourceRow)} aria-label={`Map ${t.counterpartyName ?? t.id}`}>
+                        <Pencil className="mr-1 h-3 w-3" /> Map…
+                      </Button>
+                    ) : null}
                   </td>
                 ) : null}
               </tr>
@@ -148,6 +199,8 @@ export function TransactionsTable({
           </Button>
         </div>
       ) : null}
+      {/* The same two-step editor the workbench uses: build the mapping, then only-this / all-like-it. */}
+      <MappingDialog row={editing} onClose={() => setEditing(null)} />
     </div>
   )
 }

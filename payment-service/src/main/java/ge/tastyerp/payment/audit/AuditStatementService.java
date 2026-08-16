@@ -13,6 +13,8 @@ import ge.tastyerp.common.dto.auditlayer.AuditStatementDto.Party;
 import ge.tastyerp.common.dto.auditlayer.AuditStatementDto.ProductGroup;
 import ge.tastyerp.common.dto.auditlayer.AuditStatementDto.Row;
 import ge.tastyerp.common.dto.auditlayer.AuditStatementDto.Selection;
+import ge.tastyerp.common.dto.auditlayer.AuditStatementDto.Summary;
+import ge.tastyerp.common.dto.auditlayer.AuditStatementDto.Figure;
 import ge.tastyerp.common.dto.auditlayer.AuditStatementDto.SupplierKg;
 import ge.tastyerp.common.dto.auditlayer.AuditStatementTransactionDto;
 import ge.tastyerp.common.dto.auditlayer.AuditSubgroupDto;
@@ -22,6 +24,7 @@ import ge.tastyerp.common.exception.ValidationException;
 import ge.tastyerp.common.util.TinValidator;
 import ge.tastyerp.common.util.UnitClassifier;
 import ge.tastyerp.payment.repository.PaymentRepository;
+import ge.tastyerp.payment.service.DebtService;
 import ge.tastyerp.payment.service.audit.WriteOffCalculator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -68,6 +71,7 @@ public class AuditStatementService {
     private final AuditConfigClient configClient;
     private final AuditLayerRepository repository;
     private final PaymentRepository paymentRepository;
+    private final DebtService debtService;
 
     // ==================== selection ====================
 
@@ -126,7 +130,8 @@ public class AuditStatementService {
                   Map<String, String> categoryOverrides,
                   Map<String, BigDecimal> writeOffRates,
                   Set<String> unrealCustomers,
-                  Map<String, String> names) {}
+                  Map<String, String> names,
+                  BigDecimal receivables) {}
 
     Inputs loadInputs(LocalDate startDate, LocalDate endDate) {
         Map<String, AuditMappingDto> mappings = mappingService.loadMappingIndex();
@@ -142,7 +147,18 @@ public class AuditStatementService {
                 configClient.categoryOverrides(),
                 configClient.writeOffRates(),
                 configClient.unrealCustomers(),
-                configClient.customerNames());
+                configClient.customerNames(),
+                receivables());
+    }
+
+    /** Total outstanding on /payments, as of now; null (and a note) if the payments module did not answer. */
+    private BigDecimal receivables() {
+        try {
+            return debtService.getOverview().getTotalOutstanding();
+        } catch (RuntimeException e) {
+            log.warn("Receivables unavailable for the statement summary: {}", e.getMessage());
+            return null;
+        }
     }
 
     /** Pure aggregation — testable without I/O. */
@@ -202,79 +218,98 @@ public class AuditStatementService {
             if (paperOnly) unrealTotal = unrealTotal.add(nz(row.getAmount()).abs());
         }
 
-        // ---------------- bank debits: cash outflow & payments to suppliers ----------------
-        Money outflow = new Money(), toSuppliers = new Money();
+        // ---------------- bank rows: debits (outflow, supplier payments, withdrawals) and credits (inflow) ----------------
+        Money outflow = new Money(), toSuppliers = new Money(), bankIn = new Money();
         BigDecimal unmapped = BigDecimal.ZERO;
+        BigDecimal withdrawals = BigDecimal.ZERO, withdrawalsToSuppliers = BigDecimal.ZERO, withdrawalsUnresolved = BigDecimal.ZERO;
+        BigDecimal customerReceipts = BigDecimal.ZERO, unmappedIncome = BigDecimal.ZERO;
         Map<String, PartyAcc> outflowParties = new LinkedHashMap<>();
         Map<String, PartyAcc> supplierPayees = new LinkedHashMap<>();
+        Map<String, PartyAcc> inflowParties = new LinkedHashMap<>();
         for (AuditSourceRowDto row : in.bankRows()) {
-            if (!"DEBIT".equalsIgnoreCase(row.getDirection())) continue;
+            boolean debit = "DEBIT".equalsIgnoreCase(row.getDirection());
+            boolean credit = "CREDIT".equalsIgnoreCase(row.getDirection());
+            if (!debit && !credit) continue;
             BigDecimal amount = nz(row.getAmount()).abs();
             String rowTin = canonical(firstNonBlank(row.getResolvedCounterpartyTin(), row.getCounterpartyTin()));
             String rowKey = rowTin != null ? rowTin : "name:" + firstNonBlank(row.getCounterpartyName(), "no counterparty");
             List<AuditMappingSplitDto> splits = AuditMappingService.effectiveSplits(row.getMapping());
             BigDecimal covered = AuditMappingService.splitTotal(splits).min(amount);
             BigDecimal unresolved = amount.subtract(covered).max(BigDecimal.ZERO);
-            unmapped = unmapped.add(unresolved);
+            Set<String> chosenSet = debit ? chosenSuppliers : chosenCustomers;
+            Money total = debit ? outflow : bankIn;
+            Map<String, PartyAcc> parties = debit ? outflowParties : inflowParties;
 
-            // The row as a whole belongs to the outflow party list once.
-            PartyAcc op = outflowParties.computeIfAbsent(rowKey, k -> new PartyAcc(rowTin));
+            // The row as a whole belongs to the party list once, under its own counterparty.
+            PartyAcc op = parties.computeIfAbsent(rowKey, k -> new PartyAcc(rowTin));
             op.name = firstNonBlank(op.name, row.getCounterpartyName());
             op.identityBasis = firstNonBlank(op.identityBasis, row.getCounterpartyIdentityBasis());
             op.rows++;
-            // Amount attribution: each slice to its own counterparty (else the row's), the remainder to the row's.
-            boolean rowChosen = rowTin != null && chosenSuppliers.contains(rowTin);
-            outflow.rows++;
-            outflow.addAmount(unresolved, rowChosen);
+            op.directCount++;
+            boolean rowChosen = rowTin != null && chosenSet.contains(rowTin);
+            total.rows++;
+            total.addAmount(unresolved, rowChosen);
             op.amount = op.amount.add(unresolved);
+            op.direct = op.direct.add(unresolved);
             op.secondary = op.secondary.add(unresolved);
-            for (AuditMappingSplitDto s : splits) {
-                BigDecimal v = nz(s.getAmount());
-                String cp = canonical(firstNonBlank(s.getCounterpartyTin(), rowTin));
-                boolean chosen = cp != null && chosenSuppliers.contains(cp);
-                outflow.addAmount(v, chosen);
+            if (debit) unmapped = unmapped.add(unresolved); else unmappedIncome = unmappedIncome.add(unresolved);
+
+            for (AuditMappingSplitDto sp : splits) {
+                BigDecimal v = nz(sp.getAmount());
+                String cp = canonical(firstNonBlank(sp.getCounterpartyTin(), rowTin));
+                boolean chosen = cp != null && chosenSet.contains(cp);
+                total.addAmount(v, chosen);
+                AuditCategoryDto c = in.categories().get(sp.getCategoryCode());
                 if (cp != null && !cp.equals(rowTin)) {
-                    PartyAcc other = outflowParties.computeIfAbsent(cp, PartyAcc::new);
-                    other.name = firstNonBlank(other.name, s.getCounterpartyName());
+                    // Attributed to someone other than the row's own counterparty: that party's "mapped" money.
+                    PartyAcc other = parties.computeIfAbsent(cp, PartyAcc::new);
+                    other.name = firstNonBlank(other.name, sp.getCounterpartyName());
                     other.amount = other.amount.add(v);
+                    other.mapped = other.mapped.add(v);
+                    other.mappedCount++;
                 } else {
                     op.amount = op.amount.add(v);
+                    op.direct = op.direct.add(v);
                 }
-                AuditCategoryDto c = in.categories().get(s.getCategoryCode());
-                if (c != null && c.isSupplierSettlement()) {
-                    toSuppliers.add(v, BigDecimal.ZERO, chosen);
-                    String key = cp != null ? cp : rowKey;
-                    PartyAcc sp = supplierPayees.computeIfAbsent(key, k -> new PartyAcc(cp));
-                    sp.name = firstNonBlank(sp.name, s.getCounterpartyName(), row.getCounterpartyName());
-                    sp.amount = sp.amount.add(v);
-                    sp.rows++;
+                if (debit) {
+                    if (c != null && c.isSupplierSettlement()) {
+                        toSuppliers.add(v, BigDecimal.ZERO, chosen);
+                        String key = cp != null ? cp : rowKey;
+                        PartyAcc payee = supplierPayees.computeIfAbsent(key, k -> new PartyAcc(cp));
+                        payee.name = firstNonBlank(payee.name, sp.getCounterpartyName(), row.getCounterpartyName());
+                        payee.amount = payee.amount.add(v);
+                        payee.rows++;
+                        if (cp != null) {
+                            // Purchases lists this too: a supplier paid by bank with no purchase document
+                            // shows 0 purchases and a negative "unpaid after bank" — paid, undocumented.
+                            PartyAcc seller = sellers.computeIfAbsent(cp, PartyAcc::new);
+                            seller.bankPaid = seller.bankPaid.add(v);
+                        }
+                    }
+                    if (c != null && c.isCashWithdrawal()) {
+                        withdrawals = withdrawals.add(v);
+                        if (c.isSupplierSettlement()) withdrawalsToSuppliers = withdrawalsToSuppliers.add(v);
+                        if (c.isUnresolved()) withdrawalsUnresolved = withdrawalsUnresolved.add(v);
+                    }
+                } else if (c != null && c.isCustomerReceipt()) {
+                    customerReceipts = customerReceipts.add(v);
+                } else {
+                    unmappedIncome = unmappedIncome.add(v);   // mapped, but not as a customer receipt (other income, refunds…)
                 }
             }
         }
-
-        // ---------------- inflows from the payments module ----------------
-        Money bankIn = new Money(), cashIn = new Money();
-        Map<String, PartyAcc> bankPayers = new LinkedHashMap<>();
+        // ---------------- cash inflow from the payments module ----------------
+        Money cashIn = new Money();
         Map<String, PartyAcc> cashPayers = new LinkedHashMap<>();
-        for (PaymentDto p : in.bankPayments()) {
-            String tin = canonical(p.getCustomerId());
-            String key = tin != null ? tin : "name:" + firstNonBlank(p.getCustomerName(), "unknown");
+        for (PaymentDto pmt : in.cashPayments()) {
+            String tin = canonical(pmt.getCustomerId());
+            String key = tin != null ? tin : "name:" + firstNonBlank(pmt.getCustomerName(), "unknown");
             boolean chosen = tin != null && chosenCustomers.contains(tin);
-            BigDecimal v = nz(p.getAmount());
-            bankIn.add(v, BigDecimal.ZERO, chosen);
-            PartyAcc a = bankPayers.computeIfAbsent(key, k -> new PartyAcc(tin));
-            a.name = firstNonBlank(a.name, p.getCustomerName());
-            a.amount = a.amount.add(v); a.rows++;
-        }
-        for (PaymentDto p : in.cashPayments()) {
-            String tin = canonical(p.getCustomerId());
-            String key = tin != null ? tin : "name:" + firstNonBlank(p.getCustomerName(), "unknown");
-            boolean chosen = tin != null && chosenCustomers.contains(tin);
-            BigDecimal v = nz(p.getAmount());
+            BigDecimal v = nz(pmt.getAmount());
             cashIn.add(v, BigDecimal.ZERO, chosen);
-            PartyAcc a = cashPayers.computeIfAbsent(key, k -> new PartyAcc(tin));
-            a.name = firstNonBlank(a.name, p.getCustomerName());
-            a.amount = a.amount.add(v); a.rows++;
+            PartyAcc acc = cashPayers.computeIfAbsent(key, k -> new PartyAcc(tin));
+            acc.name = firstNonBlank(acc.name, pmt.getCustomerName());
+            acc.amount = acc.amount.add(v); acc.rows++;
         }
 
         // ---------------- inventory ----------------
@@ -311,6 +346,8 @@ public class AuditStatementService {
         notes.add("Opening stock is not recorded: inventory is the period's net movement (purchased − write-off − sold), valued at the period's average purchase price per kg.");
         if (in.unrealCustomers().isEmpty()) notes.add("No customers are marked unreal on /audit-control (or config-service was unreachable) — 'real' sales here exclude only paper-only mapped lines.");
         if (!unpriced.isEmpty()) notes.add("Inventory value excludes " + String.join(", ", unpriced) + " (no purchases with a kg price this period).");
+        if (in.receivables() == null) notes.add("Receivables (AR) could not be read from the payments module — the 'cash to be received from customers' line is empty, not zero.");
+        else notes.add("Receivables (AR) is /payments' total outstanding as of now — a balance, while the other operands are period flows.");
 
         return AuditStatementDto.builder()
                 .startDate(startDate).endDate(endDate).operator(operator)
@@ -320,7 +357,7 @@ public class AuditStatementService {
                         .total(money(pur.amount)).totalKg(kg(pur.kg))
                         .chosen(anySupplier ? money(pur.chosen) : null).chosenKg(anySupplier ? kg(pur.chosenKg) : null)
                         .rowCount(pur.rows)
-                        .parties(parties(sellers, chosenSuppliers, nameOf, true))
+                        .parties(parties(sellers, chosenSuppliers, nameOf, true, true))
                         .products(groups(purGroups, anySupplier)).build())
                 .bankPaymentsToSuppliers(Row.builder().key("bankPaymentsToSuppliers").title("Bank payments to suppliers").chosenBy(CHOSEN_BY_SUPPLIERS)
                         .definition("Real bank money out on rows mapped to a supplier-settlement group, attributed to the counterparty of each slice (else the row's). Unmapped rows are not here — they are in Cash outflow.")
@@ -331,6 +368,7 @@ public class AuditStatementService {
                         .definition("Every bank debit row in the period, whatever it was for. Chosen = the part attributed to ticked suppliers; unmapped = the part no mapping covers yet.")
                         .total(money(outflow.amount)).chosen(anySupplier ? money(outflow.chosen) : null)
                         .secondary(money(unmapped)).secondaryLabel("unmapped")
+                        .extras(List.of(fig("unmapped", unmapped), fig("withdrawals", withdrawals)))
                         .rowCount(outflow.rows)
                         .parties(parties(outflowParties, chosenSuppliers, nameOf, false)).build())
                 .inventory(InventoryRow.builder().key("inventory").title("Inventory (net, on paper)")
@@ -341,19 +379,24 @@ public class AuditStatementService {
                         .total(money(sale.amount)).totalKg(kg(sale.kg))
                         .chosen(anyCustomer ? money(sale.chosen) : null).chosenKg(anyCustomer ? kg(sale.chosenKg) : null)
                         .secondary(money(sale.amount.subtract(unrealTotal))).secondaryLabel("real")
+                        .extras(List.of(fig("real", sale.amount.subtract(unrealTotal)), fig("unreal", unrealTotal)))
                         .rowCount(sale.rows)
                         .parties(parties(buyers, chosenCustomers, nameOf, true))
                         .products(groups(saleGroups, anyCustomer)).build())
                 .bankInflow(Row.builder().key("bankInflow").title("Bank inflow (payments from customers)").chosenBy(CHOSEN_BY_CUSTOMERS)
-                        .definition("Bank-statement payments dated in the period, exactly as the /payments page lists them (payments collection). Chosen = ticked customers.")
+                        .definition("Every bank credit row in the period. 'Mapped from customers' = slices in a customer-receipt group; 'unmapped income' = the rest (unmapped, other income, refunds). Chosen = receipts attributed to ticked customers.")
                         .total(money(bankIn.amount)).chosen(anyCustomer ? money(bankIn.chosen) : null)
+                        .secondary(money(customerReceipts)).secondaryLabel("mapped from customers")
+                        .extras(List.of(fig("mapped from customers", customerReceipts), fig("unmapped income", unmappedIncome)))
                         .rowCount(bankIn.rows)
-                        .parties(parties(bankPayers, chosenCustomers, nameOf, false)).build())
+                        .parties(parties(inflowParties, chosenCustomers, nameOf, false)).build())
                 .cashInflow(Row.builder().key("cashInflow").title("Cash inflow (cash from customers)").chosenBy(CHOSEN_BY_CUSTOMERS)
                         .definition("Manual cash payments dated in the period, exactly as the /payments page lists them (manualCashPayments collection). Chosen = ticked customers.")
                         .total(money(cashIn.amount)).chosen(anyCustomer ? money(cashIn.chosen) : null)
                         .rowCount(cashIn.rows)
                         .parties(parties(cashPayers, chosenCustomers, nameOf, false)).build())
+                .summary(summary(pur.amount, toSuppliers.amount, withdrawals, withdrawalsToSuppliers, withdrawalsUnresolved,
+                        sale.amount, customerReceipts, in.receivables()))
                 .notes(notes)
                 .build();
     }
@@ -366,14 +409,24 @@ public class AuditStatementService {
      * {@code category} narrows document rows to one product group.
      */
     public List<AuditStatementTransactionDto> transactions(String rowKey, LocalDate startDate, LocalDate endDate,
-                                                           String tin, String category, int limit) {
+                                                           String tin, String category, String attribution,
+                                                           boolean withdrawalsOnly, int limit) {
         Inputs in = loadInputs(startDate, endDate);
-        return transactions(rowKey, tin, category, limit, in);
+        return transactions(rowKey, tin, category, attribution, withdrawalsOnly, limit, in);
     }
 
     List<AuditStatementTransactionDto> transactions(String rowKey, String tin, String category, int limit, Inputs in) {
-        String wantTin = canonical(tin);
+        return transactions(rowKey, tin, category, null, false, limit, in);
+    }
+
+    /**
+     * @param attributionFilter DIRECT | MAPPED | null — for bank rows narrowed to a party.
+     * @param withdrawalsOnly   bank debits with at least one slice in a cash-withdrawal group.
+     */
+    List<AuditStatementTransactionDto> transactions(String rowKey, String tin, String category, String attributionFilter,
+                                                    boolean withdrawalsOnly, int limit, Inputs in) {
         String wantName = tin != null && tin.startsWith("name:") ? tin.substring(5) : null;
+        String wantTin = wantName != null ? null : canonical(tin);
         int cap = limit <= 0 ? MAX_TRANSACTIONS : Math.min(limit, MAX_TRANSACTIONS);
         List<AuditStatementTransactionDto> out = new ArrayList<>();
         Function<String, String> nameOf = nameResolver(in);
@@ -405,51 +458,66 @@ public class AuditStatementService {
                     if (out.size() >= cap) break;
                 }
             }
-            case "bankPaymentsToSuppliers", "cashOutflow" -> {
+            case "bankPaymentsToSuppliers", "cashOutflow", "bankInflow" -> {
                 boolean supplierOnly = "bankPaymentsToSuppliers".equals(rowKey);
+                String wantDirection = "bankInflow".equals(rowKey) ? "CREDIT" : "DEBIT";
                 for (AuditSourceRowDto row : in.bankRows()) {
-                    if (!"DEBIT".equalsIgnoreCase(row.getDirection())) continue;
+                    if (!wantDirection.equalsIgnoreCase(row.getDirection())) continue;
                     String rowTin = canonical(firstNonBlank(row.getResolvedCounterpartyTin(), row.getCounterpartyTin()));
                     List<AuditMappingSplitDto> splits = AuditMappingService.effectiveSplits(row.getMapping());
-                    boolean sliceHits = splits.stream().anyMatch(s -> {
-                        String cp = canonical(firstNonBlank(s.getCounterpartyTin(), rowTin));
+                    boolean sliceHits = splits.stream().anyMatch(sp -> {
+                        String cp = canonical(firstNonBlank(sp.getCounterpartyTin(), rowTin));
                         boolean cpMatch = wantTin == null || wantTin.equals(cp);
-                        AuditCategoryDto c = in.categories().get(s.getCategoryCode());
+                        AuditCategoryDto c = in.categories().get(sp.getCategoryCode());
                         return cpMatch && (!supplierOnly || (c != null && c.isSupplierSettlement()));
                     });
+                    boolean direct = wantTin != null ? wantTin.equals(rowTin)
+                            : wantName != null && rowTin == null && wantName.equals(firstNonBlank(row.getCounterpartyName(), "no counterparty"));
                     boolean rowHits;
                     if (wantName != null) {
-                        rowHits = rowTin == null && wantName.equals(firstNonBlank(row.getCounterpartyName(), "no counterparty"));
-                        if (supplierOnly) rowHits = rowHits && sliceHits;
+                        rowHits = direct && (!supplierOnly || sliceHits);
                     } else if (supplierOnly) {
                         rowHits = sliceHits;
                     } else {
-                        rowHits = wantTin == null || wantTin.equals(rowTin) || sliceHits;
+                        rowHits = wantTin == null || direct || sliceHits;
                     }
                     if (!rowHits) continue;
+                    boolean withdrawal = splits.stream().anyMatch(sp -> {
+                        AuditCategoryDto c = in.categories().get(sp.getCategoryCode());
+                        return c != null && c.isCashWithdrawal();
+                    });
+                    if (withdrawalsOnly && !withdrawal) continue;
+                    String attribution = wantTin == null && wantName == null ? null : direct ? "DIRECT" : "MAPPED";
+                    if (attributionFilter != null && !attributionFilter.equalsIgnoreCase(attribution)) continue;
+                    List<String> mappedTo = new ArrayList<>();
+                    for (AuditMappingSplitDto sp : splits) {
+                        String label = firstNonBlank(sp.getCounterpartyName(), sp.getCounterpartyTin());
+                        if (label != null && !mappedTo.contains(label)) mappedTo.add(label);
+                    }
                     out.add(AuditStatementTransactionDto.builder()
-                            .id(row.getSourceRowId()).kind("BANK_ROW").date(row.getDate()).direction("DEBIT")
+                            .id(row.getSourceRowId()).kind("BANK_ROW").date(row.getDate()).direction(wantDirection)
                             .amount(row.getAmount() == null ? null : row.getAmount().abs())
                             .counterpartyTin(rowTin).counterpartyName(firstNonBlank(row.getCounterpartyName(), rowTin == null ? null : nameOf.apply(rowTin)))
                             .description(row.getDescription()).reference(row.getReference()).source(row.getTransactionType())
                             .sourceType(row.getSourceType()).sourceRowId(row.getSourceRowId())
                             .mappingStatus(row.getStatus()).mappingSummary(summary(row.getMapping(), in))
                             .unresolvedAmount(row.getUnresolvedAmount())
+                            .mappedCounterparties(mappedTo).withdrawal(withdrawal).attribution(attribution)
+                            .sourceRow(row)
                             .build());
                     if (out.size() >= cap) break;
                 }
             }
-            case "bankInflow", "cashInflow" -> {
-                boolean cash = "cashInflow".equals(rowKey);
-                for (PaymentDto p : cash ? in.cashPayments() : in.bankPayments()) {
-                    String cp = canonical(p.getCustomerId());
+            case "cashInflow" -> {
+                for (PaymentDto pmt : in.cashPayments()) {
+                    String cp = canonical(pmt.getCustomerId());
                     if (wantTin != null && !wantTin.equals(cp)) continue;
-                    if (wantName != null && !(cp == null && wantName.equals(firstNonBlank(p.getCustomerName(), "unknown")))) continue;
+                    if (wantName != null && !(cp == null && wantName.equals(firstNonBlank(pmt.getCustomerName(), "unknown")))) continue;
                     out.add(AuditStatementTransactionDto.builder()
-                            .id(p.getId()).kind(cash ? "CASH_PAYMENT" : "PAYMENT").date(p.getPaymentDate())
-                            .amount(p.getAmount())
-                            .counterpartyTin(cp).counterpartyName(firstNonBlank(p.getCustomerName(), cp == null ? null : nameOf.apply(cp)))
-                            .description(p.getDescription()).reference(p.getUniqueCode()).source(p.getSource())
+                            .id(pmt.getId()).kind("CASH_PAYMENT").date(pmt.getPaymentDate())
+                            .amount(pmt.getAmount())
+                            .counterpartyTin(cp).counterpartyName(firstNonBlank(pmt.getCustomerName(), cp == null ? null : nameOf.apply(cp)))
+                            .description(pmt.getDescription()).reference(pmt.getUniqueCode()).source(pmt.getSource())
                             .build());
                     if (out.size() >= cap) break;
                 }
@@ -514,9 +582,28 @@ public class AuditStatementService {
         }
     }
 
+    static Summary summary(BigDecimal purchases, BigDecimal bankToSuppliers, BigDecimal withdrawals, BigDecimal withdrawalsToSuppliers,
+                           BigDecimal withdrawalsUnresolved, BigDecimal sales, BigDecimal customerReceipts, BigDecimal receivables) {
+        BigDecimal cashToReceive = receivables == null ? null : sales.subtract(customerReceipts).subtract(receivables);
+        return Summary.builder()
+                .purchases(money(purchases)).bankPaymentsToSuppliers(money(bankToSuppliers))
+                .possibleChecksNeeded(money(purchases.subtract(bankToSuppliers)))
+                .withdrawals(money(withdrawals)).withdrawalsToSuppliers(money(withdrawalsToSuppliers)).withdrawalsUnresolved(money(withdrawalsUnresolved))
+                .sales(money(sales)).bankReceiptsFromCustomers(money(customerReceipts))
+                .receivables(money(receivables))
+                .cashToReceiveFromCustomers(money(cashToReceive))
+                .cashToPaySuppliers(cashToReceive == null ? null : money(withdrawals.add(cashToReceive)))
+                .build();
+    }
+
+    private static Figure fig(String label, BigDecimal v) {
+        return Figure.builder().label(label).amount(money(v)).build();
+    }
+
     private static final class PartyAcc {
         final String tin; String name; String identityBasis; boolean unreal;
         BigDecimal amount = BigDecimal.ZERO, kg = BigDecimal.ZERO, secondary = BigDecimal.ZERO; int rows;
+        BigDecimal direct = BigDecimal.ZERO, mapped = BigDecimal.ZERO, bankPaid = BigDecimal.ZERO; int directCount, mappedCount;
         PartyAcc(String tin) { this.tin = tin; }
         void add(BigDecimal a, BigDecimal k) { amount = amount.add(a); kg = kg.add(k); rows++; }
     }
@@ -540,6 +627,10 @@ public class AuditStatementService {
     }
 
     private static List<Party> parties(Map<String, PartyAcc> accs, Set<String> chosen, Function<String, String> nameOf, boolean withKg) {
+        return parties(accs, chosen, nameOf, withKg, false);
+    }
+
+    private static List<Party> parties(Map<String, PartyAcc> accs, Set<String> chosen, Function<String, String> nameOf, boolean withKg, boolean purchases) {
         List<Party> out = new ArrayList<>();
         for (Map.Entry<String, PartyAcc> e : accs.entrySet()) {
             PartyAcc a = e.getValue();
@@ -551,6 +642,10 @@ public class AuditStatementService {
                     .name(name)
                     .amount(money(a.amount)).quantityKg(withKg ? kg(a.kg) : null)
                     .secondary(a.secondary.signum() != 0 ? money(a.secondary) : null)
+                    .directAmount(a.directCount > 0 || a.mappedCount > 0 ? money(a.direct) : null).directCount(a.directCount)
+                    .mappedAmount(a.directCount > 0 || a.mappedCount > 0 ? money(a.mapped) : null).mappedCount(a.mappedCount)
+                    .bankPaid(purchases ? money(a.bankPaid) : null)
+                    .unpaidAfterBank(purchases ? money(a.amount.subtract(a.bankPaid)) : null)
                     .rowCount(a.rows).chosen(tin != null && chosen.contains(tin)).unreal(a.unreal)
                     .identityBasis(a.identityBasis)
                     .build());

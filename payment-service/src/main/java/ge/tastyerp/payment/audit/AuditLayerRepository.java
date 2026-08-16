@@ -247,6 +247,7 @@ public class AuditLayerRepository {
                     .cashReturn(bool(doc, "cashReturn"))
                     .paperOnly(bool(doc, "paperOnly"))
                     .unresolved(bool(doc, "unresolved"))
+                    .cashWithdrawal(bool(doc, "cashWithdrawal"))
                     .build());
         }
         return result;
@@ -262,6 +263,7 @@ public class AuditLayerRepository {
         data.put("cashReturn", category.isCashReturn());
         data.put("paperOnly", category.isPaperOnly());
         data.put("unresolved", category.isUnresolved());
+        data.put("cashWithdrawal", category.isCashWithdrawal());
         write(COLLECTION_CATEGORIES, category.getCode(), data);
         invalidateReadCaches();
     }

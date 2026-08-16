@@ -43,10 +43,17 @@ public class AuditStatementDto {
     private InventoryRow inventory;
     /** ₾ of every RS.ge SALE line; secondary = real (total − unreal); parties = buyers, flagged unreal where /audit-control says so. */
     private Row sales;
-    /** ₾ of bank-statement payments from customers in the period (the {@code payments} collection the /payments page lists). */
+    /**
+     * ₾ of every bank CREDIT row in the period. Extras: "mapped from customers"
+     * (slices in customer-receipt groups) and "unmapped income" (the rest).
+     * Chosen = receipts attributed to ticked customers.
+     */
     private Row bankInflow;
     /** ₾ of manual cash payments from customers in the period (the {@code manualCashPayments} collection the /payments page lists). */
     private Row cashInflow;
+
+    /** The arithmetic below the table — every operand named, nothing derived twice. */
+    private Summary summary;
 
     private List<String> notes;
 
@@ -79,14 +86,25 @@ public class AuditStatementDto {
         /** Null when the relevant selection set is empty (nothing chosen ≠ zero). */
         private BigDecimal chosen;
         private BigDecimal chosenKg;
-        /** Optional extra figure with its own label (e.g. "unmapped", "real"). */
+        /** Optional extra figure with its own label (e.g. "unmapped", "real"); the first of {@code extras}. */
         private BigDecimal secondary;
         private String secondaryLabel;
+        /** Every extra figure the row carries, in display order. */
+        private List<Figure> extras;
         private int rowCount;
         /** Counterparties of this row, each carrying whether it is currently chosen. */
         private List<Party> parties;
         /** Product groups (purchases and sales only); null elsewhere. */
         private List<ProductGroup> products;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class Figure {
+        private String label;
+        private BigDecimal amount;
     }
 
     @Data
@@ -100,12 +118,52 @@ public class AuditStatementDto {
         private BigDecimal quantityKg;
         /** Row-specific extra: unmapped ₾ for cash outflow, null elsewhere. */
         private BigDecimal secondary;
+        /** Bank rows: ₾ on rows whose own counterparty is this party (unmapped remainder + slices without another counterparty). */
+        private BigDecimal directAmount;
+        private int directCount;
+        /** Bank rows: ₾ of slices on other counterparties' rows attributed to this party. */
+        private BigDecimal mappedAmount;
+        private int mappedCount;
+        /** Purchases: real bank money mapped to this supplier (supplier-settlement slices) in the period. */
+        private BigDecimal bankPaid;
+        /** Purchases: documented purchases − bankPaid. What the bank has not settled — cash, checks or still owed. */
+        private BigDecimal unpaidAfterBank;
         private int rowCount;
         private boolean chosen;
         /** Sales only: the customer is marked unreal on /audit-control. */
         private boolean unreal;
         /** How the identity was established when the source gave no TIN (bank rows). */
         private String identityBasis;
+    }
+
+    /**
+     * The lines under the table. Period flows unless stated; receivables is a
+     * balance as of now from the payments module.
+     */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class Summary {
+        private BigDecimal purchases;
+        private BigDecimal bankPaymentsToSuppliers;
+        /** purchases − bankPaymentsToSuppliers. */
+        private BigDecimal possibleChecksNeeded;
+        /** Σ DEBIT slices in groups flagged cashWithdrawal. */
+        private BigDecimal withdrawals;
+        /** Those withdrawal slices whose group is also flagged supplierSettlement. */
+        private BigDecimal withdrawalsToSuppliers;
+        /** Those whose group is flagged unresolved. */
+        private BigDecimal withdrawalsUnresolved;
+        private BigDecimal sales;
+        /** Bank CREDIT slices in customer-receipt groups. */
+        private BigDecimal bankReceiptsFromCustomers;
+        /** Total outstanding on /payments (Σ starting + sales − payments), as of now; null if the payments module did not answer. */
+        private BigDecimal receivables;
+        /** sales − bankReceiptsFromCustomers − receivables. */
+        private BigDecimal cashToReceiveFromCustomers;
+        /** withdrawals + cashToReceiveFromCustomers. */
+        private BigDecimal cashToPaySuppliers;
     }
 
     @Data

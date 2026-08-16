@@ -76,9 +76,11 @@ public class AuditLayerController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
             @RequestParam(required = false) String tin,
             @RequestParam(required = false) String category,
+            @RequestParam(required = false) String attribution,
+            @RequestParam(defaultValue = "false") boolean withdrawalsOnly,
             @RequestParam(defaultValue = "0") int limit) {
         return ResponseEntity.ok(ApiResponse.success(
-                statementService.transactions(row, startDate, endDate, tin, category, limit)));
+                statementService.transactions(row, startDate, endDate, tin, category, attribution, withdrawalsOnly, limit)));
     }
 
     @GetMapping("/statement/selection")

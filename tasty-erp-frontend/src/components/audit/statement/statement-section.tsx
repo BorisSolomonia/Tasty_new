@@ -188,6 +188,8 @@ export function StatementSection() {
         </table>
       </div>
 
+      {statement?.summary ? <SummaryLines summary={statement.summary} /> : null}
+
       {statement?.notes?.length ? (
         <ul className="list-disc space-y-0.5 border-t border-border px-4 py-2 pl-8 text-[11px] text-muted-foreground">
           {statement.notes.map((n) => (
@@ -240,10 +242,15 @@ function StatementLine({
   const emphasis = rowKey === 'purchases' || rowKey === 'sales'
 
   let note: React.ReactNode = null
-  if (row?.secondary != null && row.secondaryLabel) {
+  const extras = row?.extras ?? (row?.secondary != null && row.secondaryLabel ? [{ label: row.secondaryLabel, amount: row.secondary }] : [])
+  if (extras.length) {
     note = (
-      <span className={cn('whitespace-nowrap text-xs', row.secondaryLabel === 'unmapped' && row.secondary > 0 ? 'text-destructive' : 'text-muted-foreground')}>
-        {row.secondaryLabel} {fmtGel(row.secondary)}
+      <span className="inline-flex flex-col gap-0.5 text-xs leading-tight">
+        {extras.map((f) => (
+          <span key={f.label} className={cn('whitespace-nowrap', (f.label === 'unmapped' || f.label === 'unmapped income') && (f.amount ?? 0) > 0 ? 'text-destructive' : 'text-muted-foreground')}>
+            {f.label} {fmtGel(f.amount)}
+          </span>
+        ))}
       </span>
     )
   } else if (inv) {
@@ -305,6 +312,34 @@ function StatementLine({
         <ChevronRight className="h-4 w-4" aria-hidden />
       </td>
     </tr>
+  )
+}
+
+/**
+ * The arithmetic under the table, every operand shown. Period flows, except
+ * receivables (AR) which is /payments' balance as of now — said next to it.
+ */
+function SummaryLines({ summary: s }: { summary: NonNullable<AuditStatement['summary']> }) {
+  const g = (v: number | null) => <span className="whitespace-nowrap font-medium tabular-nums">{fmtGel(v)}</span>
+  return (
+    <div className="space-y-1.5 border-t border-border px-4 py-3 text-sm" data-testid="statement-summary">
+      <p>
+        purchases {g(s.purchases)} − bank payments to suppliers {g(s.bankPaymentsToSuppliers)} ={' '}
+        <span className="font-semibold">possible checks needed {g(s.possibleChecksNeeded)}</span>
+      </p>
+      <p>
+        cash withdrawals from bank {g(s.withdrawals)} · withdrawals mapped to suppliers {g(s.withdrawalsToSuppliers)} · unresolved {g(s.withdrawalsUnresolved)}
+      </p>
+      <p>
+        sales {g(s.sales)} − bank receipts from customers {g(s.bankReceiptsFromCustomers)} − AR {g(s.receivables)}
+        <span className="text-xs text-muted-foreground"> (/payments total outstanding, as of now)</span> ={' '}
+        <span className="font-semibold">cash to be received from customers {g(s.cashToReceiveFromCustomers)}</span>
+      </p>
+      <p>
+        withdrawals {g(s.withdrawals)} + cash to be received from customers {g(s.cashToReceiveFromCustomers)} ={' '}
+        <span className="font-semibold">{g(s.cashToPaySuppliers)} to be paid to suppliers as cash</span>
+      </p>
+    </div>
   )
 }
 

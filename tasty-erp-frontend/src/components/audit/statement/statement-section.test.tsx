@@ -6,7 +6,7 @@
  */
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AuditStatement, StatementRow, StatementTransaction } from '@/lib/audit-api'
+import type { AuditSourceRow, AuditStatement, StatementParty, StatementRow, StatementTransaction } from '@/lib/audit-api'
 
 const saveMutate = vi.fn()
 const setCategoryMutateAsync = vi.fn(async () => undefined)
@@ -30,6 +30,10 @@ vi.mock('../audit-context', () => ({
 vi.mock('../operator-picker', () => ({
   useOperatorGuard: () => ({ operator: 'boris', ready: true, message: 'Enter an operator name in the page header before saving.' }),
 }))
+vi.mock('../mapping-dialog', () => ({
+  MappingDialog: ({ row }: { row: AuditSourceRow | null }) => (row ? <div role="dialog" aria-label="mapping-editor">editing {row.sourceRowId}</div> : null),
+}))
+
 vi.mock('@/hooks/use-audit-flows', () => ({
   useAuditStatement: () => statementState,
   useSaveStatementSelection: () => ({ mutate: saveMutate, isPending: false, isError: false, error: null }),
@@ -39,6 +43,53 @@ vi.mock('@/hooks/use-audit-flows', () => ({
 }))
 
 import { StatementSection } from './statement-section'
+
+function party(over: Partial<StatementParty> & { tin: string; name: string }): StatementParty {
+  return {
+    amount: null,
+    quantityKg: null,
+    secondary: null,
+    directAmount: null,
+    directCount: 0,
+    mappedAmount: null,
+    mappedCount: 0,
+    bankPaid: null,
+    unpaidAfterBank: null,
+    rowCount: 0,
+    chosen: false,
+    unreal: false,
+    identityBasis: null,
+    ...over,
+  }
+}
+
+function tx(over: Partial<StatementTransaction> & { id: string; kind: StatementTransaction['kind'] }): StatementTransaction {
+  return {
+    date: null,
+    direction: null,
+    amount: null,
+    counterpartyTin: null,
+    counterpartyName: null,
+    productName: null,
+    category: null,
+    quantityKg: null,
+    unit: null,
+    waybillId: null,
+    description: null,
+    reference: null,
+    source: null,
+    sourceType: null,
+    sourceRowId: null,
+    mappingStatus: null,
+    mappingSummary: null,
+    unresolvedAmount: null,
+    mappedCounterparties: null,
+    withdrawal: false,
+    attribution: null,
+    sourceRow: null,
+    ...over,
+  }
+}
 
 function row(key: StatementRow['key'], title: string, over: Partial<StatementRow> = {}): StatementRow {
   return {
@@ -52,6 +103,7 @@ function row(key: StatementRow['key'], title: string, over: Partial<StatementRow
     chosenKg: null,
     secondary: null,
     secondaryLabel: null,
+    extras: null,
     rowCount: 3,
     parties: [],
     products: null,
@@ -69,8 +121,8 @@ function payload(): AuditStatement {
       total: 3700,
       totalKg: 190,
       parties: [
-        { tin: 'SUP_A', name: 'Supplier A', amount: 2600, quantityKg: 140, secondary: null, rowCount: 2, chosen: false, unreal: false, identityBasis: null },
-        { tin: 'SUP_B', name: 'Supplier B', amount: 1100, quantityKg: 50, secondary: null, rowCount: 1, chosen: false, unreal: false, identityBasis: null },
+        party({ tin: 'SUP_A', name: 'Supplier A', amount: 2600, quantityKg: 140, rowCount: 2, bankPaid: 1000, unpaidAfterBank: 1600 }),
+        party({ tin: 'SUP_B', name: 'Supplier B', amount: 1100, quantityKg: 50, rowCount: 1, bankPaid: 750, unpaidAfterBank: 350 }),
       ],
       products: [
         { category: 'BEEF', amount: 3100, quantityKg: 150, chosenAmount: null, chosenKg: null, rowCount: 2, productCount: 1 },
@@ -82,9 +134,14 @@ function payload(): AuditStatement {
       total: 2150,
       secondary: 550,
       secondaryLabel: 'unmapped',
+      extras: [
+        { label: 'unmapped', amount: 550 },
+        { label: 'withdrawals', amount: 600 },
+      ],
       parties: [
-        { tin: 'SUP_A', name: 'Supplier A', amount: 1500, quantityKg: null, secondary: 300, rowCount: 1, chosen: false, unreal: false, identityBasis: null },
-        { tin: 'name:ATM', name: 'ATM', amount: 250, quantityKg: null, secondary: 250, rowCount: 1, chosen: false, unreal: false, identityBasis: null },
+        party({ tin: 'SUP_A', name: 'Supplier A', amount: 1500, secondary: 300, rowCount: 1, directAmount: 1500, directCount: 1, mappedAmount: 0, mappedCount: 0 }),
+        party({ tin: 'SUP_B', name: 'Supplier B', amount: 750, rowCount: 2, directAmount: 400, directCount: 1, mappedAmount: 350, mappedCount: 1 }),
+        party({ tin: 'name:ATM', name: 'ATM', amount: 250, secondary: 250, rowCount: 1, directAmount: 250, directCount: 1, mappedAmount: 0, mappedCount: 0 }),
       ],
     }),
     inventory: {
@@ -111,8 +168,27 @@ function payload(): AuditStatement {
       ],
     },
     sales: row('sales', 'Sales', { total: 2500, totalKg: 80, secondary: 1800, secondaryLabel: 'real' }),
-    bankInflow: row('bankInflow', 'Bank inflow (payments from customers)', { total: 620 }),
+    bankInflow: row('bankInflow', 'Bank inflow (payments from customers)', {
+      total: 1049,
+      extras: [
+        { label: 'mapped from customers', amount: 900 },
+        { label: 'unmapped income', amount: 149 },
+      ],
+    }),
     cashInflow: row('cashInflow', 'Cash inflow (cash from customers)', { total: 80 }),
+    summary: {
+      purchases: 3700,
+      bankPaymentsToSuppliers: 1750,
+      possibleChecksNeeded: 1950,
+      withdrawals: 600,
+      withdrawalsToSuppliers: 350,
+      withdrawalsUnresolved: 250,
+      sales: 2500,
+      bankReceiptsFromCustomers: 900,
+      receivables: 400,
+      cashToReceiveFromCustomers: 1200,
+      cashToPaySuppliers: 1800,
+    },
     notes: ['No supplier is chosen — supplier-side figures are empty, not zero.'],
   }
 }
@@ -157,6 +233,9 @@ describe('StatementSection', () => {
     fireEvent.click(screen.getByRole('button', { name: /Purchases — open/ }))
     const dialog = screen.getByRole('dialog')
     expect(within(dialog).getByRole('tab', { name: /Suppliers \(2\)/ })).toBeInTheDocument()
+    expect(within(dialog).getByText('bank paid ₾')).toBeInTheDocument()
+    expect(within(dialog).getByText('unpaid after bank ₾')).toBeInTheDocument()
+    expect(within(dialog).getByText(/1600,00/)).toBeInTheDocument()
     fireEvent.click(within(dialog).getByLabelText('Choose Supplier A'))
     expect(saveMutate).not.toHaveBeenCalled()
     act(() => {
@@ -175,50 +254,8 @@ describe('StatementSection', () => {
 
   it('shows product groups, unfolds lines, and confirms a group change naming the product and its reach before saving', async () => {
     transactionsState.data = [
-      {
-        id: 'doc-0',
-        kind: 'DOCUMENT_LINE',
-        date: '2026-08-01',
-        direction: 'PURCHASE',
-        amount: 2000,
-        counterpartyTin: 'SUP_A',
-        counterpartyName: 'Supplier A',
-        productName: 'beef carcass',
-        category: 'BEEF',
-        quantityKg: 100,
-        unit: 'კგ',
-        waybillId: 'w-1',
-        description: null,
-        reference: null,
-        source: null,
-        sourceType: 'RS_GE',
-        sourceRowId: 'doc-0',
-        mappingStatus: 'UNMAPPED',
-        mappingSummary: null,
-        unresolvedAmount: null,
-      },
-      {
-        id: 'doc-1',
-        kind: 'DOCUMENT_LINE',
-        date: '2026-08-05',
-        direction: 'PURCHASE',
-        amount: 1100,
-        counterpartyTin: 'SUP_B',
-        counterpartyName: 'Supplier B',
-        productName: 'beef carcass',
-        category: 'BEEF',
-        quantityKg: 50,
-        unit: 'კგ',
-        waybillId: 'w-2',
-        description: null,
-        reference: null,
-        source: null,
-        sourceType: 'RS_GE',
-        sourceRowId: 'doc-1',
-        mappingStatus: 'UNMAPPED',
-        mappingSummary: null,
-        unresolvedAmount: null,
-      },
+      tx({ id: 'doc-0', kind: 'DOCUMENT_LINE', date: '2026-08-01', direction: 'PURCHASE', amount: 2000, counterpartyTin: 'SUP_A', counterpartyName: 'Supplier A', productName: 'beef carcass', category: 'BEEF', quantityKg: 100, unit: 'კგ', waybillId: 'w-1', sourceType: 'RS_GE', sourceRowId: 'doc-0', mappingStatus: 'UNMAPPED' }),
+      tx({ id: 'doc-1', kind: 'DOCUMENT_LINE', date: '2026-08-05', direction: 'PURCHASE', amount: 1100, counterpartyTin: 'SUP_B', counterpartyName: 'Supplier B', productName: 'beef carcass', category: 'BEEF', quantityKg: 50, unit: 'კგ', waybillId: 'w-2', sourceType: 'RS_GE', sourceRowId: 'doc-1', mappingStatus: 'UNMAPPED' }),
     ]
     render(<StatementSection />)
     fireEvent.click(screen.getByRole('button', { name: /Purchases — open/ }))
@@ -240,6 +277,63 @@ describe('StatementSection', () => {
       await Promise.resolve()
     })
     expect(setCategoryMutateAsync).toHaveBeenCalledWith({ productName: 'beef carcass', category: 'PORK' })
+  })
+
+  it('renders the summary lines under the table with every operand and the AR basis', () => {
+    render(<StatementSection />)
+    const summary = screen.getByTestId('statement-summary')
+    expect(within(summary).getByText(/possible checks needed/)).toBeInTheDocument()
+    expect(within(summary).getByText(/1950,00/)).toBeInTheDocument()
+    expect(within(summary).getByText(/withdrawals mapped to suppliers/)).toBeInTheDocument()
+    expect(within(summary).getByText(/\/payments total outstanding, as of now/)).toBeInTheDocument()
+    expect(within(summary).getAllByText(/1200,00/)).toHaveLength(2) // once as a result, once as an operand of the last line
+    expect(within(summary).getByText(/to be paid to suppliers as cash/)).toBeInTheDocument()
+    expect(within(summary).getByText(/1800,00/)).toBeInTheDocument()
+    // Bank inflow's note carries both figures.
+    const inflow = screen.getAllByRole('row').find((r) => r.getAttribute('data-row') === 'bankInflow') as HTMLElement
+    expect(within(inflow).getByText(/mapped from customers 900,00/)).toBeInTheDocument()
+    expect(within(inflow).getByText(/unmapped income 149,00/)).toBeInTheDocument()
+  })
+
+  it('cash outflow: direct vs mapped per party, withdrawals filter, "Mapped to" column and a Map… button that opens the editor', () => {
+    transactionsState.data = [
+      tx({
+        id: 'b5',
+        kind: 'BANK_ROW',
+        date: '2026-08-05',
+        direction: 'DEBIT',
+        amount: 600,
+        counterpartyTin: '500000001',
+        counterpartyName: 'ალექსანდრე თოფურიძე',
+        description: 'cash-out',
+        sourceType: 'BANK',
+        sourceRowId: 'b5',
+        mappingStatus: 'MANUALLY_MAPPED',
+        mappingSummary: 'Supplier real cash payment → Supplier B (350); Cash withdrawal — unresolved (250)',
+        mappedCounterparties: ['Supplier B'],
+        withdrawal: true,
+        attribution: 'MAPPED',
+        sourceRow: { sourceType: 'BANK', sourceRowId: 'b5' } as AuditSourceRow,
+      }),
+    ]
+    render(<StatementSection />)
+    fireEvent.click(screen.getByRole('button', { name: /Cash outflow — open/ }))
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByText('direct ₾')).toBeInTheDocument()
+    expect(within(dialog).getByText('mapped ₾')).toBeInTheDocument()
+    const bRow = within(dialog).getByText('Supplier B').closest('tr') as HTMLElement
+    expect(within(bRow).getByText(/400,00/)).toBeInTheDocument()
+    expect(within(bRow).getByText(/350,00/)).toBeInTheDocument()
+    expect(within(dialog).getByLabelText('Withdrawals only')).toBeInTheDocument()
+    expect(within(dialog).getByText(/withdrawals only \(600,00/)).toBeInTheDocument()
+
+    fireEvent.change(within(dialog).getByLabelText('Attribution filter'), { target: { value: 'MAPPED' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: /Supplier B/ }))
+    expect(within(dialog).getByText('Mapped to')).toBeInTheDocument()
+    expect(within(dialog).getByText('withdrawal')).toBeInTheDocument()
+    expect(within(dialog).getByText('mapped here')).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: /Map ალექსანდრე თოფურიძე/ }))
+    expect(screen.getByRole('dialog', { name: 'mapping-editor' })).toHaveTextContent('editing b5')
   })
 
   it('opens inventory levels with the LIFO supplier attribution', () => {

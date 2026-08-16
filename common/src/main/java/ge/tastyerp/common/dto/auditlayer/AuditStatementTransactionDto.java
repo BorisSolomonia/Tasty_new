@@ -51,4 +51,12 @@ public class AuditStatementTransactionDto {
     /** Human-readable "category · status → counterparty" of the slices, if any. */
     private String mappingSummary;
     private BigDecimal unresolvedAmount;
+    /** Counterparties the slices name (bank rows), for the "mapped to" column. */
+    private java.util.List<String> mappedCounterparties;
+    /** Any slice sits in a group flagged cashWithdrawal. */
+    private boolean withdrawal;
+    /** When narrowed to a party: DIRECT (its own row) or MAPPED (attributed by a slice); null otherwise. */
+    private String attribution;
+    /** The full source row for bank rows, so the mapping editor can open on it. */
+    private AuditSourceRowDto sourceRow;
 }
