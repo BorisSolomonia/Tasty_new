@@ -11,7 +11,7 @@
 import * as React from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { configApi } from '@/lib/api-client'
-import { useAuditOverview } from '@/hooks/use-audit-flows'
+import { useAuditStatement } from '@/hooks/use-audit-flows'
 import { useAudit } from './audit-context'
 
 export interface CounterpartyOption {
@@ -21,8 +21,8 @@ export interface CounterpartyOption {
 }
 
 export function useCounterpartyDirectory(): { options: CounterpartyOption[]; loading: boolean } {
-  const { filters } = useAudit()
-  const overview = useAuditOverview({ startDate: filters.startDate, endDate: filters.endDate })
+  const { filters, operator } = useAudit()
+  const statement = useAuditStatement({ startDate: filters.startDate, endDate: filters.endDate, operator: operator || undefined })
   const customers = useQuery({
     queryKey: ['config', 'customers'],
     queryFn: () => configApi.getCustomers(),
@@ -32,13 +32,16 @@ export function useCounterpartyDirectory(): { options: CounterpartyOption[]; loa
   const options = React.useMemo(() => {
     const out: CounterpartyOption[] = []
     const seen = new Set<string>()
-    for (const s of overview.data?.suppliers ?? []) {
-      const name = s.name ?? s.tin
-      if (!name) continue
-      const key = `s:${s.tin ?? name}`
+    const supplierParties = [
+      ...(statement.data?.purchases.parties ?? []),
+      ...(statement.data?.bankPaymentsToSuppliers.parties ?? []),
+    ]
+    for (const s of supplierParties) {
+      if (s.tin.startsWith('name:')) continue
+      const key = `s:${s.tin}`
       if (seen.has(key)) continue
       seen.add(key)
-      out.push({ tin: s.tin, name, kind: 'supplier' })
+      out.push({ tin: s.tin, name: s.name || s.tin, kind: 'supplier' })
     }
     for (const c of customers.data ?? []) {
       const name = c.customerName || c.identification
@@ -49,8 +52,8 @@ export function useCounterpartyDirectory(): { options: CounterpartyOption[]; loa
       out.push({ tin: c.identification || null, name, kind: 'customer' })
     }
     return out
-  }, [overview.data, customers.data])
-  return { options, loading: overview.isLoading || customers.isLoading }
+  }, [statement.data, customers.data])
+  return { options, loading: statement.isLoading || customers.isLoading }
 }
 
 /** The label shown in the datalist; parsed back by {@link parseOptionLabel}. */

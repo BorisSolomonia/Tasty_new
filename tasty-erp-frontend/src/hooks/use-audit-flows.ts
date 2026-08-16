@@ -26,6 +26,8 @@ import {
   auditLayerApi,
   type AuditCategory,
   type AuditSubgroup,
+  type StatementRowKey,
+  type StatementSelection,
   type AuditMapping,
   type AuditMappingRule,
   type AuditPeriodParams,
@@ -75,14 +77,66 @@ export function useAuditSourceRows(params: AuditSourceRowParams, enabled = true)
   })
 }
 
-/** BOR-92: the top strip. Keyed by period and the chosen supplier. */
-export function useAuditOverview(params: { startDate: string; endDate: string; supplierTin?: string }, enabled = true) {
+/** BOR-92 v2: the statement. Keyed by period and operator (whose saved selection defines "chosen"). */
+export function useAuditStatement(params: { startDate: string; endDate: string; operator?: string }, enabled = true) {
   return useQuery({
-    queryKey: [AUDIT_LAYER_KEY, 'overview', params.startDate, params.endDate, params.supplierTin ?? ''],
-    queryFn: () => auditLayerApi.getOverview(params),
+    queryKey: [AUDIT_LAYER_KEY, 'statement', params.startDate, params.endDate, params.operator ?? ''],
+    queryFn: () => auditLayerApi.getStatement(params),
     staleTime: STALE,
     retry: false,
     enabled,
+  })
+}
+
+export function useStatementTransactions(
+  params: { row: StatementRowKey; startDate: string; endDate: string; tin?: string; category?: string },
+  enabled = true
+) {
+  return useQuery({
+    queryKey: [
+      AUDIT_LAYER_KEY,
+      'statement-transactions',
+      params.row,
+      params.startDate,
+      params.endDate,
+      params.tin ?? '',
+      params.category ?? '',
+    ],
+    queryFn: () => auditLayerApi.getStatementTransactions(params),
+    staleTime: STALE,
+    retry: false,
+    enabled,
+  })
+}
+
+/** Saving the selection moves every "chosen" figure; nothing else changes. */
+export function useSaveStatementSelection(operator: string) {
+  const invalidate = useInvalidateAuditScopes()
+  return useMutation({
+    mutationFn: (selection: StatementSelection) => auditLayerApi.saveStatementSelection(selection, operator),
+    onSuccess: () => invalidate(['statement']),
+  })
+}
+
+/**
+ * A product's group is a shared rule (one category per product name, both
+ * pages). It moves the statement, the flows and the drill-downs.
+ */
+export function useSetProductCategory(operator: string) {
+  const invalidate = useInvalidateAuditScopes()
+  return useMutation({
+    mutationFn: (input: { productName: string; category: string }) =>
+      auditLayerApi.setProductCategory(input.productName, input.category, operator),
+    onSuccess: () => invalidate(['statement', 'flows', 'source-rows', 'drilldown']),
+  })
+}
+
+export function useProductCategoryCodes() {
+  return useQuery({
+    queryKey: [AUDIT_LAYER_KEY, 'product-category-codes'],
+    queryFn: () => auditLayerApi.getProductCategoryCodes(),
+    staleTime: 1000 * 60 * 60,
+    retry: 1,
   })
 }
 
@@ -100,7 +154,7 @@ export function useCreateSubgroup(operator: string) {
   const invalidate = useInvalidateAuditScopes()
   return useMutation({
     mutationFn: (subgroup: AuditSubgroup) => auditLayerApi.createSubgroup(subgroup, operator),
-    onSuccess: () => invalidate(['subgroups', 'overview']),
+    onSuccess: () => invalidate(['subgroups', 'statement']),
   })
 }
 
@@ -108,7 +162,7 @@ export function useDeleteSubgroup(operator: string) {
   const invalidate = useInvalidateAuditScopes()
   return useMutation({
     mutationFn: (code: string) => auditLayerApi.deleteSubgroup(code, operator),
-    onSuccess: () => invalidate(['subgroups', 'overview']),
+    onSuccess: () => invalidate(['subgroups', 'statement']),
   })
 }
 
@@ -264,7 +318,7 @@ export type AuditScope =
   | 'source-rows'
   | 'categories'
   | 'subgroups'
-  | 'overview'
+  | 'statement'
   | 'drilldown'
   | 'mapping-rules'
   | 'mapping-rule-preview'
@@ -280,7 +334,7 @@ export const MAPPING_SCOPES: readonly AuditScope[] = [
   'drilldown',
   'mapping-history',
   'mapping-rule-preview',
-  'overview',
+  'statement',
 ]
 
 /**
@@ -374,7 +428,7 @@ export function useSaveRealInventory(operator: string) {
   return useMutation({
     mutationFn: (override: RealInventoryOverride) =>
       auditLayerApi.saveRealInventory(override, operator),
-    onSuccess: () => invalidate(['real-inventory', 'flows', 'overview']),
+    onSuccess: () => invalidate(['real-inventory', 'flows', 'statement']),
   })
 }
 
@@ -390,7 +444,7 @@ export function useSaveCheckEvidence(operator: string) {
   const invalidate = useInvalidateAuditScopes()
   return useMutation({
     mutationFn: (evidence: CheckEvidence) => auditLayerApi.saveCheckEvidence(evidence, operator),
-    onSuccess: () => invalidate(['check-evidence', 'flows', 'drilldown', 'overview']),
+    onSuccess: () => invalidate(['check-evidence', 'flows', 'drilldown', 'statement']),
   })
 }
 

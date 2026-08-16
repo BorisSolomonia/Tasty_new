@@ -134,7 +134,10 @@ public class AuditConfigClient {
                     .getForObject(configServiceUrl + "/api/config/product-categories", Map.class);
             if (response != null && response.get("data") instanceof List) {
                 for (Map<String, Object> row : (List<Map<String, Object>>) response.get("data")) {
-                    Object name = row.get("productName");
+                    // config-service serialises ProductCategoryDto as {name, category};
+                    // reading "productName" here left every audit-layer override
+                    // silently unapplied (BOR-92 v2). Accept both spellings.
+                    Object name = row.get("name") != null ? row.get("name") : row.get("productName");
                     Object category = row.get("category");
                     if (name != null && category != null) {
                         overrides.put(String.valueOf(name).trim().toLowerCase(),

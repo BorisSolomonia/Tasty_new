@@ -71,7 +71,7 @@ import { ProblemsPanel } from '@/components/audit/problems-panel'
 import { RulesPanel } from '@/components/audit/rules-panel'
 import { CategoryManager } from '@/components/audit/category-manager'
 import { SubgroupManager } from '@/components/audit/subgroup-manager'
-import { OverviewStrip } from '@/components/audit/overview/overview-strip'
+import { StatementSection } from '@/components/audit/statement/statement-section'
 import { AUDIT_SECTIONS, PageSection } from '@/components/audit/section-nav'
 import { CashSection } from '@/components/audit/sections/cash-section'
 import { InventorySection } from '@/components/audit/sections/inventory-section'
@@ -178,8 +178,8 @@ function AuditWorkspace() {
       <DataWarnings warnings={flows?.dataWarnings} error={flowsQuery.error} />
       <FeedCapNotice />
 
-      {/* BOR-92: purchases | bank payments to suppliers | cash outflow | sales, each total | chosen */}
-      <OverviewStrip />
+      {/* BOR-92 v2: the statement — purchases → bank to suppliers → cash outflow → inventory → sales → inflows, each total | chosen */}
+      <StatementSection />
 
       <ThreeFlowStrip />
 

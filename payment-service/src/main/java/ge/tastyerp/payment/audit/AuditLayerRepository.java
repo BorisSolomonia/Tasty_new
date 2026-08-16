@@ -13,6 +13,7 @@ import ge.tastyerp.common.dto.auditlayer.MappingRuleCriterion;
 import ge.tastyerp.common.dto.auditlayer.AuditMappingSplitDto;
 import ge.tastyerp.common.dto.auditlayer.AuditMappingStatus;
 import ge.tastyerp.common.dto.auditlayer.AuditSourceType;
+import ge.tastyerp.common.dto.auditlayer.AuditStatementDto;
 import ge.tastyerp.common.dto.auditlayer.AuditSubgroupDto;
 import ge.tastyerp.common.dto.auditlayer.CheckEvidenceDto;
 import ge.tastyerp.common.dto.auditlayer.CounterpartyAliasDto;
@@ -65,6 +66,7 @@ public class AuditLayerRepository {
     static final String COLLECTION_COUNTERPARTY_ALIAS = "audit_counterparty_alias";
     static final String COLLECTION_MAPPING_RULES = "audit_mapping_rules";
     static final String COLLECTION_SUBGROUPS = "audit_subgroups";
+    static final String COLLECTION_STATEMENT_SELECTION = "audit_statement_selection";
 
     /** Firestore hard limit on operations per WriteBatch. */
     private static final int FIRESTORE_BATCH_LIMIT = 500;
@@ -302,6 +304,37 @@ public class AuditLayerRepository {
     public void deleteSubgroup(String code) {
         delete(COLLECTION_SUBGROUPS, code);
         invalidateReadCaches();
+    }
+
+    // ==================== statement selection (chosen counterparties) ====================
+
+    /** The chosen supplier / customer TINs saved for one operator; empty lists when nothing was saved. */
+    public AuditStatementDto.Selection findStatementSelection(String operator) {
+        DocumentSnapshot doc = FutureResults.await(
+                firestore.collection(COLLECTION_STATEMENT_SELECTION).document(operator).get(),
+                "load statement selection");
+        return AuditStatementDto.Selection.builder()
+                .suppliers(stringList(doc.exists() ? doc.get("suppliers") : null))
+                .customers(stringList(doc.exists() ? doc.get("customers") : null))
+                .build();
+    }
+
+    public void saveStatementSelection(String operator, AuditStatementDto.Selection selection) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("suppliers", selection.getSuppliers() == null ? List.of() : new ArrayList<>(selection.getSuppliers()));
+        data.put("customers", selection.getCustomers() == null ? List.of() : new ArrayList<>(selection.getCustomers()));
+        data.put("updatedAt", java.time.LocalDateTime.now().toString());
+        write(COLLECTION_STATEMENT_SELECTION, operator, data);
+    }
+
+    private static List<String> stringList(Object raw) {
+        List<String> out = new ArrayList<>();
+        if (raw instanceof List<?> list) {
+            for (Object o : list) {
+                if (o != null && !String.valueOf(o).isBlank()) out.add(String.valueOf(o));
+            }
+        }
+        return out;
     }
 
     // ==================== mapping rules ====================

@@ -102,99 +102,129 @@ export interface AuditSubgroup {
 export const SUBGROUP_NONE = 'NONE'
 
 // ---------------------------------------------------------------------------
-// AuditOverviewDto (BOR-92 top strip)
+// AuditStatementDto (BOR-92 v2: the statement at the top of /audit)
 // ---------------------------------------------------------------------------
 
-export interface OverviewCounterparty {
-  tin: string | null
-  name: string | null
-  purchases: number | null
-  bankPayments: number | null
-  paperOutflow: number | null
-  quantityKg: number | null
-  rowCount: number
+export type StatementRowKey =
+  | 'purchases'
+  | 'bankPaymentsToSuppliers'
+  | 'cashOutflow'
+  | 'sales'
+  | 'bankInflow'
+  | 'cashInflow'
+
+export interface StatementSelection {
+  suppliers: string[]
+  customers: string[]
 }
 
-export interface OverviewCategoryAmount {
+export interface StatementParty {
+  /** TIN, or `name:<label>` for a counterparty the source gave no TIN for (never choosable). */
+  tin: string
+  name: string
+  amount: number | null
+  quantityKg: number | null
+  /** Row-specific: unmapped GEL for cash outflow. */
+  secondary: number | null
+  rowCount: number
+  chosen: boolean
+  unreal: boolean
+  identityBasis: string | null
+}
+
+export interface StatementProductGroup {
   category: string
   amount: number | null
   quantityKg: number | null
   chosenAmount: number | null
-  chosenQuantityKg: number | null
+  chosenKg: number | null
   rowCount: number
+  productCount: number
 }
 
-/** group → subgroup → counterparty; `children` on group/subgroup nodes, `tin` on counterparty nodes. */
-export interface OverviewBucket {
-  code: string
-  label: string
-  amount: number | null
+export interface StatementRow {
+  key: StatementRowKey
+  title: string
+  definition: string
+  chosenBy: 'SUPPLIERS' | 'CUSTOMERS'
+  total: number | null
+  totalKg: number | null
+  chosen: number | null
+  chosenKg: number | null
+  secondary: number | null
+  secondaryLabel: string | null
   rowCount: number
-  children: OverviewBucket[] | null
-  tin: string | null
+  parties: StatementParty[]
+  products: StatementProductGroup[] | null
 }
 
-export interface OverviewSupplierKg {
+export interface StatementSupplierKg {
   tin: string | null
   name: string | null
   quantityKg: number | null
   lastPurchaseDate: string | null
 }
 
-export interface OverviewInventoryCategory {
+export interface StatementLevel {
   category: string
   purchasedKg: number | null
+  purchasedAmount: number | null
   writeOffPercent: number | null
   writeOffKg: number | null
   soldKg: number | null
+  soldAmount: number | null
   netKg: number | null
-  stockBySupplier: OverviewSupplierKg[]
+  avgPurchasePricePerKg: number | null
+  value: number | null
+  stockBySupplier: StatementSupplierKg[]
 }
 
-export interface AuditOverview {
+export interface StatementInventoryRow {
+  key: 'inventory'
+  title: string
+  definition: string
+  totalKg: number | null
+  totalValue: number | null
+  unpricedCategories: string[]
+  levels: StatementLevel[]
+}
+
+export interface AuditStatement {
   startDate: string
   endDate: string
-  supplierTin: string | null
-  supplierName: string | null
-  suppliers: OverviewCounterparty[]
-  purchases: {
-    total: number | null
-    totalKg: number | null
-    chosen: number | null
-    chosenKg: number | null
-    byCategory: OverviewCategoryAmount[]
-    bySupplier: OverviewCounterparty[]
-  }
-  bankPaymentsToSuppliers: {
-    total: number | null
-    toChosen: number | null
-    bySupplier: OverviewCounterparty[]
-  }
-  cashOutflow: {
-    total: number | null
-    unmapped: number | null
-    mapped: number | null
-    toChosen: number | null
-    groups: OverviewBucket[]
-    paperGroups: OverviewBucket[]
-    paperTotal: number | null
-    debitRowCount: number
-    unmappedRowCount: number
-  }
-  sales: {
-    total: number | null
-    totalKg: number | null
-    unreal: number | null
-    real: number | null
-    unrealMapped: number | null
-    unrealUnmapped: number | null
-    byCategory: OverviewCategoryAmount[]
-    unrealCustomers: OverviewCounterparty[]
-    unrealRowCount: number
-  }
-  inventory: { byCategory: OverviewInventoryCategory[]; netKgTotal: number | null }
-  subgroups: AuditSubgroup[]
+  operator: string | null
+  selection: StatementSelection
+  purchases: StatementRow
+  bankPaymentsToSuppliers: StatementRow
+  cashOutflow: StatementRow
+  inventory: StatementInventoryRow
+  sales: StatementRow
+  bankInflow: StatementRow
+  cashInflow: StatementRow
   notes: string[]
+}
+
+export interface StatementTransaction {
+  id: string
+  kind: 'DOCUMENT_LINE' | 'BANK_ROW' | 'PAYMENT' | 'CASH_PAYMENT'
+  date: string | null
+  direction: string | null
+  amount: number | null
+  counterpartyTin: string | null
+  counterpartyName: string | null
+  productName: string | null
+  category: string | null
+  quantityKg: number | null
+  unit: string | null
+  waybillId: string | null
+  description: string | null
+  reference: string | null
+  source: string | null
+  sourceType: AuditSourceType | null
+  sourceRowId: string | null
+  mappingStatus: AuditMappingStatus | null
+  mappingSummary: string | null
+  unresolvedAmount: number | null
 }
 
 // ---------------------------------------------------------------------------
@@ -645,7 +675,7 @@ export const auditLayerApi = {
     })
   },
 
-  // ---- BOR-92: level-2 subgroups and the top-strip overview ----
+  // ---- BOR-92: level-2 subgroups and the statement ----
 
   getSubgroups: async () => {
     const response = await fetchWithAuth(`${BASE}/subgroups`)
@@ -668,9 +698,43 @@ export const auditLayerApi = {
     })
   },
 
-  getOverview: async (params: { startDate: string; endDate: string; supplierTin?: string }) => {
-    const response = await fetchWithAuth(`${BASE}/overview`, { params: { ...params } })
-    return jsonData<AuditOverview>(response)
+  getStatement: async (params: { startDate: string; endDate: string; operator?: string }) => {
+    const response = await fetchWithAuth(`${BASE}/statement`, { params: { ...params } })
+    return jsonData<AuditStatement>(response)
+  },
+
+  getStatementTransactions: async (params: {
+    row: StatementRowKey
+    startDate: string
+    endDate: string
+    tin?: string
+    category?: string
+    limit?: number
+  }) => {
+    const response = await fetchWithAuth(`${BASE}/statement/transactions`, { params: { ...params } })
+    return jsonData<StatementTransaction[]>(response)
+  },
+
+  saveStatementSelection: async (selection: StatementSelection, operator: string) => {
+    const response = await fetchWithAuth(`${BASE}/statement/selection`, {
+      method: 'PUT',
+      params: { operator },
+      body: JSON.stringify(selection),
+    })
+    return jsonData<StatementSelection>(response)
+  },
+
+  /** Sets a product's group in the shared store /audit-control and /product-categories use. Applies everywhere, not to one row. */
+  setProductCategory: async (productName: string, category: string, operator: string) => {
+    await fetchWithAuth(`${BASE}/product-categories`, {
+      method: 'PUT',
+      params: { productName, category, operator },
+    })
+  },
+
+  getProductCategoryCodes: async () => {
+    const response = await fetchWithAuth(`${BASE}/product-categories`)
+    return jsonData<string[]>(response)
   },
 
   /** Creates or updates the mapping for one immutable source row. */

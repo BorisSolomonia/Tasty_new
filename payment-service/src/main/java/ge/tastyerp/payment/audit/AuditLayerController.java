@@ -11,7 +11,8 @@ import ge.tastyerp.common.dto.auditlayer.AuditMappingStatus;
 import ge.tastyerp.common.dto.auditlayer.AuditSourceRowPageDto;
 import ge.tastyerp.common.dto.auditlayer.AuditSourceType;
 import ge.tastyerp.common.dto.auditlayer.AuditSubgroupDto;
-import ge.tastyerp.common.dto.auditlayer.AuditOverviewDto;
+import ge.tastyerp.common.dto.auditlayer.AuditStatementDto;
+import ge.tastyerp.common.dto.auditlayer.AuditStatementTransactionDto;
 import ge.tastyerp.common.dto.auditlayer.CheckEvidenceDto;
 import ge.tastyerp.common.dto.auditlayer.CounterpartyAliasDto;
 import ge.tastyerp.common.dto.auditlayer.RealInventoryOverrideDto;
@@ -53,18 +54,45 @@ public class AuditLayerController {
     private final AuditSuggestionEngine suggestionEngine;
     private final AuditMappingRuleService mappingRuleService;
     private final AuditConfigClient configClient;
-    private final AuditOverviewService overviewService;
+    private final AuditStatementService statementService;
 
     // ==================== canonical payload ====================
 
-    @GetMapping("/overview")
-    @Operation(summary = "Top strip: purchases, bank payments to suppliers, cash outflow, sales — total vs chosen supplier, with drill-down trees")
-    public ResponseEntity<ApiResponse<AuditOverviewDto>> getOverview(
+    @GetMapping("/statement")
+    @Operation(summary = "The statement: purchases → bank payments to suppliers → cash outflow → inventory → sales → bank inflow → cash inflow, each total | chosen")
+    public ResponseEntity<ApiResponse<AuditStatementDto>> getStatement(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
-            @RequestParam(required = false) String supplierTin) {
+            @RequestParam(required = false) String operator) {
         return ResponseEntity.ok(ApiResponse.success(
-                overviewService.overview(startDate, endDate, supplierTin)));
+                statementService.statement(startDate, endDate, operator)));
+    }
+
+    @GetMapping("/statement/transactions")
+    @Operation(summary = "The transactions behind one statement figure, optionally narrowed to a counterparty (tin) or product group (category)")
+    public ResponseEntity<ApiResponse<List<AuditStatementTransactionDto>>> getStatementTransactions(
+            @RequestParam String row,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) String tin,
+            @RequestParam(required = false) String category,
+            @RequestParam(defaultValue = "0") int limit) {
+        return ResponseEntity.ok(ApiResponse.success(
+                statementService.transactions(row, startDate, endDate, tin, category, limit)));
+    }
+
+    @GetMapping("/statement/selection")
+    @Operation(summary = "The chosen suppliers / customers saved for an operator")
+    public ResponseEntity<ApiResponse<AuditStatementDto.Selection>> getStatementSelection(@RequestParam String operator) {
+        return ResponseEntity.ok(ApiResponse.success(statementService.getSelection(operator)));
+    }
+
+    @PutMapping("/statement/selection")
+    @Operation(summary = "Save the chosen suppliers / customers for an operator (replaces the whole selection)")
+    public ResponseEntity<ApiResponse<AuditStatementDto.Selection>> saveStatementSelection(
+            @RequestParam String operator,
+            @RequestBody AuditStatementDto.Selection selection) {
+        return ResponseEntity.ok(ApiResponse.success(statementService.saveSelection(operator, selection), "Selection saved"));
     }
 
     @GetMapping("/flows")

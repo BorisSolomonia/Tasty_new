@@ -107,7 +107,7 @@ describe('mutation invalidation scope (FE-2)', () => {
     expect(invalidatedScopes(spy)).toEqual([`${AUDIT_LAYER_KEY}/categories`])
   })
 
-  it('saving real inventory invalidates real-inventory, flows and the overview strip', async () => {
+  it('saving real inventory invalidates real-inventory, flows and the statement', async () => {
     const client = newClient()
     const spy = vi.spyOn(client, 'invalidateQueries')
     const { result } = renderHook(() => useSaveRealInventory('boris'), { wrapper: wrapperFor(client) })
@@ -117,8 +117,8 @@ describe('mutation invalidation scope (FE-2)', () => {
     await waitFor(() => expect(spy).toHaveBeenCalled())
     expect(invalidatedScopes(spy).sort()).toEqual([
       `${AUDIT_LAYER_KEY}/flows`,
-      `${AUDIT_LAYER_KEY}/overview`,
       `${AUDIT_LAYER_KEY}/real-inventory`,
+      `${AUDIT_LAYER_KEY}/statement`,
     ])
   })
 })
