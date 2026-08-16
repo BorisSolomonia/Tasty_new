@@ -82,7 +82,16 @@
       "Bash(gcloud auth *)",
       "Bash(gcloud config *)",
       "Bash(gcloud firestore *)",
-      "Bash(gcloud compute *)"
+      "Bash(gcloud compute *)",
+      "Bash(echo \"exit=$?\")",
+      "mcp__linear__list_issues",
+      "Bash(bash /c/Users/Admin/AppData/Local/Temp/claude/C--Users-Boris-Dell-Projects-APPS-ERP-Tasty-erp-new/5f3b3c79-72eb-4582-b336-f066f6936645/scratchpad/watch.sh)",
+      "Bash(git remote *)",
+      "Read(//c/Users/Admin/.config/**)",
+      "Bash(bash /c/Users/Admin/AppData/Local/Temp/claude/C--Users-Boris-Dell-Projects-APPS-ERP-Tasty-erp-new/5f3b3c79-72eb-4582-b336-f066f6936645/scratchpad/probe.sh)",
+      "Bash(bash /c/Users/Admin/AppData/Local/Temp/claude/C--Users-Boris-Dell-Projects-APPS-ERP-Tasty-erp-new/5f3b3c79-72eb-4582-b336-f066f6936645/scratchpad/watch2.sh)",
+      "Bash(PYTHONIOENCODING=utf-8 python - C:/Users/Admin/AppData/Local/Temp/claude/C--Users-Boris-Dell-Projects-APPS-ERP-Tasty-erp-new/5f3b3c79-72eb-4582-b336-f066f6936645/scratchpad/ov.json)",
+      "Bash(PYTHONIOENCODING=utf-8 python - C:/Users/Admin/AppData/Local/Temp/claude/C--Users-Boris-Dell-Projects-APPS-ERP-Tasty-erp-new/5f3b3c79-72eb-4582-b336-f066f6936645/scratchpad/ov.json C:/Users/Admin/AppData/Local/Temp/claude/C--Users-Boris-Dell-Projects-APPS-ERP-Tasty-erp-new/5f3b3c79-72eb-4582-b336-f066f6936645/scratchpad/ov2.json)"
     ]
   }
 }
