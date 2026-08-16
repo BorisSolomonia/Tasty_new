@@ -140,7 +140,9 @@ public class AuditStatementService {
                 movements,
                 sourceRowService.toDocumentRows(movements, mappings),
                 sourceRowService.loadBankRows(startDate, endDate, mappings),
-                paymentRepository.findBankPayments(null, startDate, endDate, null),
+                // Bank inflow reads the statement's own CREDIT rows (v3); the /payments import is
+                // not needed for any figure, and reading it cost seconds over a multi-year period.
+                List.of(),
                 paymentRepository.findManualPayments(null, startDate, endDate, null),
                 mappingService.categoriesByCode(),
                 mappingService.subgroupsByCode(),
