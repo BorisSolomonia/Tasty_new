@@ -1,6 +1,7 @@
 package ge.tastyerp.payment.audit;
 
 import ge.tastyerp.common.dto.audit.ProductMovementDto;
+import ge.tastyerp.common.dto.auditlayer.AuditBulkMapRequestDto;
 import ge.tastyerp.common.dto.auditlayer.AuditCategoryDto;
 import ge.tastyerp.common.dto.auditlayer.AuditMappingDto;
 import ge.tastyerp.common.dto.auditlayer.AuditMappingSplitDto;
@@ -98,15 +99,30 @@ public class AuditStatementService {
         Set<String> cus = new LinkedHashSet<>();
         if (s != null) {
             for (String t : s.getSuppliers() == null ? List.<String>of() : s.getSuppliers()) {
-                String c = canonical(t);
+                String c = selectionKey(t);
                 if (c != null) sup.add(c);
             }
             for (String t : s.getCustomers() == null ? List.<String>of() : s.getCustomers()) {
-                String c = canonical(t);
+                String c = selectionKey(t);
                 if (c != null) cus.add(c);
             }
         }
         return Selection.builder().suppliers(new ArrayList<>(sup)).customers(new ArrayList<>(cus)).build();
+    }
+
+    /**
+     * A selection entry is a canonical TIN, or {@code name:<label>} for a bank
+     * counterparty the statement never identified (ATM lines, card fees) — those
+     * are choosable too, by the exact label the statement printed.
+     */
+    static String selectionKey(String raw) {
+        if (raw == null) return null;
+        String t = raw.trim();
+        if (t.startsWith("name:")) {
+            String label = t.substring(5).trim();
+            return label.isEmpty() ? null : "name:" + label;
+        }
+        return canonical(t);
     }
 
     // ==================== statement ====================
@@ -223,7 +239,7 @@ public class AuditStatementService {
         // ---------------- bank rows: debits (outflow, supplier payments, withdrawals) and credits (inflow) ----------------
         Money outflow = new Money(), toSuppliers = new Money(), bankIn = new Money();
         BigDecimal unmapped = BigDecimal.ZERO;
-        BigDecimal withdrawals = BigDecimal.ZERO, withdrawalsToSuppliers = BigDecimal.ZERO, withdrawalsUnresolved = BigDecimal.ZERO;
+        BigDecimal withdrawals = BigDecimal.ZERO, withdrawalsToSuppliers = BigDecimal.ZERO, withdrawalsUnresolved = BigDecimal.ZERO, withdrawalsUndocumented = BigDecimal.ZERO;
         BigDecimal customerReceipts = BigDecimal.ZERO, unmappedIncome = BigDecimal.ZERO;
         Map<String, PartyAcc> outflowParties = new LinkedHashMap<>();
         Map<String, PartyAcc> supplierPayees = new LinkedHashMap<>();
@@ -248,7 +264,7 @@ public class AuditStatementService {
             op.identityBasis = firstNonBlank(op.identityBasis, row.getCounterpartyIdentityBasis());
             op.rows++;
             op.directCount++;
-            boolean rowChosen = rowTin != null && chosenSet.contains(rowTin);
+            boolean rowChosen = chosenSet.contains(rowKey);   // TIN, or name:<label> for unidentified rows
             total.rows++;
             total.addAmount(unresolved, rowChosen);
             op.amount = op.amount.add(unresolved);
@@ -259,7 +275,7 @@ public class AuditStatementService {
             for (AuditMappingSplitDto sp : splits) {
                 BigDecimal v = nz(sp.getAmount());
                 String cp = canonical(firstNonBlank(sp.getCounterpartyTin(), rowTin));
-                boolean chosen = cp != null && chosenSet.contains(cp);
+                boolean chosen = cp != null ? chosenSet.contains(cp) : chosenSet.contains(rowKey);
                 total.addAmount(v, chosen);
                 AuditCategoryDto c = in.categories().get(sp.getCategoryCode());
                 if (cp != null && !cp.equals(rowTin)) {
@@ -291,7 +307,8 @@ public class AuditStatementService {
                     if (c != null && c.isCashWithdrawal()) {
                         withdrawals = withdrawals.add(v);
                         if (c.isSupplierSettlement()) withdrawalsToSuppliers = withdrawalsToSuppliers.add(v);
-                        if (c.isUnresolved()) withdrawalsUnresolved = withdrawalsUnresolved.add(v);
+                        else if (c.isUnresolved()) withdrawalsUnresolved = withdrawalsUnresolved.add(v);
+                        else withdrawalsUndocumented = withdrawalsUndocumented.add(v);
                     }
                 } else if (c != null && c.isCustomerReceipt()) {
                     customerReceipts = customerReceipts.add(v);
@@ -398,9 +415,32 @@ public class AuditStatementService {
                         .rowCount(cashIn.rows)
                         .parties(parties(cashPayers, chosenCustomers, nameOf, false)).build())
                 .summary(summary(pur.amount, toSuppliers.amount, withdrawals, withdrawalsToSuppliers, withdrawalsUnresolved,
-                        sale.amount, customerReceipts, in.receivables()))
+                        withdrawalsUndocumented, sale.amount, customerReceipts, in.receivables()))
                 .notes(notes)
                 .build();
+    }
+
+    // ==================== bulk map ====================
+
+    /** Maps the listed bank rows of the period in one write. See {@link AuditMappingService#bulkMap}. */
+    public AuditBulkMapRequestDto.Result bulkMap(AuditBulkMapRequestDto req, String operator) {
+        if (req.getSourceRowIds() == null || req.getSourceRowIds().isEmpty()) {
+            throw new ValidationException("sourceRowIds", "Choose at least one transaction");
+        }
+        if (req.getStartDate() == null || req.getEndDate() == null) {
+            throw new ValidationException("startDate", "The period is required to find the rows");
+        }
+        Map<String, AuditMappingDto> mappings = mappingService.loadMappingIndex();
+        List<AuditSourceRowDto> bankRows = sourceRowService.loadBankRows(req.getStartDate(), req.getEndDate(), mappings);
+        Set<String> wanted = new HashSet<>(req.getSourceRowIds());
+        List<AuditSourceRowDto> rows = new ArrayList<>();
+        for (AuditSourceRowDto r : bankRows) {
+            if (wanted.contains(r.getSourceRowId())) rows.add(r);
+        }
+        int notFound = wanted.size() - rows.size();
+        AuditBulkMapRequestDto.Result result = mappingService.bulkMap(rows, req, operator);
+        result.setSkipped(result.getSkipped() + notFound);
+        return result;
     }
 
     // ==================== transactions ====================
@@ -585,16 +625,19 @@ public class AuditStatementService {
     }
 
     static Summary summary(BigDecimal purchases, BigDecimal bankToSuppliers, BigDecimal withdrawals, BigDecimal withdrawalsToSuppliers,
-                           BigDecimal withdrawalsUnresolved, BigDecimal sales, BigDecimal customerReceipts, BigDecimal receivables) {
+                           BigDecimal withdrawalsUnresolved, BigDecimal withdrawalsUndocumented,
+                           BigDecimal sales, BigDecimal customerReceipts, BigDecimal receivables) {
         BigDecimal cashToReceive = receivables == null ? null : sales.subtract(customerReceipts).subtract(receivables);
         return Summary.builder()
                 .purchases(money(purchases)).bankPaymentsToSuppliers(money(bankToSuppliers))
                 .possibleChecksNeeded(money(purchases.subtract(bankToSuppliers)))
-                .withdrawals(money(withdrawals)).withdrawalsToSuppliers(money(withdrawalsToSuppliers)).withdrawalsUnresolved(money(withdrawalsUnresolved))
+                .withdrawals(money(withdrawals)).withdrawalsToSuppliers(money(withdrawalsToSuppliers))
+                .withdrawalsUnresolved(money(withdrawalsUnresolved)).withdrawalsUndocumented(money(withdrawalsUndocumented))
                 .sales(money(sales)).bankReceiptsFromCustomers(money(customerReceipts))
                 .receivables(money(receivables))
                 .cashToReceiveFromCustomers(money(cashToReceive))
-                .cashToPaySuppliers(cashToReceive == null ? null : money(withdrawals.add(cashToReceive)))
+                // Cash that went elsewhere, documented as such, cannot reach a supplier.
+                .cashToPaySuppliers(cashToReceive == null ? null : money(withdrawals.subtract(withdrawalsUndocumented).add(cashToReceive)))
                 .build();
     }
 
@@ -648,7 +691,7 @@ public class AuditStatementService {
                     .mappedAmount(a.directCount > 0 || a.mappedCount > 0 ? money(a.mapped) : null).mappedCount(a.mappedCount)
                     .bankPaid(purchases ? money(a.bankPaid) : null)
                     .unpaidAfterBank(purchases ? money(a.amount.subtract(a.bankPaid)) : null)
-                    .rowCount(a.rows).chosen(tin != null && chosen.contains(tin)).unreal(a.unreal)
+                    .rowCount(a.rows).chosen(chosen.contains(tin != null ? tin : e.getKey())).unreal(a.unreal)
                     .identityBasis(a.identityBasis)
                     .build());
         }

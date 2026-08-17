@@ -217,6 +217,84 @@ public class AuditMappingService {
     }
 
     /**
+     * Maps an explicit set of rows in one batch (BOR-92 v4). Each row gets one
+     * split of the requested group / document status / counterparty. Default:
+     * the split covers only the row's unmapped remainder and rows with nothing
+     * left are skipped — a decision already on the row is kept. {@code replace}
+     * drops the row's splits and covers the whole amount.
+     *
+     * <p>Not a rule: nothing is generalised, only the listed rows change, and
+     * every row is logged as a manual mapping.</p>
+     */
+    public ge.tastyerp.common.dto.auditlayer.AuditBulkMapRequestDto.Result bulkMap(
+            List<AuditSourceRowDto> rows,
+            ge.tastyerp.common.dto.auditlayer.AuditBulkMapRequestDto req,
+            String operator) {
+        requireOperator(operator);
+        if (req.getCategoryCode() == null || req.getCategoryCode().isBlank()) {
+            throw new ValidationException("categoryCode", "A group is required");
+        }
+        if (!categoriesByCode().containsKey(req.getCategoryCode())) {
+            throw new ValidationException("categoryCode", "Unknown category '" + req.getCategoryCode() + "'");
+        }
+        if (req.getSubgroupCode() != null && !req.getSubgroupCode().isBlank()
+                && !subgroupsByCode().containsKey(req.getSubgroupCode())) {
+            throw new ValidationException("subgroupCode", "Unknown subgroup '" + req.getSubgroupCode() + "'");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        List<AuditMappingDto> toWrite = new ArrayList<>();
+        List<AuditChangeLogDto> logs = new ArrayList<>();
+        BigDecimal amount = BigDecimal.ZERO;
+        int skipped = 0;
+        for (AuditSourceRowDto row : rows) {
+            BigDecimal sourceAmount = abs(row.getAmount());
+            if (sourceAmount == null) { skipped++; continue; }
+            AuditMappingDto existing = row.getMapping();
+            List<AuditMappingSplitDto> kept = req.isReplace() ? new ArrayList<>() : new ArrayList<>(effectiveSplits(existing));
+            BigDecimal covered = splitTotal(kept).min(sourceAmount);
+            BigDecimal portion = sourceAmount.subtract(covered);
+            if (portion.compareTo(EPSILON) <= 0) { skipped++; continue; }
+            kept.add(AuditMappingSplitDto.builder()
+                    .categoryCode(req.getCategoryCode())
+                    .subgroupCode(req.getSubgroupCode() == null || req.getSubgroupCode().isBlank() ? null : req.getSubgroupCode())
+                    .counterpartyTin(req.getCounterpartyTin())
+                    .counterpartyName(req.getCounterpartyName())
+                    .amount(portion)
+                    .note(req.getNote())
+                    .build());
+            validateSplits(kept, sourceAmount);
+            String id = AuditLayerRepository.mappingId(row.getSourceType(), row.getSourceRowId());
+            AuditMappingDto saved = AuditMappingDto.builder()
+                    .id(id)
+                    .sourceType(row.getSourceType())
+                    .sourceRowId(row.getSourceRowId())
+                    .sourceAmount(sourceAmount)
+                    .status(AuditMappingStatus.MANUALLY_MAPPED)
+                    .splits(kept)
+                    .linkedSourceRows(existing == null || existing.getLinkedSourceRows() == null
+                            ? new ArrayList<>() : new ArrayList<>(existing.getLinkedSourceRows()))
+                    .note(req.getNote())
+                    .createdBy(existing == null ? operator : existing.getCreatedBy())
+                    .updatedBy(operator)
+                    .createdAt(existing == null ? now : existing.getCreatedAt())
+                    .updatedAt(now)
+                    .build();
+            toWrite.add(saved);
+            logs.add(AuditChangeLogDto.builder()
+                    .entityType("MAPPING").entityId(id).field("splits")
+                    .oldValue(existing == null ? null : describe(existing))
+                    .newValue("BULK " + (req.isReplace() ? "replace" : "fill") + " -> " + describe(saved))
+                    .changedBy(operator).changedAt(now).reason(req.getNote())
+                    .build());
+            amount = amount.add(portion);
+        }
+        int written = toWrite.isEmpty() ? 0 : repository.saveMappingsBatch(toWrite, logs);
+        log.info("Bulk-mapped {} of {} rows to {} ({} skipped) by {}", written, rows.size(), req.getCategoryCode(), skipped, operator);
+        return ge.tastyerp.common.dto.auditlayer.AuditBulkMapRequestDto.Result.builder()
+                .mapped(written).skipped(skipped).amount(amount.setScale(2, java.math.RoundingMode.HALF_UP)).build();
+    }
+
+    /**
      * Voids a mapping. The record is kept with {@link AuditMappingStatus#VOIDED}
      * rather than deleted, so §6's "delete while retaining history" holds and the
      * row returns to the unmapped queue without losing what it used to say.

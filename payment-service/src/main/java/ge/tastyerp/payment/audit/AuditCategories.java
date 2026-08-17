@@ -22,6 +22,7 @@ public final class AuditCategories {
     public static final String SUPPLIER_BANK_PAYMENT = "SUPPLIER_BANK_PAYMENT";
     public static final String SUPPLIER_CASH_PAYMENT = "SUPPLIER_CASH_PAYMENT";
     public static final String CASH_WITHDRAWAL_UNRESOLVED = "CASH_WITHDRAWAL_UNRESOLVED";
+    public static final String UNDOCUMENTED_WITHDRAWAL = "UNDOCUMENTED_WITHDRAWAL";
     public static final String CASH_REDEPOSIT = "CASH_REDEPOSIT";
     public static final String OTHER_INCOME = "OTHER_INCOME";
     public static final String NON_SUPPLIER_EXPENSE = "NON_SUPPLIER_EXPENSE";
@@ -55,6 +56,12 @@ public final class AuditCategories {
                         "Withdrawn cash whose destination is not yet established. "
                                 + "Stays visible as a gap; never quietly assigned to a supplier.",
                         b -> b.unresolved(true).cashWithdrawal(true)),
+
+                cat(UNDOCUMENTED_WITHDRAWAL, "Undocumented withdrawal",
+                        "Cash that left the bank and went somewhere with no document behind it — "
+                                + "not a supplier, not returned. A settled classification, not an open gap: "
+                                + "it is counted as a withdrawal but never as cash available for suppliers.",
+                        b -> b.cashWithdrawal(true).nonSupplierExpense(true)),
 
                 cat(CASH_REDEPOSIT, "Cash returned / redeposited",
                         "Cash that left the bank and came back. Nets out of real spending.",

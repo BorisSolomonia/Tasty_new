@@ -26,6 +26,7 @@ import {
   auditLayerApi,
   type AuditCategory,
   type AuditSubgroup,
+  type StatementBulkMapRequest,
   type StatementRowKey,
   type StatementSelection,
   type AuditMapping,
@@ -116,6 +117,15 @@ export function useStatementTransactions(
     staleTime: STALE,
     retry: false,
     enabled,
+  })
+}
+
+/** BOR-92 v4: one write for an explicit set of rows — moves everything a mapping can move. */
+export function useBulkMapStatement(operator: string) {
+  const invalidate = useInvalidateAuditScopes()
+  return useMutation({
+    mutationFn: (request: StatementBulkMapRequest) => auditLayerApi.bulkMapStatement(request, operator),
+    onSuccess: () => invalidate(MAPPING_SCOPES),
   })
 }
 

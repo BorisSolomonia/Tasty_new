@@ -328,7 +328,8 @@ function SummaryLines({ summary: s }: { summary: NonNullable<AuditStatement['sum
         <span className="font-semibold">possible checks needed {g(s.possibleChecksNeeded)}</span>
       </p>
       <p>
-        cash withdrawals from bank {g(s.withdrawals)} · withdrawals mapped to suppliers {g(s.withdrawalsToSuppliers)} · unresolved {g(s.withdrawalsUnresolved)}
+        cash withdrawals from bank {g(s.withdrawals)} · withdrawals mapped to suppliers {g(s.withdrawalsToSuppliers)} · undocumented withdrawals{' '}
+        {g(s.withdrawalsUndocumented)} · unresolved {g(s.withdrawalsUnresolved)}
       </p>
       <p>
         sales {g(s.sales)} − bank receipts from customers {g(s.bankReceiptsFromCustomers)} − AR {g(s.receivables)}
@@ -336,8 +337,8 @@ function SummaryLines({ summary: s }: { summary: NonNullable<AuditStatement['sum
         <span className="font-semibold">cash to be received from customers {g(s.cashToReceiveFromCustomers)}</span>
       </p>
       <p>
-        withdrawals {g(s.withdrawals)} + cash to be received from customers {g(s.cashToReceiveFromCustomers)} ={' '}
-        <span className="font-semibold">{g(s.cashToPaySuppliers)} to be paid to suppliers as cash</span>
+        withdrawals {g(s.withdrawals)} − undocumented withdrawals {g(s.withdrawalsUndocumented)} + cash to be received from customers{' '}
+        {g(s.cashToReceiveFromCustomers)} = <span className="font-semibold">{g(s.cashToPaySuppliers)} to be paid to suppliers as cash</span>
       </p>
     </div>
   )

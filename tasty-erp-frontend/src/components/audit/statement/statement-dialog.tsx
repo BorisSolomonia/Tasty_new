@@ -30,6 +30,7 @@ import { CATEGORY_LABELS } from '@/features/audit-control/labels'
 import { useAudit } from '../audit-context'
 import { EM_DASH, fmtCount, fmtGel, fmtKg } from '../format'
 import { TransactionsTable } from './transactions-table'
+import { PartyBulkMap } from './party-bulk-map'
 
 export type StatementDialogTarget = { key: StatementRowKey | 'inventory' }
 
@@ -173,7 +174,8 @@ function PartiesSheet({
 
   const q = needle.trim().toLowerCase()
   const visible = q ? row.parties.filter((p) => p.name.toLowerCase().includes(q) || p.tin.toLowerCase().includes(q)) : row.parties
-  const choosable = visible.filter((p) => !p.tin.startsWith('name:'))
+  // Every party is choosable (BOR-92 v4): a TIN, or the exact printed label for unidentified rows.
+  const choosable = visible
   const allOn = choosable.length > 0 && choosable.every((p) => chosenSet.has(p.tin))
 
   return (
@@ -279,9 +281,9 @@ function PartiesSheet({
                         type="checkbox"
                         className="h-4 w-4"
                         checked={checked}
-                        disabled={!canEdit || nameless}
+                        disabled={!canEdit}
                         aria-label={`Choose ${p.name}`}
-                        title={nameless ? 'No TIN — the source did not identify this counterparty, so it cannot be chosen' : canEdit ? undefined : 'Enter an operator name to tick'}
+                        title={nameless ? 'No TIN — chosen by the exact label the statement printed' : canEdit ? undefined : 'Enter an operator name to tick'}
                         onChange={(e) => onToggle(set, p.tin, e.target.checked)}
                       />
                     </td>
@@ -329,7 +331,11 @@ function PartiesSheet({
                       </td>
                     ) : null}
                     <td className="px-2 py-1.5 text-right tabular-nums">{fmtCount(p.rowCount)}</td>
-                    <td className="px-2 py-1.5" />
+                    <td className="whitespace-nowrap px-2 py-1.5">
+                      {isBankRow && row.key !== 'bankInflow' && p.directCount > 0 ? (
+                        <PartyBulkMap row={row.key} startDate={statement.startDate} endDate={statement.endDate} party={p} canEdit={canEdit} />
+                      ) : null}
+                    </td>
                   </tr>
                   {isOpen ? (
                     <tr>

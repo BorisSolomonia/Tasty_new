@@ -155,6 +155,8 @@ public class AuditStatementDto {
         private BigDecimal withdrawalsToSuppliers;
         /** Those whose group is flagged unresolved. */
         private BigDecimal withdrawalsUnresolved;
+        /** Those in a cash-withdrawal group that is neither supplier settlement nor unresolved — cash that went elsewhere, documented as such (e.g. Undocumented withdrawal). */
+        private BigDecimal withdrawalsUndocumented;
         private BigDecimal sales;
         /** Bank CREDIT slices in customer-receipt groups. */
         private BigDecimal bankReceiptsFromCustomers;
@@ -162,7 +164,7 @@ public class AuditStatementDto {
         private BigDecimal receivables;
         /** sales − bankReceiptsFromCustomers − receivables. */
         private BigDecimal cashToReceiveFromCustomers;
-        /** withdrawals + cashToReceiveFromCustomers. */
+        /** withdrawals − withdrawalsUndocumented + cashToReceiveFromCustomers: the cash that can reach suppliers. */
         private BigDecimal cashToPaySuppliers;
     }
 

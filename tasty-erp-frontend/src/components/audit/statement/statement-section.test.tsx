@@ -10,6 +10,8 @@ import type { AuditSourceRow, AuditStatement, StatementParty, StatementRow, Stat
 
 const saveMutate = vi.fn()
 const setCategoryMutateAsync = vi.fn(async () => undefined)
+const voidMutateAsync = vi.fn(async () => undefined)
+const bulkMutateAsync = vi.fn(async () => ({ mapped: 1, skipped: 0, amount: 600 }))
 const statementState: { data: AuditStatement | undefined; isLoading: boolean; isError: boolean; error: unknown } = {
   data: undefined,
   isLoading: false,
@@ -25,7 +27,18 @@ const transactionsState: { data: StatementTransaction[] | undefined; isLoading: 
 const showEvidence = vi.fn()
 
 vi.mock('../audit-context', () => ({
-  useAudit: () => ({ filters: { startDate: '2026-08-01', endDate: '2026-08-15' }, operator: 'boris', showEvidence }),
+  useAudit: () => ({
+    filters: { startDate: '2026-08-01', endDate: '2026-08-15' },
+    operator: 'boris',
+    showEvidence,
+    categories: [
+      { code: 'UNDOCUMENTED_WITHDRAWAL', label: 'Undocumented withdrawal', builtIn: true, description: 'Cash gone elsewhere.' },
+      { code: 'SUPPLIER_CASH_PAYMENT', label: 'Supplier real cash payment', builtIn: true },
+    ],
+  }),
+}))
+vi.mock('../counterparty-picker', () => ({
+  CounterpartyField: ({ id }: { id: string }) => <input id={id} aria-label="Counterparty" />,
 }))
 vi.mock('../operator-picker', () => ({
   useOperatorGuard: () => ({ operator: 'boris', ready: true, message: 'Enter an operator name in the page header before saving.' }),
@@ -40,6 +53,9 @@ vi.mock('@/hooks/use-audit-flows', () => ({
   useStatementTransactions: () => transactionsState,
   useSetProductCategory: () => ({ mutateAsync: setCategoryMutateAsync, isPending: false }),
   useProductCategoryCodes: () => ({ data: ['BEEF', 'PORK', 'FAT', 'OTHER'] }),
+  useVoidMapping: () => ({ mutateAsync: voidMutateAsync, isPending: false }),
+  useBulkMapStatement: () => ({ mutateAsync: bulkMutateAsync, isPending: false }),
+  useAuditSubgroups: () => ({ data: [{ code: 'CHECK_NEEDED', label: 'Check needed', description: null, builtIn: true }] }),
 }))
 
 import { StatementSection } from './statement-section'
@@ -183,6 +199,7 @@ function payload(): AuditStatement {
       withdrawals: 600,
       withdrawalsToSuppliers: 350,
       withdrawalsUnresolved: 250,
+      withdrawalsUndocumented: 120,
       sales: 2500,
       bankReceiptsFromCustomers: 900,
       receivables: 400,
@@ -197,6 +214,8 @@ describe('StatementSection', () => {
   beforeEach(() => {
     saveMutate.mockReset()
     setCategoryMutateAsync.mockClear()
+    voidMutateAsync.mockClear()
+    bulkMutateAsync.mockClear()
     statementState.data = payload()
     statementState.isLoading = false
     statementState.isError = false
@@ -248,8 +267,15 @@ describe('StatementSection', () => {
     fireEvent.keyDown(dialog, { key: 'Escape' })
     fireEvent.click(screen.getByRole('button', { name: /Cash outflow — open/ }))
     const outflow = screen.getByRole('dialog')
-    expect((within(outflow).getByLabelText('Choose ATM') as HTMLInputElement).disabled).toBe(true)
+    // v4: a party without a TIN is choosable by its printed label and saved as name:<label>.
+    const atm = within(outflow).getByLabelText('Choose ATM') as HTMLInputElement
+    expect(atm.disabled).toBe(false)
     expect(within(outflow).getByText('no TIN in source')).toBeInTheDocument()
+    fireEvent.click(atm)
+    act(() => {
+      vi.advanceTimersByTime(600)
+    })
+    expect(saveMutate).toHaveBeenLastCalledWith({ suppliers: ['SUP_A', 'name:ATM'], customers: [] })
   })
 
   it('shows product groups, unfolds lines, and confirms a group change naming the product and its reach before saving', async () => {
@@ -285,6 +311,8 @@ describe('StatementSection', () => {
     expect(within(summary).getByText(/possible checks needed/)).toBeInTheDocument()
     expect(within(summary).getByText(/1950,00/)).toBeInTheDocument()
     expect(within(summary).getByText(/withdrawals mapped to suppliers/)).toBeInTheDocument()
+    expect(within(summary).getAllByText(/undocumented withdrawals/).length).toBe(2)
+    expect(within(summary).getAllByText(/120,00/).length).toBeGreaterThanOrEqual(2)
     expect(within(summary).getByText(/\/payments total outstanding, as of now/)).toBeInTheDocument()
     expect(within(summary).getAllByText(/1200,00/)).toHaveLength(2) // once as a result, once as an operand of the last line
     expect(within(summary).getByText(/to be paid to suppliers as cash/)).toBeInTheDocument()
@@ -328,12 +356,63 @@ describe('StatementSection', () => {
     expect(within(dialog).getByText(/withdrawals only \(600,00/)).toBeInTheDocument()
 
     fireEvent.change(within(dialog).getByLabelText('Attribution filter'), { target: { value: 'MAPPED' } })
-    fireEvent.click(within(dialog).getByRole('button', { name: /Supplier B/ }))
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Supplier B/ }))
     expect(within(dialog).getByText('Mapped to')).toBeInTheDocument()
     expect(within(dialog).getByText('withdrawal')).toBeInTheDocument()
     expect(within(dialog).getByText('mapped here')).toBeInTheDocument()
     fireEvent.click(within(dialog).getByRole('button', { name: /Map ალექსანდრე თოფურიძე/ }))
     expect(screen.getByRole('dialog', { name: 'mapping-editor' })).toHaveTextContent('editing b5')
+  })
+
+  it('unmaps a mapped bank transaction with a reason, and maps a ticked set through the bulk dialog', async () => {
+    transactionsState.data = [
+      tx({
+        id: 'b5',
+        kind: 'BANK_ROW',
+        date: '2026-08-05',
+        direction: 'DEBIT',
+        amount: 600,
+        counterpartyTin: '500000001',
+        counterpartyName: 'ალექსანდრე თოფურიძე',
+        sourceType: 'BANK',
+        sourceRowId: 'b5',
+        mappingStatus: 'MANUALLY_MAPPED',
+        mappingSummary: 'Cash withdrawal — unresolved (600)',
+        withdrawal: true,
+        attribution: 'DIRECT',
+        sourceRow: { sourceType: 'BANK', sourceRowId: 'b5' } as AuditSourceRow,
+      }),
+    ]
+    render(<StatementSection />)
+    fireEvent.click(screen.getByRole('button', { name: /Cash outflow — open/ }))
+    const dialog = screen.getByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Supplier A/ }))
+
+    // Unmap: reason required, void called with the mapping id.
+    fireEvent.click(within(dialog).getByRole('button', { name: /Unmap ალექსანდრე თოფურიძე/ }))
+    const unmap = screen.getAllByRole('dialog').at(-1) as HTMLElement
+    expect(within(unmap).getByRole('button', { name: 'Unmap' })).toBeDisabled()
+    fireEvent.change(within(unmap).getByLabelText('Unmap reason'), { target: { value: 'wrong group' } })
+    fireEvent.click(within(unmap).getByRole('button', { name: 'Unmap' }))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(voidMutateAsync).toHaveBeenCalledWith({ id: 'BANK__b5', reason: 'wrong group' })
+
+    // Bulk: tick the row, "Map selected (1)…", choose the group, confirm — explicit ids, fill mode by default.
+    fireEvent.click(within(dialog).getByLabelText('Select ალექსანდრე თოფურიძე'))
+    fireEvent.click(within(dialog).getByRole('button', { name: /Map selected \(1\)/ }))
+    const bulk = screen.getAllByRole('dialog').at(-1) as HTMLElement
+    expect(within(bulk).getByText(/This is not a rule/)).toBeInTheDocument()
+    fireEvent.change(within(bulk).getByLabelText('Group'), { target: { value: 'UNDOCUMENTED_WITHDRAWAL' } })
+    fireEvent.click(within(bulk).getByRole('button', { name: /Map 1 transaction/ }))
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(bulkMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceRowIds: ['b5'], categoryCode: 'UNDOCUMENTED_WITHDRAWAL', replace: false, sourceType: 'BANK', startDate: '2026-08-01', endDate: '2026-08-15' })
+    )
+    expect(within(bulk).getByText(/1.*mapped/)).toBeInTheDocument()
   })
 
   it('opens inventory levels with the LIFO supplier attribution', () => {

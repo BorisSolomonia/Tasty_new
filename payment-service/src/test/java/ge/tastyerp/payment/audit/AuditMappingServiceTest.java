@@ -176,6 +176,75 @@ class AuditMappingServiceTest {
                 () -> service.deleteCategory(AuditCategories.CUSTOMER_RECEIPT, OPERATOR));
     }
 
+    // ==================== BOR-92 v4: bulk map ====================
+
+    private static ge.tastyerp.common.dto.auditlayer.AuditSourceRowDto bankRow(String id, String amount, AuditMappingDto mapping) {
+        return ge.tastyerp.common.dto.auditlayer.AuditSourceRowDto.builder()
+                .sourceType(AuditSourceType.BANK).sourceRowId(id).direction("DEBIT")
+                .amount(new BigDecimal(amount)).mapping(mapping).build();
+    }
+
+    @Test
+    void bulkMapFillsOnlyTheUnmappedRemainderAndSkipsFullyMappedRows() {
+        when(repository.findCustomSubgroups()).thenReturn(List.of());
+        AuditMappingDto partly = AuditMappingDto.builder().sourceType(AuditSourceType.BANK).sourceRowId("r2")
+                .status(AuditMappingStatus.MANUALLY_MAPPED).createdBy("earlier")
+                .splits(List.of(split(AuditCategories.NON_SUPPLIER_EXPENSE, "40"))).build();
+        AuditMappingDto full = AuditMappingDto.builder().sourceType(AuditSourceType.BANK).sourceRowId("r3")
+                .status(AuditMappingStatus.MANUALLY_MAPPED)
+                .splits(List.of(split(AuditCategories.NON_SUPPLIER_EXPENSE, "100"))).build();
+        List<ge.tastyerp.common.dto.auditlayer.AuditSourceRowDto> rows = List.of(
+                bankRow("r1", "100", null), bankRow("r2", "100", partly), bankRow("r3", "100", full));
+        when(repository.saveMappingsBatch(any(), any())).thenAnswer(inv -> ((List<?>) inv.getArgument(0)).size());
+
+        ge.tastyerp.common.dto.auditlayer.AuditBulkMapRequestDto req = ge.tastyerp.common.dto.auditlayer.AuditBulkMapRequestDto.builder()
+                .categoryCode(AuditCategories.UNDOCUMENTED_WITHDRAWAL).replace(false).note("ATM lines").build();
+        ge.tastyerp.common.dto.auditlayer.AuditBulkMapRequestDto.Result result = service.bulkMap(rows, req, OPERATOR);
+
+        assertEquals(2, result.getMapped());
+        assertEquals(1, result.getSkipped(), "the fully mapped row is left alone");
+        assertEquals(new BigDecimal("160.00"), result.getAmount(), "100 (whole r1) + 60 (r2's remainder)");
+
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<List<AuditMappingDto>> written = org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(repository).saveMappingsBatch(written.capture(), any());
+        AuditMappingDto r2 = written.getValue().stream().filter(m -> m.getSourceRowId().equals("r2")).findFirst().orElseThrow();
+        assertEquals(2, r2.getSplits().size(), "existing split kept, remainder added");
+        assertEquals("earlier", r2.getCreatedBy(), "the first author is kept; the operator is the updater");
+        assertEquals(OPERATOR, r2.getUpdatedBy());
+        assertEquals(AuditMappingStatus.MANUALLY_MAPPED, r2.getStatus());
+    }
+
+    @Test
+    void bulkMapReplaceDropsExistingSplitsAndCoversTheWholeRow() {
+        when(repository.findCustomSubgroups()).thenReturn(List.of());
+        AuditMappingDto full = AuditMappingDto.builder().sourceType(AuditSourceType.BANK).sourceRowId("r3")
+                .status(AuditMappingStatus.MANUALLY_MAPPED)
+                .splits(List.of(split(AuditCategories.NON_SUPPLIER_EXPENSE, "100"))).build();
+        when(repository.saveMappingsBatch(any(), any())).thenAnswer(inv -> ((List<?>) inv.getArgument(0)).size());
+        ge.tastyerp.common.dto.auditlayer.AuditBulkMapRequestDto req = ge.tastyerp.common.dto.auditlayer.AuditBulkMapRequestDto.builder()
+                .categoryCode(AuditCategories.SUPPLIER_CASH_PAYMENT).subgroupCode(AuditSubgroups.CHECK_NEEDED)
+                .counterpartyTin("200000002").counterpartyName("Supplier B").replace(true).build();
+
+        ge.tastyerp.common.dto.auditlayer.AuditBulkMapRequestDto.Result result =
+                service.bulkMap(List.of(bankRow("r3", "100", full)), req, OPERATOR);
+
+        assertEquals(1, result.getMapped());
+        assertEquals(new BigDecimal("100.00"), result.getAmount());
+    }
+
+    @Test
+    void bulkMapRefusesUnknownGroupOrStatusAndBlankOperator() {
+        when(repository.findCustomSubgroups()).thenReturn(List.of());
+        List<ge.tastyerp.common.dto.auditlayer.AuditSourceRowDto> rows = List.of(bankRow("r1", "100", null));
+        assertThrows(ValidationException.class, () -> service.bulkMap(rows,
+                ge.tastyerp.common.dto.auditlayer.AuditBulkMapRequestDto.builder().categoryCode("NOPE").build(), OPERATOR));
+        assertThrows(ValidationException.class, () -> service.bulkMap(rows,
+                ge.tastyerp.common.dto.auditlayer.AuditBulkMapRequestDto.builder().categoryCode(AuditCategories.NON_SUPPLIER_EXPENSE).subgroupCode("NOPE").build(), OPERATOR));
+        assertThrows(ValidationException.class, () -> service.bulkMap(rows,
+                ge.tastyerp.common.dto.auditlayer.AuditBulkMapRequestDto.builder().categoryCode(AuditCategories.NON_SUPPLIER_EXPENSE).build(), " "));
+    }
+
     // ==================== BOR-92: level-2 subgroups ====================
 
     @Test

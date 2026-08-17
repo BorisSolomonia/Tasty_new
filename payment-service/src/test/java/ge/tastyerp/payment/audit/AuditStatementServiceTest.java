@@ -105,7 +105,9 @@ class AuditStatementServiceTest {
                         split(AuditCategories.SUPPLIER_CASH_PAYMENT, null, SUP_B, "350"),
                         split(AuditCategories.CASH_WITHDRAWAL_UNRESOLVED, null, null, "250"))),
                 bank("b6", "CREDIT", "50", null, List.of(
-                        split(AuditCategories.OTHER_INCOME, null, null, "50"))));                       // mapped, not a customer receipt
+                        split(AuditCategories.OTHER_INCOME, null, null, "50"))),                        // mapped, not a customer receipt
+                bank("b7", "DEBIT", "120", null, List.of(                                                // ATM row, cash went elsewhere
+                        split(AuditCategories.UNDOCUMENTED_WITHDRAWAL, null, null, "120"))));
         List<PaymentDto> bankPayments = List.of(
                 pay("p1", CUST_REAL, "Real Customer", "500", "tbc"),
                 pay("p2", CUST_UNREAL, "Unreal Customer", "120", "tbc"));
@@ -172,14 +174,14 @@ class AuditStatementServiceTest {
     }
 
     @Test
-    @DisplayName("cash outflow: every debit (2750), unmapped 550 on 4 rows; chosen A = whole row b1 (1500); nameless row listed as its own party; direct vs mapped per party")
+    @DisplayName("cash outflow: every debit (2870), unmapped 550 on 5 rows; chosen A = whole row b1 (1500); nameless row listed as its own party; direct vs mapped per party")
     void cashOutflow() {
         AuditStatementDto s = run(List.of(SUP_A), List.of());
-        assertEquals(new BigDecimal("2750.00"), s.getCashOutflow().getTotal());
+        assertEquals(new BigDecimal("2870.00"), s.getCashOutflow().getTotal());
         assertEquals(new BigDecimal("550.00"), s.getCashOutflow().getSecondary());
         assertEquals("unmapped", s.getCashOutflow().getSecondaryLabel());
         assertEquals(new BigDecimal("1500.00"), s.getCashOutflow().getChosen());
-        assertEquals(4, s.getCashOutflow().getRowCount());
+        assertEquals(5, s.getCashOutflow().getRowCount());
         Party a = party(s.getCashOutflow().getParties(), SUP_A);
         assertEquals(new BigDecimal("1500.00"), a.getAmount());
         assertEquals(new BigDecimal("300.00"), a.getSecondary(), "unmapped part of A's row");
@@ -190,10 +192,14 @@ class AuditStatementServiceTest {
         assertEquals(new BigDecimal("350.00"), b.getMappedAmount(), "cash from the withdrawal row attributed to B");
         assertEquals(1, b.getMappedCount());
         assertEquals("withdrawals", s.getCashOutflow().getExtras().get(1).getLabel());
-        assertEquals(new BigDecimal("600.00"), s.getCashOutflow().getExtras().get(1).getAmount());
+        assertEquals(new BigDecimal("720.00"), s.getCashOutflow().getExtras().get(1).getAmount());
         Party atm = party(s.getCashOutflow().getParties(), "name:ATM");
-        assertEquals(new BigDecimal("250.00"), atm.getAmount());
-        assertFalse(atm.isChosen(), "a party without a TIN can never be chosen");
+        assertEquals(new BigDecimal("370.00"), atm.getAmount(), "b4 (250) and b7 (120) both print as ATM");
+        assertFalse(atm.isChosen());
+        // v4: a party without a TIN is choosable by its printed label.
+        AuditStatementDto s2 = run(List.of("name:ATM"), List.of());
+        assertTrue(party(s2.getCashOutflow().getParties(), "name:ATM").isChosen());
+        assertEquals(new BigDecimal("370.00"), s2.getCashOutflow().getChosen(), "both ATM rows count as chosen");
     }
 
     @Test
@@ -225,23 +231,24 @@ class AuditStatementServiceTest {
     }
 
     @Test
-    @DisplayName("summary lines: purchases − bank to suppliers = possible checks; withdrawals (600) of which to suppliers 350 / unresolved 250; sales − receipts − AR = cash to receive; withdrawals + that = cash to pay suppliers")
+    @DisplayName("summary lines: purchases − bank to suppliers = possible checks; withdrawals 720 = to suppliers 350 + unresolved 250 + undocumented 120; sales − receipts − AR = cash to receive; withdrawals − undocumented + that = cash to pay suppliers")
     void summary() {
         AuditStatementDto.Summary sm = run(List.of(), List.of()).getSummary();
         assertEquals(new BigDecimal("3700.00"), sm.getPurchases());
         assertEquals(new BigDecimal("1750.00"), sm.getBankPaymentsToSuppliers());
         assertEquals(new BigDecimal("1950.00"), sm.getPossibleChecksNeeded());
-        assertEquals(new BigDecimal("600.00"), sm.getWithdrawals());
+        assertEquals(new BigDecimal("720.00"), sm.getWithdrawals());
         assertEquals(new BigDecimal("350.00"), sm.getWithdrawalsToSuppliers());
         assertEquals(new BigDecimal("250.00"), sm.getWithdrawalsUnresolved());
+        assertEquals(new BigDecimal("120.00"), sm.getWithdrawalsUndocumented());
         assertEquals(new BigDecimal("2500.00"), sm.getSales());
         assertEquals(new BigDecimal("900.00"), sm.getBankReceiptsFromCustomers());
         assertEquals(new BigDecimal("400.00"), sm.getReceivables());
         assertEquals(new BigDecimal("1200.00"), sm.getCashToReceiveFromCustomers());   // 2500 − 900 − 400
-        assertEquals(new BigDecimal("1800.00"), sm.getCashToPaySuppliers());           // 600 + 1200
+        assertEquals(new BigDecimal("1800.00"), sm.getCashToPaySuppliers());           // 720 − 120 + 1200
 
         AuditStatementDto.Summary noAr = AuditStatementService.summary(new BigDecimal("1"), new BigDecimal("1"), new BigDecimal("1"),
-                new BigDecimal("0"), new BigDecimal("0"), new BigDecimal("1"), new BigDecimal("1"), null);
+                new BigDecimal("0"), new BigDecimal("0"), new BigDecimal("0"), new BigDecimal("1"), new BigDecimal("1"), null);
         assertNull(noAr.getCashToReceiveFromCustomers(), "no AR → the derived lines are empty, not zero");
         assertNull(noAr.getCashToPaySuppliers());
     }
@@ -283,13 +290,13 @@ class AuditStatementServiceTest {
         assertEquals("b5", service.transactions("cashOutflow", SUP_B, null, "MAPPED", false, 0, in).get(0).getId());
         assertEquals(1, service.transactions("cashOutflow", SUP_B, null, "DIRECT", false, 0, in).size());
         List<AuditStatementTransactionDto> wd = service.transactions("cashOutflow", null, null, null, true, 0, in);
-        assertEquals(1, wd.size(), "only the row with a cash-withdrawal slice");
-        assertTrue(wd.get(0).isWithdrawal());
-        assertTrue(wd.get(0).getMappedCounterparties().contains(SUP_B));
+        assertEquals(2, wd.size(), "the rows with a cash-withdrawal slice (b5, b7)");
+        assertTrue(wd.stream().allMatch(AuditStatementTransactionDto::isWithdrawal));
+        assertTrue(wd.stream().anyMatch(t -> t.getMappedCounterparties().contains(SUP_B)));
         assertEquals(0, new BigDecimal("300").compareTo(outA.get(0).getUnresolvedAmount()));
         assertTrue(outA.get(0).getMappingSummary().contains("Check needed"), outA.get(0).getMappingSummary());
         List<AuditStatementTransactionDto> atm = service.transactions("cashOutflow", "name:ATM", null, 0, in);
-        assertEquals(1, atm.size());
+        assertEquals(2, atm.size());
         List<AuditStatementTransactionDto> supB = service.transactions("bankPaymentsToSuppliers", SUP_B, null, 0, in);
         assertEquals(2, supB.size(), "B's bank transfer and the withdrawal whose cash slice reached B");
 
@@ -306,8 +313,8 @@ class AuditStatementServiceTest {
     @DisplayName("selection: TINs are canonicalised and de-duplicated; the operator key is normalised; blank operator refused")
     void selection() {
         Selection s = AuditStatementService.normalize(Selection.builder()
-                .suppliers(List.of(" 200000001 ", "200000001", "")).customers(null).build());
-        assertEquals(List.of("200000001"), s.getSuppliers());
+                .suppliers(List.of(" 200000001 ", "200000001", "", "name: ATM ", "name:")).customers(null).build());
+        assertEquals(List.of("200000001", "name:ATM"), s.getSuppliers(), "TINs canonicalised, name keys kept by exact label, empties dropped");
         assertEquals(List.of(), s.getCustomers());
         assertEquals("boris_s", AuditStatementService.operatorKey("Boris S"));
         assertThrows(ValidationException.class, () -> AuditStatementService.operatorKey("  "));

@@ -16,7 +16,8 @@ import { cn } from '@/lib/cn'
 import { apiErrorMessage } from '@/lib/api-client'
 import type { AuditSourceRow, StatementRowKey } from '@/lib/audit-api'
 import { MappingDialog } from '../mapping-dialog'
-import { useProductCategoryCodes, useSetProductCategory, useStatementTransactions } from '@/hooks/use-audit-flows'
+import { useProductCategoryCodes, useSetProductCategory, useStatementTransactions, useVoidMapping } from '@/hooks/use-audit-flows'
+import { BulkMapDialog } from './bulk-map-dialog'
 import { CATEGORY_LABELS } from '@/features/audit-control/labels'
 import { useAudit } from '../audit-context'
 import { useOperatorGuard } from '../operator-picker'
@@ -54,12 +55,27 @@ export function TransactionsTable({
   const query = useStatementTransactions({ row, startDate, endDate, tin, category, attribution, withdrawalsOnly })
   const [shown, setShown] = React.useState(PAGE)
   const [editing, setEditing] = React.useState<AuditSourceRow | null>(null)
+  const [selected, setSelected] = React.useState<Set<string>>(() => new Set())
+  const [bulk, setBulk] = React.useState<'selected' | 'all' | null>(null)
+  const [unmapping, setUnmapping] = React.useState<{ id: string; label: string } | null>(null)
+  const { operator } = useAudit()
+  const { ready: canWrite } = useOperatorGuard()
+  const voidMutation = useVoidMapping(operator)
   const rows = query.data ?? []
   const visible = rows.slice(0, shown)
   const kind = rows[0]?.kind ?? (row === 'purchases' || row === 'sales' ? 'DOCUMENT_LINE' : row === 'bankInflow' ? 'PAYMENT' : row === 'cashInflow' ? 'CASH_PAYMENT' : 'BANK_ROW')
   const isDoc = kind === 'DOCUMENT_LINE'
   const isBank = kind === 'BANK_ROW'
   const total = rows.reduce((s, t) => s + (t.amount ?? 0), 0)
+
+  const selectedRows = rows.filter((r) => selected.has(r.id))
+  const toggleSelected = (id: string, on: boolean) =>
+    setSelected((s) => {
+      const next = new Set(s)
+      if (on) next.add(id)
+      else next.delete(id)
+      return next
+    })
 
   if (query.isLoading) return <p className="text-xs text-muted-foreground">Loading transactions…</p>
   if (query.isError) return <p className="text-xs text-destructive">Transactions did not load: {apiErrorMessage(query.error)}</p>
@@ -73,12 +89,33 @@ export function TransactionsTable({
           {rows.length >= 5000 ? ' · capped at 5000 — narrow the period' : ''}
         </span>
         {allowRecategorise ? <span>Change a line's group to correct that product everywhere.</span> : null}
-        {isBank ? <span>“Map…” opens the editor: group, document status, counterparty — then only this row or all like it.</span> : null}
+        {isBank ? (
+          <span className="inline-flex flex-wrap items-center gap-2">
+            <span>“Map…” = one row through the editor (then only this row / all like it). Tick rows to map several at once.</span>
+            <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" disabled={!canWrite || selectedRows.length === 0} onClick={() => setBulk('selected')}>
+              Map selected ({fmtCount(selectedRows.length)})…
+            </Button>
+            <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" disabled={!canWrite || rows.length === 0} onClick={() => setBulk('all')}>
+              Map all {fmtCount(rows.length)} listed…
+            </Button>
+          </span>
+        ) : null}
       </div>
       <div className="overflow-x-auto rounded border border-border bg-card">
         <table className="w-full min-w-[56rem] text-xs">
           <thead className="bg-muted/40 text-[10px] uppercase tracking-wide text-muted-foreground">
             <tr>
+              {isBank ? (
+                <th className="w-6 px-2 py-1">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5"
+                    aria-label="Select all loaded transactions"
+                    checked={visible.length > 0 && visible.every((r) => selected.has(r.id))}
+                    onChange={(e) => setSelected(e.target.checked ? new Set(visible.map((r) => r.id)) : new Set())}
+                  />
+                </th>
+              ) : null}
               <th className="px-2 py-1 text-left font-medium">Date</th>
               {isDoc ? <th className="px-2 py-1 text-left font-medium">Waybill</th> : null}
               <th className="px-2 py-1 text-left font-medium">Counterparty</th>
@@ -100,6 +137,11 @@ export function TransactionsTable({
           <tbody className="divide-y divide-border">
             {visible.map((t) => (
               <tr key={`${t.kind}:${t.id}`} className="align-top hover:bg-accent/40">
+                {isBank ? (
+                  <td className="px-2 py-1">
+                    <input type="checkbox" className="h-3.5 w-3.5" aria-label={`Select ${t.counterpartyName ?? t.id}`} checked={selected.has(t.id)} onChange={(e) => toggleSelected(t.id, e.target.checked)} />
+                  </td>
+                ) : null}
                 <td className="whitespace-nowrap px-2 py-1 tabular-nums">{fmtDate(t.date)}</td>
                 {isDoc ? <td className="whitespace-nowrap px-2 py-1 font-mono">{fmtText(t.waybillId)}</td> : null}
                 <td className="px-2 py-1">
@@ -178,10 +220,22 @@ export function TransactionsTable({
                   </td>
                 ) : null}
                 {isBank ? (
-                  <td className="px-2 py-1">
+                  <td className="whitespace-nowrap px-2 py-1">
                     {t.sourceRow ? (
                       <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" onClick={() => setEditing(t.sourceRow)} aria-label={`Map ${t.counterpartyName ?? t.id}`}>
                         <Pencil className="mr-1 h-3 w-3" /> Map…
+                      </Button>
+                    ) : null}
+                    {t.mappingStatus && t.mappingStatus !== 'UNMAPPED' && t.mappingStatus !== 'VOIDED' && t.sourceType && t.sourceRowId ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="ml-1 h-6 px-2 text-[11px] text-destructive"
+                        disabled={!canWrite}
+                        aria-label={`Unmap ${t.counterpartyName ?? t.id}`}
+                        onClick={() => setUnmapping({ id: `${t.sourceType}__${t.sourceRowId}`, label: `${fmtDate(t.date)} · ${t.counterpartyName ?? t.id} · ${fmtGel(t.amount)}` })}
+                      >
+                        Unmap
                       </Button>
                     ) : null}
                   </td>
@@ -201,7 +255,69 @@ export function TransactionsTable({
       ) : null}
       {/* The same two-step editor the workbench uses: build the mapping, then only-this / all-like-it. */}
       <MappingDialog row={editing} onClose={() => setEditing(null)} />
+      {bulk ? (
+        <BulkMapDialog
+          rows={bulk === 'selected' ? selectedRows : rows}
+          startDate={startDate}
+          endDate={endDate}
+          title={bulk === 'selected' ? 'selected transactions' : 'all listed transactions'}
+          onClose={() => {
+            setBulk(null)
+            setSelected(new Set())
+          }}
+        />
+      ) : null}
+      {unmapping ? (
+        <UnmapDialog
+          label={unmapping.label}
+          pending={voidMutation.isPending}
+          onCancel={() => setUnmapping(null)}
+          onConfirm={async (reason) => {
+            await voidMutation.mutateAsync({ id: unmapping.id, reason })
+            setUnmapping(null)
+          }}
+        />
+      ) : null}
     </div>
+  )
+}
+
+/** Voiding keeps the history; the row returns to the unmapped queue. A reason is required, as in the workbench. */
+function UnmapDialog({ label, pending, onCancel, onConfirm }: { label: string; pending: boolean; onCancel: () => void; onConfirm: (reason: string) => Promise<void> }) {
+  const [reason, setReason] = React.useState('')
+  const [error, setError] = React.useState<string | null>(null)
+  return (
+    <Dialog open onOpenChange={(open) => (!open ? onCancel() : undefined)}>
+      <DialogContent aria-describedby="unmap-desc">
+        <DialogHeader>
+          <DialogTitle>Unmap this transaction?</DialogTitle>
+          <DialogDescription id="unmap-desc">
+            {label}. The mapping is voided, not deleted: its history stays, and the row goes back to unmapped — every total it fed moves
+            accordingly.
+          </DialogDescription>
+        </DialogHeader>
+        <label className="text-xs text-muted-foreground">
+          Reason (required)
+          <input className="mt-1 h-8 w-full rounded-md border border-input bg-background px-2 text-sm" value={reason} onChange={(e) => setReason(e.target.value)} aria-label="Unmap reason" />
+        </label>
+        {error ? <p className="text-sm text-destructive">{error}</p> : null}
+        <DialogFooter>
+          <Button variant="outline" onClick={onCancel} disabled={pending}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={pending || !reason.trim()}
+            onClick={() => {
+              setError(null)
+              onConfirm(reason.trim()).catch((caught) => setError(apiErrorMessage(caught)))
+            }}
+          >
+            {pending ? 'Unmapping…' : 'Unmap'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

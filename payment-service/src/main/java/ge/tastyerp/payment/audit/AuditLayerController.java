@@ -11,6 +11,7 @@ import ge.tastyerp.common.dto.auditlayer.AuditMappingStatus;
 import ge.tastyerp.common.dto.auditlayer.AuditSourceRowPageDto;
 import ge.tastyerp.common.dto.auditlayer.AuditSourceType;
 import ge.tastyerp.common.dto.auditlayer.AuditSubgroupDto;
+import ge.tastyerp.common.dto.auditlayer.AuditBulkMapRequestDto;
 import ge.tastyerp.common.dto.auditlayer.AuditStatementDto;
 import ge.tastyerp.common.dto.auditlayer.AuditStatementTransactionDto;
 import ge.tastyerp.common.dto.auditlayer.CheckEvidenceDto;
@@ -81,6 +82,16 @@ public class AuditLayerController {
             @RequestParam(defaultValue = "0") int limit) {
         return ResponseEntity.ok(ApiResponse.success(
                 statementService.transactions(row, startDate, endDate, tin, category, attribution, withdrawalsOnly, limit)));
+    }
+
+    @PostMapping("/statement/bulk-map")
+    @Operation(summary = "Map an explicit set of bank rows in one write (fill the unmapped remainder, or replace)")
+    public ResponseEntity<ApiResponse<AuditBulkMapRequestDto.Result>> bulkMap(
+            @RequestBody AuditBulkMapRequestDto request,
+            @RequestParam String operator) {
+        AuditBulkMapRequestDto.Result result = statementService.bulkMap(request, operator);
+        return ResponseEntity.ok(ApiResponse.success(result,
+                result.getMapped() + " transactions mapped, " + result.getSkipped() + " skipped"));
     }
 
     @GetMapping("/statement/selection")

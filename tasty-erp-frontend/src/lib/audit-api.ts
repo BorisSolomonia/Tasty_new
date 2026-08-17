@@ -181,6 +181,8 @@ export interface StatementSummary {
   withdrawals: number | null
   withdrawalsToSuppliers: number | null
   withdrawalsUnresolved: number | null
+  /** Withdrawals in a group that is neither supplier settlement nor unresolved — cash gone elsewhere, documented as such. */
+  withdrawalsUndocumented: number | null
   sales: number | null
   bankReceiptsFromCustomers: number | null
   receivables: number | null
@@ -233,6 +235,25 @@ export interface AuditStatement {
   cashInflow: StatementRow
   summary: StatementSummary | null
   notes: string[]
+}
+
+export interface StatementBulkMapRequest {
+  startDate: string
+  endDate: string
+  sourceType: AuditSourceType
+  sourceRowIds: string[]
+  categoryCode: string
+  subgroupCode?: string | null
+  counterpartyTin?: string | null
+  counterpartyName?: string | null
+  note?: string | null
+  replace: boolean
+}
+
+export interface StatementBulkMapResult {
+  mapped: number
+  skipped: number
+  amount: number | null
 }
 
 export interface StatementTransaction {
@@ -750,6 +771,20 @@ export const auditLayerApi = {
   }) => {
     const response = await fetchWithAuth(`${BASE}/statement/transactions`, { params: { ...params } })
     return jsonData<StatementTransaction[]>(response)
+  },
+
+  /**
+   * Map an explicit set of bank rows in one write (BOR-92 v4). Not a rule:
+   * only the listed ids change. Default fills each row's unmapped remainder;
+   * `replace` drops the row's splits and covers the whole amount.
+   */
+  bulkMapStatement: async (request: StatementBulkMapRequest, operator: string) => {
+    const response = await fetchWithAuth(`${BASE}/statement/bulk-map`, {
+      method: 'POST',
+      params: { operator },
+      body: JSON.stringify(request),
+    })
+    return jsonData<StatementBulkMapResult>(response)
   },
 
   saveStatementSelection: async (selection: StatementSelection, operator: string) => {
