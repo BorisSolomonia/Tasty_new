@@ -95,6 +95,7 @@ export function StatementDialog({
             {(row.extras ?? (row.secondary !== null && row.secondaryLabel ? [{ label: row.secondaryLabel, amount: row.secondary }] : [])).map((f) => (
               <Stat key={f.label} label={f.label} value={fmtGel(f.amount)} />
             ))}
+            {row.lastDate ? <Stat label="rows dated" value={`${row.firstDate ?? '?'} → ${row.lastDate}`} sub={row.lastDate < statement.endDate ? 'the data ends before the period does' : undefined} /> : null}
           </div>
         ) : inv ? (
           <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
@@ -170,6 +171,8 @@ function PartiesSheet({
   const hasSecondary = row.key === 'cashOutflow'
   const isBankRow = row.key === 'cashOutflow' || row.key === 'bankPaymentsToSuppliers' || row.key === 'bankInflow'
   const isPurchases = row.key === 'purchases'
+  const isSales = row.key === 'sales'
+  const withBank = isPurchases || isSales
   const withdrawalsFigure = row.extras?.find((f) => f.label === 'withdrawals')
 
   const q = needle.trim().toLowerCase()
@@ -235,13 +238,21 @@ function PartiesSheet({
                   kg
                 </th>
               ) : null}
-              {isPurchases ? (
-                <th scope="col" className="px-2 py-1.5 text-right font-medium" title="Real bank money mapped to this supplier in the period (supplier-settlement slices)">
-                  bank paid ₾
+              {withBank ? (
+                <th
+                  scope="col"
+                  className="px-2 py-1.5 text-right font-medium"
+                  title={isSales ? 'Bank receipts mapped to this customer in the period (customer-receipt slices)' : 'Real bank money mapped to this supplier in the period (supplier-settlement slices)'}
+                >
+                  {isSales ? 'bank received ₾' : 'bank paid ₾'}
                 </th>
               ) : null}
-              {isPurchases ? (
-                <th scope="col" className="px-2 py-1.5 text-right font-medium" title="Documented purchases minus bank paid — what the bank has not settled: cash, checks, or still owed">
+              {withBank ? (
+                <th
+                  scope="col"
+                  className="px-2 py-1.5 text-right font-medium"
+                  title={isSales ? 'Documented sales minus bank received — what the bank has not settled: cash, checks, or still owed by the customer' : 'Documented purchases minus bank paid — what the bank has not settled: cash, checks, or still owed'}
+                >
                   unpaid after bank ₾
                 </th>
               ) : null}
@@ -307,9 +318,12 @@ function PartiesSheet({
                     </td>
                     <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{fmtGel(p.amount)}</td>
                     {hasKg ? <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{fmtKg(p.quantityKg, 0)}</td> : null}
-                    {isPurchases ? <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{fmtGel(p.bankPaid)}</td> : null}
-                    {isPurchases ? (
-                      <td className={cn('px-2 py-1.5 text-right tabular-nums whitespace-nowrap', (p.unpaidAfterBank ?? 0) < 0 && 'text-destructive')} title={(p.unpaidAfterBank ?? 0) < 0 ? 'Bank paid more than the documents show — paid, undocumented' : undefined}>
+                    {withBank ? <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{fmtGel(p.bankPaid)}</td> : null}
+                    {withBank ? (
+                      <td
+                        className={cn('px-2 py-1.5 text-right tabular-nums whitespace-nowrap', (p.unpaidAfterBank ?? 0) < 0 && 'text-destructive')}
+                        title={(p.unpaidAfterBank ?? 0) < 0 ? (isSales ? 'Bank received more than the documents show — paid, undocumented sale' : 'Bank paid more than the documents show — paid, undocumented') : undefined}
+                      >
                         {fmtGel(p.unpaidAfterBank)}
                       </td>
                     ) : null}

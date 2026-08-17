@@ -120,6 +120,8 @@ function row(key: StatementRow['key'], title: string, over: Partial<StatementRow
     secondary: null,
     secondaryLabel: null,
     extras: null,
+    firstDate: null,
+    lastDate: null,
     rowCount: 3,
     parties: [],
     products: null,
@@ -183,9 +185,17 @@ function payload(): AuditStatement {
         },
       ],
     },
-    sales: row('sales', 'Sales', { total: 2500, totalKg: 80, secondary: 1800, secondaryLabel: 'real' }),
+    sales: row('sales', 'Sales', {
+      total: 2500,
+      totalKg: 80,
+      secondary: 1800,
+      secondaryLabel: 'real',
+      parties: [party({ tin: 'CUST_REAL', name: 'Real Customer', amount: 1800, quantityKg: 60, rowCount: 1, bankPaid: 900, unpaidAfterBank: 900 })],
+    }),
     bankInflow: row('bankInflow', 'Bank inflow (payments from customers)', {
       total: 1049,
+      firstDate: '2026-08-05',
+      lastDate: '2026-08-13',
       extras: [
         { label: 'mapped from customers', amount: 900 },
         { label: 'unmapped income', amount: 149 },
@@ -321,6 +331,7 @@ describe('StatementSection', () => {
     const inflow = screen.getAllByRole('row').find((r) => r.getAttribute('data-row') === 'bankInflow') as HTMLElement
     expect(within(inflow).getByText(/mapped from customers 900,00/)).toBeInTheDocument()
     expect(within(inflow).getByText(/unmapped income 149,00/)).toBeInTheDocument()
+    expect(within(inflow).getByText(/rows dated 2026-08-05 → 2026-08-13/)).toBeInTheDocument()
   })
 
   it('cash outflow: direct vs mapped per party, withdrawals filter, "Mapped to" column and a Map… button that opens the editor', () => {
@@ -413,6 +424,16 @@ describe('StatementSection', () => {
       expect.objectContaining({ sourceRowIds: ['b5'], categoryCode: 'UNDOCUMENTED_WITHDRAWAL', replace: false, sourceType: 'BANK', startDate: '2026-08-01', endDate: '2026-08-15' })
     )
     expect(within(bulk).getByText(/1.*mapped/)).toBeInTheDocument()
+  })
+
+  it('sales window carries bank received / unpaid after bank per customer, like purchases', () => {
+    render(<StatementSection />)
+    fireEvent.click(screen.getByRole('button', { name: /^Sales — open/ }))
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByText('bank received ₾')).toBeInTheDocument()
+    expect(within(dialog).getByText('unpaid after bank ₾')).toBeInTheDocument()
+    const rowEl = within(dialog).getByText('Real Customer').closest('tr') as HTMLElement
+    expect(within(rowEl).getAllByText(/900,00/).length).toBe(2)
   })
 
   it('opens inventory levels with the LIFO supplier attribution', () => {

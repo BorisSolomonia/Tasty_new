@@ -212,6 +212,10 @@ class AuditStatementServiceTest {
         assertEquals(new BigDecimal("700.00"), s.getSales().getChosen());
         assertTrue(party(s.getSales().getParties(), CUST_UNREAL).isUnreal());
         assertFalse(party(s.getSales().getParties(), CUST_REAL).isUnreal());
+        // v5: bank receipts per customer, like purchases' bank paid.
+        assertEquals(new BigDecimal("900.00"), party(s.getSales().getParties(), CUST_REAL).getBankPaid(), "customer-receipt slice on b3");
+        assertEquals(new BigDecimal("900.00"), party(s.getSales().getParties(), CUST_REAL).getUnpaidAfterBank(), "1800 sold − 900 received");
+        assertEquals(new BigDecimal("0.00"), party(s.getSales().getParties(), CUST_UNREAL).getBankPaid());
     }
 
     @Test
@@ -223,6 +227,9 @@ class AuditStatementServiceTest {
         assertEquals("mapped from customers", s.getBankInflow().getExtras().get(0).getLabel());
         assertEquals(new BigDecimal("149.00"), s.getBankInflow().getExtras().get(1).getAmount(), "99 unresolved + 50 other income");
         assertEquals(new BigDecimal("999.00"), s.getBankInflow().getChosen(), "row b3 is the ticked customer's: its slice and its remainder");
+        assertEquals(D5, s.getBankInflow().getFirstDate(), "coverage: every bank row in the fixture is dated D5");
+        assertEquals(D5, s.getBankInflow().getLastDate());
+        assertEquals(D5, s.getCashOutflow().getLastDate());
         assertEquals(new BigDecimal("80.00"), s.getCashInflow().getTotal());
         assertEquals(new BigDecimal("80.00"), s.getCashInflow().getChosen(), "the cash payment is the ticked customer's");
         assertEquals("Real Customer", party(s.getCashInflow().getParties(), CUST_REAL).getName());

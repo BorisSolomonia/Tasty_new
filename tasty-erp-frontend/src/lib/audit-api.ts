@@ -169,6 +169,9 @@ export interface StatementRow {
   secondary: number | null
   secondaryLabel: string | null
   extras: StatementFigure[] | null
+  /** Real coverage of the data behind the figure — may end before the period does. */
+  firstDate: string | null
+  lastDate: string | null
   rowCount: number
   parties: StatementParty[]
   products: StatementProductGroup[] | null

@@ -238,6 +238,7 @@ public class AuditStatementService {
 
         // ---------------- bank rows: debits (outflow, supplier payments, withdrawals) and credits (inflow) ----------------
         Money outflow = new Money(), toSuppliers = new Money(), bankIn = new Money();
+        LocalDate[] outflowRange = new LocalDate[2], inflowRange = new LocalDate[2];
         BigDecimal unmapped = BigDecimal.ZERO;
         BigDecimal withdrawals = BigDecimal.ZERO, withdrawalsToSuppliers = BigDecimal.ZERO, withdrawalsUnresolved = BigDecimal.ZERO, withdrawalsUndocumented = BigDecimal.ZERO;
         BigDecimal customerReceipts = BigDecimal.ZERO, unmappedIncome = BigDecimal.ZERO;
@@ -257,6 +258,7 @@ public class AuditStatementService {
             Set<String> chosenSet = debit ? chosenSuppliers : chosenCustomers;
             Money total = debit ? outflow : bankIn;
             Map<String, PartyAcc> parties = debit ? outflowParties : inflowParties;
+            widen(debit ? outflowRange : inflowRange, row.getDate());
 
             // The row as a whole belongs to the party list once, under its own counterparty.
             PartyAcc op = parties.computeIfAbsent(rowKey, k -> new PartyAcc(rowTin));
@@ -312,6 +314,12 @@ public class AuditStatementService {
                     }
                 } else if (c != null && c.isCustomerReceipt()) {
                     customerReceipts = customerReceipts.add(v);
+                    if (cp != null) {
+                        // Sales lists this too: a customer who paid by bank with no sale document
+                        // shows 0 sales and a negative "unpaid after bank".
+                        PartyAcc buyer = buyers.computeIfAbsent(cp, PartyAcc::new);
+                        buyer.bankPaid = buyer.bankPaid.add(v);
+                    }
                 } else {
                     unmappedIncome = unmappedIncome.add(v);   // mapped, but not as a customer receipt (other income, refunds…)
                 }
@@ -388,6 +396,7 @@ public class AuditStatementService {
                         .total(money(outflow.amount)).chosen(anySupplier ? money(outflow.chosen) : null)
                         .secondary(money(unmapped)).secondaryLabel("unmapped")
                         .extras(List.of(fig("unmapped", unmapped), fig("withdrawals", withdrawals)))
+                        .firstDate(outflowRange[0]).lastDate(outflowRange[1])
                         .rowCount(outflow.rows)
                         .parties(parties(outflowParties, chosenSuppliers, nameOf, false)).build())
                 .inventory(InventoryRow.builder().key("inventory").title("Inventory (net, on paper)")
@@ -400,13 +409,14 @@ public class AuditStatementService {
                         .secondary(money(sale.amount.subtract(unrealTotal))).secondaryLabel("real")
                         .extras(List.of(fig("real", sale.amount.subtract(unrealTotal)), fig("unreal", unrealTotal)))
                         .rowCount(sale.rows)
-                        .parties(parties(buyers, chosenCustomers, nameOf, true))
+                        .parties(parties(buyers, chosenCustomers, nameOf, true, true))
                         .products(groups(saleGroups, anyCustomer)).build())
                 .bankInflow(Row.builder().key("bankInflow").title("Bank inflow (payments from customers)").chosenBy(CHOSEN_BY_CUSTOMERS)
                         .definition("Every bank credit row in the period. 'Mapped from customers' = slices in a customer-receipt group; 'unmapped income' = the rest (unmapped, other income, refunds). Chosen = receipts attributed to ticked customers.")
                         .total(money(bankIn.amount)).chosen(anyCustomer ? money(bankIn.chosen) : null)
                         .secondary(money(customerReceipts)).secondaryLabel("mapped from customers")
                         .extras(List.of(fig("mapped from customers", customerReceipts), fig("unmapped income", unmappedIncome)))
+                        .firstDate(inflowRange[0]).lastDate(inflowRange[1])
                         .rowCount(bankIn.rows)
                         .parties(parties(inflowParties, chosenCustomers, nameOf, false)).build())
                 .cashInflow(Row.builder().key("cashInflow").title("Cash inflow (cash from customers)").chosenBy(CHOSEN_BY_CUSTOMERS)
@@ -675,7 +685,8 @@ public class AuditStatementService {
         return parties(accs, chosen, nameOf, withKg, false);
     }
 
-    private static List<Party> parties(Map<String, PartyAcc> accs, Set<String> chosen, Function<String, String> nameOf, boolean withKg, boolean purchases) {
+    /** @param withBank purchases / sales: emit bankPaid and unpaidAfterBank. */
+    private static List<Party> parties(Map<String, PartyAcc> accs, Set<String> chosen, Function<String, String> nameOf, boolean withKg, boolean withBank) {
         List<Party> out = new ArrayList<>();
         for (Map.Entry<String, PartyAcc> e : accs.entrySet()) {
             PartyAcc a = e.getValue();
@@ -689,8 +700,8 @@ public class AuditStatementService {
                     .secondary(a.secondary.signum() != 0 ? money(a.secondary) : null)
                     .directAmount(a.directCount > 0 || a.mappedCount > 0 ? money(a.direct) : null).directCount(a.directCount)
                     .mappedAmount(a.directCount > 0 || a.mappedCount > 0 ? money(a.mapped) : null).mappedCount(a.mappedCount)
-                    .bankPaid(purchases ? money(a.bankPaid) : null)
-                    .unpaidAfterBank(purchases ? money(a.amount.subtract(a.bankPaid)) : null)
+                    .bankPaid(withBank ? money(a.bankPaid) : null)
+                    .unpaidAfterBank(withBank ? money(a.amount.subtract(a.bankPaid)) : null)
                     .rowCount(a.rows).chosen(chosen.contains(tin != null ? tin : e.getKey())).unreal(a.unreal)
                     .identityBasis(a.identityBasis)
                     .build());
@@ -757,6 +768,12 @@ public class AuditStatementService {
             parts.add(b.toString());
         }
         return String.join("; ", parts);
+    }
+
+    private static void widen(LocalDate[] range, LocalDate d) {
+        if (d == null) return;
+        if (range[0] == null || d.isBefore(range[0])) range[0] = d;
+        if (range[1] == null || d.isAfter(range[1])) range[1] = d;
     }
 
     static String canonical(String tin) {

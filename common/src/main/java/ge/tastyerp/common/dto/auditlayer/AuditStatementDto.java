@@ -91,6 +91,9 @@ public class AuditStatementDto {
         private String secondaryLabel;
         /** Every extra figure the row carries, in display order. */
         private List<Figure> extras;
+        /** First and last dated record behind the figure — the data's real coverage, which may end before the period does. */
+        private LocalDate firstDate;
+        private LocalDate lastDate;
         private int rowCount;
         /** Counterparties of this row, each carrying whether it is currently chosen. */
         private List<Party> parties;
@@ -124,9 +127,9 @@ public class AuditStatementDto {
         /** Bank rows: ₾ of slices on other counterparties' rows attributed to this party. */
         private BigDecimal mappedAmount;
         private int mappedCount;
-        /** Purchases: real bank money mapped to this supplier (supplier-settlement slices) in the period. */
+        /** Purchases: real bank money mapped to this supplier (supplier-settlement slices) in the period. Sales: bank receipts mapped to this customer (customer-receipt slices). */
         private BigDecimal bankPaid;
-        /** Purchases: documented purchases − bankPaid. What the bank has not settled — cash, checks or still owed. */
+        /** Purchases: documented purchases − bankPaid. Sales: documented sales − bank receipts. What the bank has not settled — cash, checks or still owed. */
         private BigDecimal unpaidAfterBank;
         private int rowCount;
         private boolean chosen;

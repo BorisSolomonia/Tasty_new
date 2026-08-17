@@ -243,7 +243,7 @@ function StatementLine({
 
   let note: React.ReactNode = null
   const extras = row?.extras ?? (row?.secondary != null && row.secondaryLabel ? [{ label: row.secondaryLabel, amount: row.secondary }] : [])
-  if (extras.length) {
+  if (extras.length || row?.lastDate) {
     note = (
       <span className="inline-flex flex-col gap-0.5 text-xs leading-tight">
         {extras.map((f) => (
@@ -251,6 +251,11 @@ function StatementLine({
             {f.label} {fmtGel(f.amount)}
           </span>
         ))}
+        {row?.lastDate ? (
+          <span className="whitespace-nowrap text-[11px] text-muted-foreground" title="First and last dated bank row behind this figure">
+            rows dated {row.firstDate ?? '?'} → {row.lastDate}
+          </span>
+        ) : null}
       </span>
     )
   } else if (inv) {
