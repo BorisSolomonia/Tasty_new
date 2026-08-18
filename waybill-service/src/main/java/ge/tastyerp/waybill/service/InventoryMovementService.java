@@ -63,7 +63,12 @@ public class InventoryMovementService {
     private final WaybillGoodsRepository waybillGoodsRepository;
 
     /** TTL for the per-range movements cache (ms). Default 3 minutes. */
-    @Value("${audit.movements-cache-ttl-ms:180000}")
+    /**
+     * 20 minutes: a full-period load is ~35 s of RS.ge lists and stored goods, so
+     * a 3-minute TTL made almost every audit visit pay it again. The working set
+     * is a few ranges of ~26k small DTOs — well inside the sized heap.
+     */
+    @Value("${audit.movements-cache-ttl-ms:1200000}")
     private long cacheTtlMs;
 
     /** Distinct date ranges kept at once; see the note at the construction site. */
@@ -71,6 +76,8 @@ public class InventoryMovementService {
 
     private volatile SimpleTtlCache<String, List<ProductMovementDto>> cache;
     private volatile SimpleTtlCache<String, DocumentTotalsDto> totalsCache;
+    /** The expensive part — RS.ge lists + stored goods — loaded once per range and shared by movements and totals. */
+    private volatile SimpleTtlCache<String, Documents> documentsCache;
 
     /**
      * The SALE/PURCHASE list fetches run on their own two threads, not
@@ -132,7 +139,20 @@ public class InventoryMovementService {
                 local = totalsCache;
             }
         }
-        return local.getOrCompute(key, () -> totals(loadDocuments(startDate, endDate), startDate, endDate));
+        return local.getOrCompute(key, () -> totals(documents(startDate, endDate), startDate, endDate));
+    }
+
+    private Documents documents(String startDate, String endDate) {
+        SimpleTtlCache<String, Documents> local = documentsCache;
+        if (local == null) {
+            synchronized (this) {
+                if (documentsCache == null) {
+                    documentsCache = SimpleTtlCache.named("waybill.documents", cacheTtlMs, MAX_CACHED_RANGES);
+                }
+                local = documentsCache;
+            }
+        }
+        return local.getOrCompute(startDate + "|" + endDate, () -> loadDocuments(startDate, endDate));
     }
 
     static DocumentTotalsDto totals(Documents d, String startDate, String endDate) {
@@ -191,7 +211,7 @@ public class InventoryMovementService {
                      Map<String, List<WaybillGoodDto>> goodsByWaybillId, Set<String> returnWaybillIds) {}
 
     private List<ProductMovementDto> fetchProductMovements(String startDate, String endDate) {
-        Documents d = loadDocuments(startDate, endDate);
+        Documents d = documents(startDate, endDate);
         List<ProductMovementDto> movements = new ArrayList<>();
         movements.addAll(toMovements(d.sales(), WaybillType.SALE, d.goodsByWaybillId(), d.returnWaybillIds()));
         movements.addAll(toMovements(d.purchases(), WaybillType.PURCHASE, d.goodsByWaybillId(), d.returnWaybillIds()));

@@ -26,6 +26,7 @@ import org.springframework.stereotype.Component;
 public class RsGeWarmup {
 
     private final WaybillService waybillService;
+    private final ge.tastyerp.waybill.service.InventoryMovementService inventoryMovementService;
 
     @Value("${rsge.warmup.enabled:true}")
     private boolean enabled;
@@ -56,6 +57,13 @@ public class RsGeWarmup {
             int purchases = waybillService.getWaybills(null, startDate, null, false, WaybillType.PURCHASE).size();
             log.info("RS.ge warm-up complete: {} sale and {} purchase waybills since {} in {} ms",
                     sales, purchases, startDate, System.currentTimeMillis() - t0);
+            // The audit page's default period: build its movements and document totals now,
+            // so the first person to open /audit after a deploy does not pay for them.
+            String today = java.time.LocalDate.now().toString();
+            int lines = inventoryMovementService.getProductMovements(startDate, today).size();
+            inventoryMovementService.getDocumentTotals(startDate, today);
+            log.info("Audit warm-up complete: {} document lines for {}..{} in {} ms",
+                    lines, startDate, today, System.currentTimeMillis() - t0);
         } catch (Exception e) {
             log.warn("RS.ge warm-up failed after {} ms (requests will fetch on demand): {}",
                     System.currentTimeMillis() - t0, e.getMessage());
