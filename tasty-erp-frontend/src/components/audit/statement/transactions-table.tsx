@@ -243,6 +243,31 @@ export function TransactionsTable({
               </tr>
             ))}
           </tbody>
+          <tfoot className="border-t-2 border-border bg-muted/40 font-semibold">
+            <tr data-testid="transactions-totals">
+              {isBank ? <td className="px-2 py-1" /> : null}
+              <td className="px-2 py-1" colSpan={isDoc ? 3 : 2}>
+                Total <span className="font-normal text-muted-foreground">{fmtCount(rows.length)} rows{visible.length < rows.length ? ` (${fmtCount(visible.length)} shown)` : ''}</span>
+              </td>
+              {isDoc ? <td className="px-2 py-1" /> : null}
+              {isDoc ? <td className="px-2 py-1" /> : null}
+              {isDoc ? (
+                <td className="whitespace-nowrap px-2 py-1 text-right tabular-nums" title="Sum of the quantities as printed; mixed units are not converted">
+                  {rows.reduce((s, t) => s + (t.quantityKg ?? 0), 0).toLocaleString('ka-GE', { maximumFractionDigits: 2 })}
+                </td>
+              ) : null}
+              {!isDoc ? <td className="px-2 py-1" /> : null}
+              {!isDoc ? <td className="px-2 py-1" /> : null}
+              <td className="whitespace-nowrap px-2 py-1 text-right tabular-nums">{fmtGel(total)}</td>
+              {isDoc || isBank ? (
+                <td className="px-2 py-1 text-[10px] font-normal text-muted-foreground">
+                  {isBank ? `unmapped ${fmtGel(rows.reduce((s, t) => s + (t.unresolvedAmount ?? 0), 0))}` : ''}
+                </td>
+              ) : null}
+              {isBank ? <td className="px-2 py-1" /> : null}
+              {isBank ? <td className="px-2 py-1" /> : null}
+            </tr>
+          </tfoot>
         </table>
       </div>
       {rows.length > shown ? (

@@ -272,6 +272,12 @@ describe('StatementSection', () => {
     expect(within(dialog).getByText('bank paid ₾')).toBeInTheDocument()
     expect(within(dialog).getByText('unpaid after bank ₾')).toBeInTheDocument()
     expect(within(dialog).getByText(/1600,00/)).toBeInTheDocument()
+    // Every column has a total: ₾ 3700, kg 190, bank paid 1750, unpaid after bank 1950 (gross), lines 3.
+    const totals = within(dialog).getByTestId('parties-totals')
+    expect(within(totals).getByText(/3700,00/)).toBeInTheDocument()
+    expect(within(totals).getByText(/190 kg/)).toBeInTheDocument()
+    expect(within(totals).getByText(/1750,00/)).toBeInTheDocument()
+    expect(within(totals).getByText(/1950,00/)).toBeInTheDocument()
     fireEvent.click(within(dialog).getByLabelText('Choose Supplier A'))
     expect(saveMutate).not.toHaveBeenCalled()
     act(() => {
@@ -305,8 +311,10 @@ describe('StatementSection', () => {
     const dialog = screen.getByRole('dialog')
     fireEvent.mouseDown(within(dialog).getByRole('tab', { name: /Products/ }))
     fireEvent.click(within(dialog).getByRole('tab', { name: /Products/ }))
+    expect(within(within(dialog).getByTestId('products-totals')).getByText(/3700,00/)).toBeInTheDocument()
     fireEvent.click(within(dialog).getByRole('button', { name: /Beef/ }))
     expect(within(dialog).getByText('w-1')).toBeInTheDocument()
+    expect(within(within(dialog).getByTestId('transactions-totals')).getByText(/3100,00/)).toBeInTheDocument()
     expect(within(dialog).getByText('Supplier B')).toBeInTheDocument()
 
     const selects = within(dialog).getAllByLabelText('Group for beef carcass')

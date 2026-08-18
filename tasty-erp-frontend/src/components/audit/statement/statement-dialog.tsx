@@ -393,6 +393,43 @@ function PartiesSheet({
               </tr>
             ) : null}
           </tbody>
+          {visible.length ? (
+            <tfoot className="border-t-2 border-border bg-muted/40 font-semibold">
+              <tr data-testid="parties-totals">
+                <td className="px-2 py-1.5" />
+                <td className="px-2 py-1.5">
+                  Total{q ? ' (filtered)' : ''}
+                  <span className="ml-1 font-normal text-muted-foreground">
+                    {fmtCount(visible.length)}
+                    {q ? ` of ${fmtCount(row.parties.length)}` : ''}
+                  </span>
+                </td>
+                <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{fmtGel(sum(visible, (p) => p.amount))}</td>
+                {hasKg ? <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{fmtKg(sum(visible, (p) => p.quantityKg), 0)}</td> : null}
+                {withBank ? <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{fmtGel(sum(visible, (p) => p.bankPaid))}</td> : null}
+                {withBank ? (
+                  <td className={cn('px-2 py-1.5 text-right tabular-nums whitespace-nowrap', sum(visible, (p) => p.unpaidAfterBank) < 0 && 'text-destructive')} title="Gross total: positive and negative remainders added as they are">
+                    {fmtGel(sum(visible, (p) => p.unpaidAfterBank))}
+                  </td>
+                ) : null}
+                {isBankRow ? (
+                  <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
+                    {fmtGel(sum(visible, (p) => p.directAmount))}
+                    <span className="ml-1 text-[10px] font-normal text-muted-foreground">·{fmtCount(visible.reduce((s, p) => s + p.directCount, 0))}</span>
+                  </td>
+                ) : null}
+                {isBankRow ? (
+                  <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
+                    {fmtGel(sum(visible, (p) => p.mappedAmount))}
+                    <span className="ml-1 text-[10px] font-normal text-muted-foreground">·{fmtCount(visible.reduce((s, p) => s + p.mappedCount, 0))}</span>
+                  </td>
+                ) : null}
+                {hasSecondary ? <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{fmtGel(sum(visible, (p) => p.secondary))}</td> : null}
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtCount(visible.reduce((s, p) => s + p.rowCount, 0))}</td>
+                <td className="px-2 py-1.5" />
+              </tr>
+            </tfoot>
+          ) : null}
         </table>
       </div>
       {withdrawalsOnly ? (
@@ -487,6 +524,19 @@ function ProductsSheet({ row, statement }: { row: StatementRow; statement: Audit
               </tr>
             ) : null}
           </tbody>
+          {groups.length ? (
+            <tfoot className="border-t-2 border-border bg-muted/40 font-semibold">
+              <tr data-testid="products-totals">
+                <td className="px-2 py-1.5">Total</td>
+                <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{fmtGel(sum(groups, (g) => g.amount))}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{fmtKg(sum(groups, (g) => g.quantityKg), 0)}</td>
+                {withChosen ? <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{fmtGel(sum(groups, (g) => g.chosenAmount))}</td> : null}
+                {withChosen ? <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{fmtKg(sum(groups, (g) => g.chosenKg), 0)}</td> : null}
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtCount(groups.reduce((s, g) => s + g.productCount, 0))}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtCount(groups.reduce((s, g) => s + g.rowCount, 0))}</td>
+              </tr>
+            </tfoot>
+          ) : null}
         </table>
       </div>
     </div>
@@ -597,10 +647,31 @@ function InventoryLevels({ inv }: { inv: StatementInventoryRow }) {
               )
             })}
           </tbody>
+          {inv.levels.length ? (
+            <tfoot className="border-t-2 border-border bg-muted/40 font-semibold">
+              <tr data-testid="inventory-totals">
+                <td className="px-2 py-1.5">Total</td>
+                <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{fmtKg(sum(inv.levels, (l) => l.purchasedKg), 0)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{fmtKg(sum(inv.levels, (l) => l.writeOffKg), 0)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{fmtKg(sum(inv.levels, (l) => l.soldKg), 0)}</td>
+                <td className={cn('px-2 py-1.5 text-right tabular-nums whitespace-nowrap', sum(inv.levels, (l) => l.netKg) < 0 && 'text-destructive')}>{fmtKg(sum(inv.levels, (l) => l.netKg), 0)}</td>
+                <td className="px-2 py-1.5 text-right text-muted-foreground">{EM_DASH}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap" title={inv.unpricedCategories.length ? `excludes ${inv.unpricedCategories.join(', ')}` : undefined}>
+                  {fmtGel(inv.totalValue)}
+                </td>
+                <td className="px-2 py-1.5" />
+              </tr>
+            </tfoot>
+          ) : null}
         </table>
       </div>
     </div>
   )
+}
+
+/** Column total over the listed rows; a null cell counts as nothing, not as an error. */
+export function sum<T>(rows: T[], pick: (row: T) => number | null | undefined): number {
+  return rows.reduce((s, r) => s + (pick(r) ?? 0), 0)
 }
 
 export function partyLabelFor(row: StatementRowKey): string {
