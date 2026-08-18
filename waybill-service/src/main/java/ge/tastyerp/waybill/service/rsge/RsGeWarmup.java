@@ -30,6 +30,14 @@ public class RsGeWarmup {
     @Value("${rsge.warmup.enabled:true}")
     private boolean enabled;
 
+    /**
+     * Where the warm-up starts. The audit page opens on 2023-01-01 → today, so a
+     * warm-up that stopped at the cutoff left the first audit request after
+     * every deploy paying ~100 s of RS.ge reads (BOR-92 v6.1).
+     */
+    @Value("${rsge.warmup.start-date:2023-01-01}")
+    private String startDate;
+
     @EventListener(ApplicationReadyEvent.class)
     public void onReady() {
         if (!enabled) {
@@ -44,10 +52,10 @@ public class RsGeWarmup {
     void warm() {
         long t0 = System.currentTimeMillis();
         try {
-            int sales = waybillService.getWaybills(null, null, null, true, WaybillType.SALE).size();
-            int purchases = waybillService.getWaybills(null, null, null, true, WaybillType.PURCHASE).size();
-            log.info("RS.ge warm-up complete: {} sale and {} purchase waybills since cutoff in {} ms",
-                    sales, purchases, System.currentTimeMillis() - t0);
+            int sales = waybillService.getWaybills(null, startDate, null, false, WaybillType.SALE).size();
+            int purchases = waybillService.getWaybills(null, startDate, null, false, WaybillType.PURCHASE).size();
+            log.info("RS.ge warm-up complete: {} sale and {} purchase waybills since {} in {} ms",
+                    sales, purchases, startDate, System.currentTimeMillis() - t0);
         } catch (Exception e) {
             log.warn("RS.ge warm-up failed after {} ms (requests will fetch on demand): {}",
                     System.currentTimeMillis() - t0, e.getMessage());
