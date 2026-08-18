@@ -142,6 +142,7 @@ public class RsGeSoapClient {
      * Automatically handles date range chunking if needed.
      */
     public List<Map<String, Object>> getWaybills(LocalDate startDate, LocalDate endDate) {
+        ge.tastyerp.common.util.DateRangeGuard.require(startDate, endDate);
         log.info("Fetching waybills from RS.ge: {} to {}", startDate, endDate);
 
         String startStr = startDate.atStartOfDay().format(DATE_FORMAT);
@@ -164,6 +165,7 @@ public class RsGeSoapClient {
      * Operation name matches legacy: get_buyer_waybills.
      */
     public List<Map<String, Object>> getBuyerWaybills(LocalDate startDate, LocalDate endDate) {
+        ge.tastyerp.common.util.DateRangeGuard.require(startDate, endDate);
         log.info("Fetching buyer waybills from RS.ge: {} to {}", startDate, endDate);
 
         String startStr = startDate.atStartOfDay().format(DATE_FORMAT);

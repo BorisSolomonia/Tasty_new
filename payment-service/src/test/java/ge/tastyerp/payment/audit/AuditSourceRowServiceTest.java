@@ -58,7 +58,7 @@ class AuditSourceRowServiceTest {
         org.springframework.test.util.ReflectionTestUtils.setField(service, "movementsCacheTtlMs", 1000L);
 
         List<ProductMovementDto> movements = service.loadProductMovements(
-                LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 31));
+                LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 15));
 
         assertEquals(1, movements.size());
         ProductMovementDto m = movements.get(0);

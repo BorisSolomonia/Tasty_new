@@ -59,7 +59,8 @@ import { cn } from '@/lib/cn'
 import {
   ALL_PRODUCTS,
   AuditProvider,
-  DEFAULT_START_DATE,
+  EARLIEST_AUDIT_DATE,
+  isSaneAuditDate,
   useAudit,
 } from '@/components/audit/audit-context'
 import { DataWarnings } from '@/components/audit/data-warnings'
@@ -121,8 +122,15 @@ function AuditWorkspace() {
             id="audit-start"
             type="date"
             value={filters.startDate}
+            min={EARLIEST_AUDIT_DATE}
             max={filters.endDate}
-            onChange={(event) => setFilters({ startDate: event.target.value || DEFAULT_START_DATE })}
+            onChange={(event) => {
+              // A date input fires on every keystroke: typing 2023 emits 0002, 0020, 0202 first.
+              // Only a finished, sane date is committed — never a request for the year 202.
+              const next = event.target.value
+              if (!next) return
+              if (isSaneAuditDate(next) && next <= filters.endDate) setFilters({ startDate: next })
+            }}
             className="mt-1 block h-9 rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
@@ -135,7 +143,10 @@ function AuditWorkspace() {
             type="date"
             value={filters.endDate}
             min={filters.startDate}
-            onChange={(event) => setFilters({ endDate: event.target.value })}
+            onChange={(event) => {
+              const next = event.target.value
+              if (isSaneAuditDate(next) && next >= filters.startDate) setFilters({ endDate: next })
+            }}
             className="mt-1 block h-9 rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>

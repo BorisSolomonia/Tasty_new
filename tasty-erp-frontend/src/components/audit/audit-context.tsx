@@ -126,6 +126,22 @@ export function todayIso(): string {
 
 export const DEFAULT_START_DATE = '2023-01-01'
 
+/** No business data exists before this; the server refuses earlier periods (DateRangeGuard). */
+export const EARLIEST_AUDIT_DATE = '2015-01-01'
+
+/**
+ * A finished, meaningful yyyy-MM-dd. Native date inputs emit intermediate
+ * values while a year is typed (0002-…, 0020-…, 0202-…); each of those used to
+ * become a request that swept RS.ge from year 202. Only dates that pass here
+ * are committed to the filters.
+ */
+export function isSaneAuditDate(value: string | null | undefined): value is string {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  if (value < EARLIEST_AUDIT_DATE) return false
+  const max = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10)
+  return value <= max
+}
+
 /** Bring a section's heading below the app bar and this page's section nav. */
 function scrollSectionIntoView(section: string) {
   if (typeof document === 'undefined') return

@@ -92,6 +92,7 @@ public class AuditSourceRowService {
     public List<AuditSourceRowDto> loadBankRows(LocalDate startDate, LocalDate endDate,
                                                 Map<String, AuditMappingDto> mappings,
                                                 AuditCounterpartyResolver resolver) {
+        ge.tastyerp.common.util.DateRangeGuard.require(startDate, endDate);
         List<AuditSourceRowDto> rows = new ArrayList<>();
         // A store failure throws (503). It used to return an empty list, which
         // rendered as "no bank movement in this period" — the tidy-looking empty
@@ -192,6 +193,7 @@ public class AuditSourceRowService {
      * immutable document feed.</p>
      */
     public List<ProductMovementDto> loadProductMovements(LocalDate startDate, LocalDate endDate) {
+        ge.tastyerp.common.util.DateRangeGuard.require(startDate, endDate);
         return movementsCache().getOrCompute(startDate + "|" + endDate,
                 () -> fetchProductMovements(startDate, endDate));
     }

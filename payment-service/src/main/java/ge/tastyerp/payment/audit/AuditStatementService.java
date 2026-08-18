@@ -130,6 +130,7 @@ public class AuditStatementService {
     // ==================== statement ====================
 
     public AuditStatementDto statement(LocalDate startDate, LocalDate endDate, String operator) {
+        ge.tastyerp.common.util.DateRangeGuard.require(startDate, endDate);
         Selection selection = operator == null || operator.isBlank()
                 ? Selection.builder().suppliers(List.of()).customers(List.of()).build()
                 : getSelection(operator);

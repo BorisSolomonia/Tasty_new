@@ -44,3 +44,15 @@ describe('parseGeorgianNumber', () => {
     expect(parseGeorgianNumber(null)).toBe(0)
   })
 })
+
+describe('isSaneAuditDate (audit filters)', () => {
+  it('refuses the half-typed years a native date input emits and anything before the floor', async () => {
+    const { isSaneAuditDate } = await import('@/components/audit/audit-context')
+    for (const v of ['0002-01-01', '0020-01-01', '0202-01-01', '1999-12-31', '', '2023-1-1']) {
+      expect(isSaneAuditDate(v)).toBe(false)
+    }
+    expect(isSaneAuditDate('2023-01-01')).toBe(true)
+    expect(isSaneAuditDate(new Date().toISOString().slice(0, 10))).toBe(true)
+    expect(isSaneAuditDate('2999-01-01')).toBe(false)
+  })
+})

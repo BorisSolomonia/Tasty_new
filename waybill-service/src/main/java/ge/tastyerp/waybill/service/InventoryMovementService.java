@@ -102,8 +102,16 @@ public class InventoryMovementService {
     }
 
     public List<ProductMovementDto> getProductMovements(String startDate, String endDate) {
+        guard(startDate, endDate);
         String key = startDate + "|" + endDate;
         return cache().getOrCompute(key, () -> fetchProductMovements(startDate, endDate));
+    }
+
+    /** A period nobody could mean (year 0202, a decade-long sweep) is refused here, before any thread is spent on it. */
+    private static void guard(String startDate, String endDate) {
+        java.time.LocalDate s = ge.tastyerp.common.util.DateUtils.parseDate(startDate);
+        java.time.LocalDate e = ge.tastyerp.common.util.DateUtils.parseDate(endDate);
+        ge.tastyerp.common.util.DateRangeGuard.require(s, e);
     }
 
     /**
@@ -113,6 +121,7 @@ public class InventoryMovementService {
      * from the same waybills and the same stored goods.
      */
     public DocumentTotalsDto getDocumentTotals(String startDate, String endDate) {
+        guard(startDate, endDate);
         String key = startDate + "|" + endDate;
         SimpleTtlCache<String, DocumentTotalsDto> local = totalsCache;
         if (local == null) {
