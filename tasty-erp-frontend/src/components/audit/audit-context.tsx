@@ -138,7 +138,7 @@ export const EARLIEST_AUDIT_DATE = '2015-01-01'
 export function isSaneAuditDate(value: string | null | undefined): value is string {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
   if (value < EARLIEST_AUDIT_DATE) return false
-  const max = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10)
+  const max = new Date(Date.now() + 400 * 86400000).toISOString().slice(0, 10)
   return value <= max
 }
 

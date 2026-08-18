@@ -22,15 +22,19 @@ public final class DateRangeGuard {
     public static final LocalDate EARLIEST_SUPPORTED = LocalDate.of(2015, 1, 1);
     /** Longest period a single request may sweep. */
     public static final int MAX_SPAN_YEARS = 12;
-    /** How far past today a period may end (timezones, "tomorrow" defaults). */
-    public static final int MAX_DAYS_AHEAD = 2;
+    /**
+     * How far past today a period may end. Month-end presets ("this month" →
+     * 2026-08-31) and "next year" filters are ordinary; a future end costs
+     * nothing at RS.ge (there is nothing there). Only an absurd future is refused.
+     */
+    public static final int MAX_DAYS_AHEAD = 400;
 
     private DateRangeGuard() {}
 
     /**
      * @throws ValidationException when the period starts before
-     *         {@link #EARLIEST_SUPPORTED}, ends after today + {@link #MAX_DAYS_AHEAD},
-     *         ends before it starts, or spans more than {@link #MAX_SPAN_YEARS}
+     *         {@link #EARLIEST_SUPPORTED}, ends more than {@link #MAX_DAYS_AHEAD} days
+     *         after today, ends before it starts, or spans more than {@link #MAX_SPAN_YEARS}
      */
     public static void require(LocalDate start, LocalDate end) {
         require(start, end, EARLIEST_SUPPORTED, LocalDate.now());
@@ -47,7 +51,7 @@ public final class DateRangeGuard {
                             + " — nothing exists there; if you are typing a year, finish typing it");
         }
         if (end.isAfter(today.plusDays(MAX_DAYS_AHEAD))) {
-            throw new ValidationException("endDate", "endDate " + end + " is in the future");
+            throw new ValidationException("endDate", "endDate " + end + " is more than a year in the future");
         }
         if (end.isBefore(start)) {
             throw new ValidationException("endDate", "endDate " + end + " is before startDate " + start);

@@ -32,12 +32,14 @@ class DateRangeGuardTest {
         assertDoesNotThrow(() -> DateRangeGuard.require(LocalDate.of(2023, 1, 1), TODAY, FLOOR, TODAY));
         assertDoesNotThrow(() -> DateRangeGuard.require(LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 15), FLOOR, TODAY));
         assertDoesNotThrow(() -> DateRangeGuard.require(TODAY, TODAY.plusDays(1), FLOOR, TODAY), "tomorrow as an end date is tolerated");
+        assertDoesNotThrow(() -> DateRangeGuard.require(LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 31), FLOOR, TODAY), "month-end presets are ordinary");
+        assertDoesNotThrow(() -> DateRangeGuard.require(LocalDate.of(2026, 1, 1), LocalDate.of(2026, 12, 31), FLOOR, TODAY), "a whole year is ordinary");
     }
 
     @Test
     void reversedFutureAndOverlongPeriodsAreRefused() {
         assertThrows(ValidationException.class, () -> DateRangeGuard.require(TODAY, TODAY.minusDays(1), FLOOR, TODAY));
-        assertThrows(ValidationException.class, () -> DateRangeGuard.require(TODAY, TODAY.plusDays(30), FLOOR, TODAY));
+        assertThrows(ValidationException.class, () -> DateRangeGuard.require(TODAY, TODAY.plusDays(500), FLOOR, TODAY));
         assertThrows(ValidationException.class, () -> DateRangeGuard.require(LocalDate.of(2015, 1, 1), LocalDate.of(2027, 1, 2), LocalDate.of(2000, 1, 1), LocalDate.of(2027, 1, 2)));
         assertThrows(ValidationException.class, () -> DateRangeGuard.require(null, TODAY, FLOOR, TODAY));
     }
