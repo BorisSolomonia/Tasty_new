@@ -177,12 +177,21 @@ function PartiesSheet({
 
   const q = needle.trim().toLowerCase()
   const visible = q ? row.parties.filter((p) => p.name.toLowerCase().includes(q) || p.tin.toLowerCase().includes(q)) : row.parties
+  // What is on this screen is checked here, not only what the server thinks it sent.
+  const partiesSum = row.parties.reduce((s, p) => s + (p.amount ?? 0), 0)
+  const sumMismatch = row.total !== null && Math.abs(partiesSum - row.total) > 0.011
   // Every party is choosable (BOR-92 v4): a TIN, or the exact printed label for unidentified rows.
   const choosable = visible
   const allOn = choosable.length > 0 && choosable.every((p) => chosenSet.has(p.tin))
 
   return (
     <div className="space-y-2">
+      {sumMismatch ? (
+        <p className="rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1 text-xs text-destructive" role="alert">
+          Check failed on this screen: the {fmtCount(row.parties.length)} counterparties add up to {fmtGel(partiesSum)}, the row shows {fmtGel(row.total)}. Do
+          not reconcile from these figures until this is explained.
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <label className="relative">
           <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -313,6 +322,14 @@ function PartiesSheet({
                             {p.unreal ? ' · unreal' : ''}
                             {p.identityBasis ? ` · ${p.identityBasis}` : ''}
                           </span>
+                          {p.supplierPaymentsNotOnRsGe ? (
+                            <span
+                              className="mt-0.5 inline-block rounded border border-destructive/50 px-1 text-[10px] uppercase tracking-wide text-destructive"
+                              title="Slices on this counterparty are mapped as supplier payments, but it appears on no RS.ge purchase document in this period — not counted in Bank payments to suppliers; review the mapping or rule"
+                            >
+                              mapped as supplier payment · not on RS.ge {fmtGel(p.supplierPaymentsNotOnRsGe)}
+                            </span>
+                          ) : null}
                         </span>
                       </button>
                     </td>

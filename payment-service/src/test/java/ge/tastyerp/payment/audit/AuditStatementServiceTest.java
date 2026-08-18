@@ -1,5 +1,6 @@
 package ge.tastyerp.payment.audit;
 
+import ge.tastyerp.common.dto.audit.DocumentTotalsDto;
 import ge.tastyerp.common.dto.audit.ProductMovementDto;
 import ge.tastyerp.common.dto.auditlayer.AuditCategoryDto;
 import ge.tastyerp.common.dto.auditlayer.AuditMappingDto;
@@ -107,7 +108,9 @@ class AuditStatementServiceTest {
                 bank("b6", "CREDIT", "50", null, List.of(
                         split(AuditCategories.OTHER_INCOME, null, null, "50"))),                        // mapped, not a customer receipt
                 bank("b7", "DEBIT", "120", null, List.of(                                                // ATM row, cash went elsewhere
-                        split(AuditCategories.UNDOCUMENTED_WITHDRAWAL, null, null, "120"))));
+                        split(AuditCategories.UNDOCUMENTED_WITHDRAWAL, null, null, "120"))),
+                bank("b8", "DEBIT", "900", "600000009", List.of(                                            // "supplier payment" to someone on no RS.ge purchase document
+                        split(AuditCategories.SUPPLIER_BANK_PAYMENT, null, "600000009", "900"))));
         List<PaymentDto> bankPayments = List.of(
                 pay("p1", CUST_REAL, "Real Customer", "500", "tbc"),
                 pay("p2", CUST_UNREAL, "Unreal Customer", "120", "tbc"));
@@ -118,7 +121,11 @@ class AuditStatementServiceTest {
         AuditSubgroups.builtIns().forEach(s -> subgroups.put(s.getCode(), s));
         return new AuditStatementService.Inputs(movements, docs, bankRows, bankPayments, cashPayments, categories, subgroups,
                 Map.of(), Map.of("BEEF", new BigDecimal("28"), "PORK", new BigDecimal("25")),
-                Set.of(CUST_UNREAL), Map.of(), new BigDecimal("400"));
+                Set.of(CUST_UNREAL), Map.of(), new BigDecimal("400"),
+                DocumentTotalsDto.builder()
+                        .purchase(DocumentTotalsDto.Side.builder().waybills(3).documentAmount(new BigDecimal("3700.00")).linesAmount(new BigDecimal("3700.00")).counterparties(2).build())
+                        .sale(DocumentTotalsDto.Side.builder().waybills(2).documentAmount(new BigDecimal("2500.00")).linesAmount(new BigDecimal("2500.00")).counterparties(2).build())
+                        .build());
     }
 
     private AuditStatementDto run(List<String> suppliers, List<String> customers) {
@@ -158,6 +165,8 @@ class AuditStatementServiceTest {
         assertEquals(new BigDecimal("1600.00"), party(s.getPurchases().getParties(), SUP_A).getUnpaidAfterBank(), "2600 − 1000");
         assertEquals(new BigDecimal("750.00"), party(s.getPurchases().getParties(), SUP_B).getBankPaid(), "400 by bank + 350 cash slice");
         assertEquals(new BigDecimal("350.00"), party(s.getPurchases().getParties(), SUP_B).getUnpaidAfterBank());
+        assertEquals(2, s.getPurchases().getParties().size(), "RS.ge sellers only — never a bank-only payee");
+        assertTrue(s.getPurchases().getParties().stream().allMatch(p -> p.getRowCount() > 0));
         assertEquals("BEEF", s.getPurchases().getProducts().get(0).getCategory());
         assertEquals(new BigDecimal("3100.00"), s.getPurchases().getProducts().get(0).getAmount());
         assertEquals(new BigDecimal("2000.00"), s.getPurchases().getProducts().get(0).getChosenAmount());
@@ -168,20 +177,26 @@ class AuditStatementServiceTest {
     @DisplayName("bank payments to suppliers: only supplier-settlement slices count (1400); chosen A → 1000")
     void bankPaymentsToSuppliers() {
         AuditStatementDto s = run(List.of(SUP_A), List.of());
-        assertEquals(new BigDecimal("1750.00"), s.getBankPaymentsToSuppliers().getTotal());
+        assertEquals(new BigDecimal("1750.00"), s.getBankPaymentsToSuppliers().getTotal(), "the 900 to a non-RS.ge counterparty is not a supplier payment here");
         assertEquals(new BigDecimal("1000.00"), s.getBankPaymentsToSuppliers().getChosen());
-        assertEquals(2, s.getBankPaymentsToSuppliers().getParties().size(), "A and B (the withdrawal's cash slice is B's)");
+        assertEquals(2, s.getBankPaymentsToSuppliers().getParties().size(), "A and B (the withdrawal's cash slice is B's) — never 600000009");
+        assertEquals("mapped as supplier payment, not on RS.ge", s.getBankPaymentsToSuppliers().getExtras().get(0).getLabel());
+        assertEquals(new BigDecimal("900.00"), s.getBankPaymentsToSuppliers().getExtras().get(0).getAmount());
+        assertTrue(s.getNotes().stream().anyMatch(n -> n.contains("no RS.ge purchase document")));
     }
 
     @Test
     @DisplayName("cash outflow: every debit (2870), unmapped 550 on 5 rows; chosen A = whole row b1 (1500); nameless row listed as its own party; direct vs mapped per party")
     void cashOutflow() {
         AuditStatementDto s = run(List.of(SUP_A), List.of());
-        assertEquals(new BigDecimal("2870.00"), s.getCashOutflow().getTotal());
+        assertEquals(new BigDecimal("3770.00"), s.getCashOutflow().getTotal());
         assertEquals(new BigDecimal("550.00"), s.getCashOutflow().getSecondary());
         assertEquals("unmapped", s.getCashOutflow().getSecondaryLabel());
         assertEquals(new BigDecimal("1500.00"), s.getCashOutflow().getChosen());
-        assertEquals(5, s.getCashOutflow().getRowCount());
+        assertEquals(6, s.getCashOutflow().getRowCount());
+        Party notRs = party(s.getCashOutflow().getParties(), "600000009");
+        assertEquals(new BigDecimal("900.00"), notRs.getSupplierPaymentsNotOnRsGe(), "mapped as a supplier payment, but on no RS.ge purchase document");
+        assertNull(party(s.getCashOutflow().getParties(), SUP_A).getSupplierPaymentsNotOnRsGe());
         Party a = party(s.getCashOutflow().getParties(), SUP_A);
         assertEquals(new BigDecimal("1500.00"), a.getAmount());
         assertEquals(new BigDecimal("300.00"), a.getSecondary(), "unmapped part of A's row");
@@ -314,6 +329,39 @@ class AuditStatementServiceTest {
         assertEquals(2, service.transactions("bankInflow", null, null, 0, in).size(), "every credit row");
         assertEquals(1, service.transactions("cashInflow", null, null, 0, in).size());
         assertThrows(ValidationException.class, () -> service.transactions("nope", null, null, 0, in));
+    }
+
+    @Test
+    @DisplayName("self-checks: every window adds up to its row, purchases lists RS.ge sellers only, splits add up, RS.ge documents match the lines; a broken payload fails loudly; missing totals are SKIPPED")
+    void checks() {
+        AuditStatementDto s = run(List.of(), List.of());
+        assertTrue(s.getChecks().stream().allMatch(c -> "PASSED".equals(c.getStatus())),
+                "all checks pass on a consistent payload: " + s.getChecks().stream().filter(c -> !"PASSED".equals(c.getStatus())).map(c -> c.getCode() + " " + c.getDetail()).toList());
+        assertTrue(s.getChecks().stream().anyMatch(c -> c.getCode().equals("PARTIES_SUM_purchases")));
+        assertTrue(s.getChecks().stream().anyMatch(c -> c.getCode().equals("PRODUCTS_SUM_sales")));
+        assertTrue(s.getChecks().stream().anyMatch(c -> c.getCode().equals("PURCHASES_RSGE_ONLY")));
+        assertTrue(s.getChecks().stream().anyMatch(c -> c.getCode().equals("RSGE_DOCUMENTS_PURCHASES") && "PASSED".equals(c.getStatus())));
+
+        // Tamper: a party amount that no longer adds up, and RS.ge documents that exceed the lines.
+        s.getPurchases().getParties().get(0).setAmount(new BigDecimal("1.00"));
+        DocumentTotalsDto docs = DocumentTotalsDto.builder()
+                .purchase(DocumentTotalsDto.Side.builder().waybills(4).documentAmount(new BigDecimal("4000.00")).linesAmount(new BigDecimal("3700.00"))
+                        .waybillsWithoutGoods(1).amountWithoutGoods(new BigDecimal("300.00")).counterparties(3).build())
+                .sale(DocumentTotalsDto.Side.builder().waybills(2).documentAmount(new BigDecimal("2500.00")).linesAmount(new BigDecimal("2500.00")).build())
+                .build();
+        List<AuditStatementDto.Check> tampered = AuditStatementService.checks(s, docs);
+        AuditStatementDto.Check parties = tampered.stream().filter(c -> c.getCode().equals("PARTIES_SUM_purchases")).findFirst().orElseThrow();
+        assertEquals("FAILED", parties.getStatus());
+        assertTrue(parties.getDetail().startsWith("differ by"), parties.getDetail());
+        AuditStatementDto.Check rs = tampered.stream().filter(c -> c.getCode().equals("RSGE_DOCUMENTS_PURCHASES")).findFirst().orElseThrow();
+        assertEquals("FAILED", rs.getStatus());
+        assertEquals(new BigDecimal("4000.00"), rs.getExpected());
+        assertEquals(new BigDecimal("3700.00"), rs.getActual());
+        assertTrue(rs.getDetail().contains("1 without goods (300.00)"), rs.getDetail());
+
+        // No document totals → the RS.ge checks are SKIPPED, never PASSED.
+        List<AuditStatementDto.Check> skipped = AuditStatementService.checks(run(List.of(), List.of()), null);
+        assertTrue(skipped.stream().filter(c -> c.getCode().startsWith("RSGE_")).allMatch(c -> "SKIPPED".equals(c.getStatus())));
     }
 
     @Test

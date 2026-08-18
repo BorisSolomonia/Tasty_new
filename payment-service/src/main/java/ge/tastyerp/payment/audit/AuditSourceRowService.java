@@ -211,6 +211,52 @@ public class AuditSourceRowService {
         return local;
     }
 
+    /**
+     * RS.ge document totals for the period from waybill-service — the statement's
+     * cross-check input (BOR-92 v6). Null when the service does not answer: the
+     * check is then reported as skipped, never as passed.
+     */
+    public ge.tastyerp.common.dto.audit.DocumentTotalsDto loadDocumentTotals(LocalDate startDate, LocalDate endDate) {
+        try {
+            String url = String.format("%s/api/waybills/document-totals?startDate=%s&endDate=%s",
+                    waybillServiceUrl, startDate, endDate);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> response = internalRestTemplate.getForObject(url, Map.class);
+            if (response == null || !(response.get("data") instanceof Map)) {
+                return null;
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> data = (Map<String, Object>) response.get("data");
+            return ge.tastyerp.common.dto.audit.DocumentTotalsDto.builder()
+                    .startDate(String.valueOf(data.get("startDate"))).endDate(String.valueOf(data.get("endDate")))
+                    .purchase(side(data.get("purchase"))).sale(side(data.get("sale")))
+                    .build();
+        } catch (Exception e) {
+            log.warn("Document totals unavailable for {}..{}: {}", startDate, endDate, e.getMessage());
+            return null;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static ge.tastyerp.common.dto.audit.DocumentTotalsDto.Side side(Object raw) {
+        if (!(raw instanceof Map)) return null;
+        Map<String, Object> m = (Map<String, Object>) raw;
+        return ge.tastyerp.common.dto.audit.DocumentTotalsDto.Side.builder()
+                .waybills(intOf(m.get("waybills")))
+                .documentAmount(decimal(m.get("documentAmount")))
+                .linesAmount(decimal(m.get("linesAmount")))
+                .waybillsWithoutGoods(intOf(m.get("waybillsWithoutGoods")))
+                .amountWithoutGoods(decimal(m.get("amountWithoutGoods")))
+                .waybillsWithMismatch(intOf(m.get("waybillsWithMismatch")))
+                .mismatchAmount(decimal(m.get("mismatchAmount")))
+                .counterparties(intOf(m.get("counterparties")))
+                .build();
+    }
+
+    private static int intOf(Object v) {
+        return v instanceof Number n ? n.intValue() : 0;
+    }
+
     private List<ProductMovementDto> fetchProductMovements(LocalDate startDate, LocalDate endDate) {
         try {
             String url = String.format("%s/api/waybills/product-movements?startDate=%s&endDate=%s",

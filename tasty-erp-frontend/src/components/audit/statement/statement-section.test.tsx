@@ -71,6 +71,7 @@ function party(over: Partial<StatementParty> & { tin: string; name: string }): S
     mappedCount: 0,
     bankPaid: null,
     unpaidAfterBank: null,
+    supplierPaymentsNotOnRsGe: null,
     rowCount: 0,
     chosen: false,
     unreal: false,
@@ -160,6 +161,7 @@ function payload(): AuditStatement {
         party({ tin: 'SUP_A', name: 'Supplier A', amount: 1500, secondary: 300, rowCount: 1, directAmount: 1500, directCount: 1, mappedAmount: 0, mappedCount: 0 }),
         party({ tin: 'SUP_B', name: 'Supplier B', amount: 750, rowCount: 2, directAmount: 400, directCount: 1, mappedAmount: 350, mappedCount: 1 }),
         party({ tin: 'name:ATM', name: 'ATM', amount: 250, secondary: 250, rowCount: 1, directAmount: 250, directCount: 1, mappedAmount: 0, mappedCount: 0 }),
+        party({ tin: '600000009', name: 'ნუკრი ბოშიშვილი', amount: 900, rowCount: 1, directAmount: 900, directCount: 1, mappedAmount: 0, mappedCount: 0, supplierPaymentsNotOnRsGe: 900 }),
       ],
     }),
     inventory: {
@@ -216,6 +218,11 @@ function payload(): AuditStatement {
       cashToReceiveFromCustomers: 1200,
       cashToPaySuppliers: 1800,
     },
+    checks: [
+      { code: 'PARTIES_SUM_purchases', label: 'Purchases: counterparties add up to the row', status: 'PASSED', expected: 3700, actual: 3700, detail: '2 counterparties' },
+      { code: 'RSGE_DOCUMENTS_PURCHASES', label: 'Purchases: RS.ge document totals vs goods lines', status: 'FAILED', expected: 4000, actual: 3700, detail: '4 waybills, 3 counterparties · 1 without goods (300,00)' },
+      { code: 'RSGE_DOCUMENTS_SALES', label: 'Sales: RS.ge document totals vs goods lines', status: 'SKIPPED', expected: null, actual: null, detail: 'waybill-service did not answer — not checked' },
+    ],
     notes: ['No supplier is chosen — supplier-side figures are empty, not zero.'],
   }
 }
@@ -434,6 +441,32 @@ describe('StatementSection', () => {
     expect(within(dialog).getByText('unpaid after bank ₾')).toBeInTheDocument()
     const rowEl = within(dialog).getByText('Real Customer').closest('tr') as HTMLElement
     expect(within(rowEl).getAllByText(/900,00/).length).toBe(2)
+  })
+
+  it('shows failed and skipped checks with their figures, and flags supplier payments to counterparties not on RS.ge', () => {
+    render(<StatementSection />)
+    const checks = screen.getByTestId('statement-checks')
+    expect(within(checks).getByText('1 check failed')).toBeInTheDocument()
+    expect(within(checks).getAllByText(/RS.ge document totals vs goods lines/).length).toBe(2) // the failed purchases check and the skipped sales check
+    expect(within(checks).getByText(/expected 4000,00 .* shown 3700,00/)).toBeInTheDocument()
+    expect(within(checks).getByText(/1 without goods/)).toBeInTheDocument()
+    expect(within(checks).getByText(/waybill-service did not answer/)).toBeInTheDocument()
+    fireEvent.click(within(checks).getByRole('button', { name: 'Show all' }))
+    expect(within(checks).getByText(/counterparties add up to the row/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Cash outflow — open/ }))
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByText(/mapped as supplier payment · not on RS.ge 900,00/)).toBeInTheDocument()
+  })
+
+  it('warns on screen when the counterparties shown do not add up to the row shown', () => {
+    const data = payload()
+    data.purchases.total = 9999
+    statementState.data = data
+    render(<StatementSection />)
+    fireEvent.click(screen.getByRole('button', { name: /Purchases — open/ }))
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(/add up to 3700,00 ₾, the row shows 9999,00 ₾/)
   })
 
   it('opens inventory levels with the LIFO supplier attribution', () => {

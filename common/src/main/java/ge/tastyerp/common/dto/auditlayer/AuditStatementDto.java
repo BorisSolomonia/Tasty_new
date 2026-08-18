@@ -55,6 +55,14 @@ public class AuditStatementDto {
     /** The arithmetic below the table — every operand named, nothing derived twice. */
     private Summary summary;
 
+    /**
+     * Self-checks run on this very payload (BOR-92 v6): every window's parties
+     * and product groups add up to its row; purchases and sales lines add up to
+     * what RS.ge says the documents total; the split figures add up to their
+     * whole. A failed check is shown, never hidden.
+     */
+    private List<Check> checks;
+
     private List<String> notes;
 
     // ------------------------------------------------------------------
@@ -114,6 +122,20 @@ public class AuditStatementDto {
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
+    public static class Check {
+        private String code;
+        private String label;
+        /** PASSED | FAILED | SKIPPED (input unavailable — said, not assumed passed). */
+        private String status;
+        private BigDecimal expected;
+        private BigDecimal actual;
+        private String detail;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
     public static class Party {
         private String tin;
         private String name;
@@ -137,6 +159,12 @@ public class AuditStatementDto {
         private boolean unreal;
         /** How the identity was established when the source gave no TIN (bank rows). */
         private String identityBasis;
+        /**
+         * Bank rows: ₾ of slices in a supplier-settlement group attributed to this
+         * party while it is on no RS.ge purchase document in the period — mapped as
+         * a supplier payment, but not to an RS.ge supplier. Null when none.
+         */
+        private BigDecimal supplierPaymentsNotOnRsGe;
     }
 
     /**

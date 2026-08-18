@@ -1,5 +1,6 @@
 package ge.tastyerp.payment.audit;
 
+import ge.tastyerp.common.dto.audit.DocumentTotalsDto;
 import ge.tastyerp.common.dto.audit.ProductMovementDto;
 import ge.tastyerp.common.dto.auditlayer.AuditBulkMapRequestDto;
 import ge.tastyerp.common.dto.auditlayer.AuditCategoryDto;
@@ -14,6 +15,7 @@ import ge.tastyerp.common.dto.auditlayer.AuditStatementDto.Party;
 import ge.tastyerp.common.dto.auditlayer.AuditStatementDto.ProductGroup;
 import ge.tastyerp.common.dto.auditlayer.AuditStatementDto.Row;
 import ge.tastyerp.common.dto.auditlayer.AuditStatementDto.Selection;
+import ge.tastyerp.common.dto.auditlayer.AuditStatementDto.Check;
 import ge.tastyerp.common.dto.auditlayer.AuditStatementDto.Summary;
 import ge.tastyerp.common.dto.auditlayer.AuditStatementDto.Figure;
 import ge.tastyerp.common.dto.auditlayer.AuditStatementDto.SupplierKg;
@@ -147,7 +149,8 @@ public class AuditStatementService {
                   Map<String, BigDecimal> writeOffRates,
                   Set<String> unrealCustomers,
                   Map<String, String> names,
-                  BigDecimal receivables) {}
+                  BigDecimal receivables,
+                  DocumentTotalsDto documentTotals) {}
 
     Inputs loadInputs(LocalDate startDate, LocalDate endDate) {
         Map<String, AuditMappingDto> mappings = mappingService.loadMappingIndex();
@@ -166,7 +169,8 @@ public class AuditStatementService {
                 configClient.writeOffRates(),
                 configClient.unrealCustomers(),
                 configClient.customerNames(),
-                receivables());
+                receivables(),
+                sourceRowService.loadDocumentTotals(startDate, endDate));
     }
 
     /** Total outstanding on /payments, as of now; null (and a note) if the payments module did not answer. */
@@ -185,6 +189,11 @@ public class AuditStatementService {
         Set<String> chosenCustomers = new HashSet<>(selection.getCustomers());
         List<String> notes = new ArrayList<>();
         Function<String, String> nameOf = nameResolver(in);
+        // Who RS.ge says sold to us in this period. Only these are suppliers here:
+        // Purchases lists them, and "Bank payments to suppliers" counts only money
+        // that reached them. Anything mapped as a supplier payment to someone else is
+        // reported beside the row, never inside it (BOR-92 v6).
+        AuditSupplierRegistry rsSuppliers = AuditSupplierRegistry.from(in.movements());
 
         // ---------------- purchases & sales from document lines ----------------
         Map<String, PartyAcc> sellers = new LinkedHashMap<>();
@@ -239,6 +248,8 @@ public class AuditStatementService {
         // ---------------- bank rows: debits (outflow, supplier payments, withdrawals) and credits (inflow) ----------------
         Money outflow = new Money(), toSuppliers = new Money(), bankIn = new Money();
         LocalDate[] outflowRange = new LocalDate[2], inflowRange = new LocalDate[2];
+        BigDecimal supplierPaymentsNotOnRsGe = BigDecimal.ZERO;
+        int supplierPaymentsNotOnRsGeCount = 0;
         BigDecimal unmapped = BigDecimal.ZERO;
         BigDecimal withdrawals = BigDecimal.ZERO, withdrawalsToSuppliers = BigDecimal.ZERO, withdrawalsUnresolved = BigDecimal.ZERO, withdrawalsUndocumented = BigDecimal.ZERO;
         BigDecimal customerReceipts = BigDecimal.ZERO, unmappedIncome = BigDecimal.ZERO;
@@ -292,23 +303,29 @@ public class AuditStatementService {
                     op.direct = op.direct.add(v);
                 }
                 if (debit) {
-                    if (c != null && c.isSupplierSettlement()) {
+                    boolean supplierGroup = c != null && c.isSupplierSettlement();
+                    boolean rsSupplier = cp != null && rsSuppliers.isDocumentedSupplier(cp);
+                    if (supplierGroup && rsSupplier) {
                         toSuppliers.add(v, BigDecimal.ZERO, chosen);
-                        String key = cp != null ? cp : rowKey;
-                        PartyAcc payee = supplierPayees.computeIfAbsent(key, k -> new PartyAcc(cp));
+                        PartyAcc payee = supplierPayees.computeIfAbsent(cp, PartyAcc::new);
                         payee.name = firstNonBlank(payee.name, sp.getCounterpartyName(), row.getCounterpartyName());
                         payee.amount = payee.amount.add(v);
                         payee.rows++;
-                        if (cp != null) {
-                            // Purchases lists this too: a supplier paid by bank with no purchase document
-                            // shows 0 purchases and a negative "unpaid after bank" — paid, undocumented.
-                            PartyAcc seller = sellers.computeIfAbsent(cp, PartyAcc::new);
-                            seller.bankPaid = seller.bankPaid.add(v);
-                        }
+                        // Purchases: what the bank paid this seller, beside what it sold.
+                        PartyAcc seller = sellers.get(cp);
+                        if (seller != null) seller.bankPaid = seller.bankPaid.add(v);
+                    } else if (supplierGroup) {
+                        // Mapped as a supplier payment, but the counterparty is on no RS.ge
+                        // purchase document in this period. It stays in Cash outflow only,
+                        // and the party carries the amount so the mapping can be reviewed.
+                        supplierPaymentsNotOnRsGe = supplierPaymentsNotOnRsGe.add(v);
+                        supplierPaymentsNotOnRsGeCount++;
+                        PartyAcc holder = cp != null && !cp.equals(rowTin) ? parties.get(cp) : op;
+                        if (holder != null) holder.supplierPaymentsNotOnRsGe = holder.supplierPaymentsNotOnRsGe.add(v);
                     }
                     if (c != null && c.isCashWithdrawal()) {
                         withdrawals = withdrawals.add(v);
-                        if (c.isSupplierSettlement()) withdrawalsToSuppliers = withdrawalsToSuppliers.add(v);
+                        if (supplierGroup && rsSupplier) withdrawalsToSuppliers = withdrawalsToSuppliers.add(v);
                         else if (c.isUnresolved()) withdrawalsUnresolved = withdrawalsUnresolved.add(v);
                         else withdrawalsUndocumented = withdrawalsUndocumented.add(v);
                     }
@@ -373,10 +390,11 @@ public class AuditStatementService {
         notes.add("Opening stock is not recorded: inventory is the period's net movement (purchased − write-off − sold), valued at the period's average purchase price per kg.");
         if (in.unrealCustomers().isEmpty()) notes.add("No customers are marked unreal on /audit-control (or config-service was unreachable) — 'real' sales here exclude only paper-only mapped lines.");
         if (!unpriced.isEmpty()) notes.add("Inventory value excludes " + String.join(", ", unpriced) + " (no purchases with a kg price this period).");
+        if (supplierPaymentsNotOnRsGeCount > 0) notes.add("Bank slices mapped as supplier payments to counterparties on no RS.ge purchase document in this period: " + money(supplierPaymentsNotOnRsGe) + " ₾ on " + supplierPaymentsNotOnRsGeCount + " slice(s). They stay in Cash outflow only — review those mappings/rules.");
         if (in.receivables() == null) notes.add("Receivables (AR) could not be read from the payments module — the 'cash to be received from customers' line is empty, not zero.");
         else notes.add("Receivables (AR) is /payments' total outstanding as of now — a balance, while the other operands are period flows.");
 
-        return AuditStatementDto.builder()
+        AuditStatementDto dto = AuditStatementDto.builder()
                 .startDate(startDate).endDate(endDate).operator(operator)
                 .selection(selection)
                 .purchases(Row.builder().key("purchases").title("Purchases").chosenBy(CHOSEN_BY_SUPPLIERS)
@@ -387,8 +405,9 @@ public class AuditStatementService {
                         .parties(parties(sellers, chosenSuppliers, nameOf, true, true))
                         .products(groups(purGroups, anySupplier)).build())
                 .bankPaymentsToSuppliers(Row.builder().key("bankPaymentsToSuppliers").title("Bank payments to suppliers").chosenBy(CHOSEN_BY_SUPPLIERS)
-                        .definition("Real bank money out on rows mapped to a supplier-settlement group, attributed to the counterparty of each slice (else the row's). Unmapped rows are not here — they are in Cash outflow.")
+                        .definition("Real bank money out on rows mapped to a supplier-settlement group, attributed to the counterparty of each slice (else the row's) — counted only when that counterparty is a seller on an RS.ge purchase document in the period. Payments mapped as supplier payments to anyone else stay in Cash outflow and are shown beside this row.")
                         .total(money(toSuppliers.amount)).chosen(anySupplier ? money(toSuppliers.chosen) : null)
+                        .extras(supplierPaymentsNotOnRsGeCount > 0 ? List.of(fig("mapped as supplier payment, not on RS.ge", supplierPaymentsNotOnRsGe)) : List.of())
                         .rowCount(toSuppliers.rows)
                         .parties(parties(supplierPayees, chosenSuppliers, nameOf, false)).build())
                 .cashOutflow(Row.builder().key("cashOutflow").title("Cash outflow").chosenBy(CHOSEN_BY_SUPPLIERS)
@@ -428,6 +447,80 @@ public class AuditStatementService {
                         withdrawalsUndocumented, sale.amount, customerReceipts, in.receivables()))
                 .notes(notes)
                 .build();
+        dto.setChecks(checks(dto, in.documentTotals()));
+        for (Check c : dto.getChecks()) {
+            if ("FAILED".equals(c.getStatus())) {
+                notes.add("CHECK FAILED — " + c.getLabel() + ": " + c.getDetail());
+                log.warn("Statement check failed [{}] {} expected={} actual={} {}", c.getCode(), c.getLabel(), c.getExpected(), c.getActual(), c.getDetail());
+            }
+        }
+        return dto;
+    }
+
+    // ==================== self-checks ====================
+
+    private static final BigDecimal CHECK_TOLERANCE = new BigDecimal("0.011");
+
+    /**
+     * Every figure the page shows is re-derived from the parts it also shows,
+     * and the document totals are compared with what RS.ge says. Nothing here
+     * changes a figure; it only says whether the figures agree.
+     */
+    static List<Check> checks(AuditStatementDto s, DocumentTotalsDto docs) {
+        List<Check> out = new ArrayList<>();
+        for (Row r : List.of(s.getPurchases(), s.getBankPaymentsToSuppliers(), s.getCashOutflow(), s.getSales(), s.getBankInflow(), s.getCashInflow())) {
+            BigDecimal partiesSum = BigDecimal.ZERO;
+            for (Party p : r.getParties()) partiesSum = partiesSum.add(nz(p.getAmount()));
+            out.add(sumCheck("PARTIES_SUM_" + r.getKey(), r.getTitle() + ": counterparties add up to the row", nz(r.getTotal()), partiesSum,
+                    r.getParties().size() + " counterparties"));
+            if (r.getProducts() != null) {
+                BigDecimal groupsSum = BigDecimal.ZERO;
+                for (ProductGroup g : r.getProducts()) groupsSum = groupsSum.add(nz(g.getAmount()));
+                out.add(sumCheck("PRODUCTS_SUM_" + r.getKey(), r.getTitle() + ": product groups add up to the row", nz(r.getTotal()), groupsSum,
+                        r.getProducts().size() + " groups"));
+            }
+        }
+        long undocumentedPurchaseParties = s.getPurchases().getParties().stream().filter(p -> p.getRowCount() == 0).count();
+        out.add(Check.builder().code("PURCHASES_RSGE_ONLY").label("Purchases lists RS.ge sellers only")
+                .status(undocumentedPurchaseParties == 0 ? "PASSED" : "FAILED")
+                .expected(BigDecimal.ZERO).actual(BigDecimal.valueOf(undocumentedPurchaseParties))
+                .detail(undocumentedPurchaseParties == 0 ? "every supplier has at least one purchase line" : undocumentedPurchaseParties + " supplier(s) with no purchase line").build());
+        // Bank inflow: mapped + unmapped = total; withdrawals: to suppliers + undocumented + unresolved = withdrawals.
+        BigDecimal inflowParts = BigDecimal.ZERO;
+        for (Figure f : s.getBankInflow().getExtras() == null ? List.<Figure>of() : s.getBankInflow().getExtras()) inflowParts = inflowParts.add(nz(f.getAmount()));
+        out.add(sumCheck("INFLOW_SPLIT", "Bank inflow: mapped from customers + unmapped income = total", nz(s.getBankInflow().getTotal()), inflowParts, ""));
+        Summary sm = s.getSummary();
+        if (sm != null) {
+            out.add(sumCheck("WITHDRAWALS_SPLIT", "Withdrawals: to suppliers + undocumented + unresolved = withdrawals", nz(sm.getWithdrawals()),
+                    nz(sm.getWithdrawalsToSuppliers()).add(nz(sm.getWithdrawalsUndocumented())).add(nz(sm.getWithdrawalsUnresolved())), ""));
+        }
+        // RS.ge documents vs lines.
+        out.add(docCheck("RSGE_DOCUMENTS_PURCHASES", "Purchases: RS.ge document totals vs goods lines", docs == null ? null : docs.getPurchase(), nz(s.getPurchases().getTotal())));
+        out.add(docCheck("RSGE_DOCUMENTS_SALES", "Sales: RS.ge document totals vs goods lines", docs == null ? null : docs.getSale(), nz(s.getSales().getTotal())));
+        return out;
+    }
+
+    private static Check sumCheck(String code, String label, BigDecimal expected, BigDecimal actual, String detail) {
+        boolean ok = expected.subtract(actual).abs().compareTo(CHECK_TOLERANCE) <= 0;
+        return Check.builder().code(code).label(label).status(ok ? "PASSED" : "FAILED")
+                .expected(money(expected)).actual(money(actual))
+                .detail(ok ? detail : "differ by " + money(expected.subtract(actual)) + (detail.isEmpty() ? "" : " · " + detail)).build();
+    }
+
+    private static Check docCheck(String code, String label, DocumentTotalsDto.Side side, BigDecimal linesShown) {
+        if (side == null) {
+            return Check.builder().code(code).label(label).status("SKIPPED").detail("waybill-service did not answer — not checked").build();
+        }
+        BigDecimal docs = nz(side.getDocumentAmount());
+        boolean sameLines = nz(side.getLinesAmount()).subtract(linesShown).abs().compareTo(CHECK_TOLERANCE) <= 0;
+        boolean ok = docs.subtract(linesShown).abs().compareTo(CHECK_TOLERANCE) <= 0 && sameLines;
+        StringBuilder d = new StringBuilder();
+        d.append(side.getWaybills()).append(" waybills, ").append(side.getCounterparties()).append(" counterparties");
+        if (side.getWaybillsWithoutGoods() > 0) d.append(" · ").append(side.getWaybillsWithoutGoods()).append(" without goods (").append(money(side.getAmountWithoutGoods())).append(")");
+        if (side.getWaybillsWithMismatch() > 0) d.append(" · ").append(side.getWaybillsWithMismatch()).append(" whose lines ≠ document total (").append(money(side.getMismatchAmount())).append(")");
+        if (!sameLines) d.append(" · lines counted here ").append(money(linesShown)).append(" ≠ lines at source ").append(money(side.getLinesAmount()));
+        return Check.builder().code(code).label(label).status(ok ? "PASSED" : "FAILED")
+                .expected(money(docs)).actual(money(linesShown)).detail(d.toString()).build();
     }
 
     // ==================== bulk map ====================
@@ -658,7 +751,7 @@ public class AuditStatementService {
     private static final class PartyAcc {
         final String tin; String name; String identityBasis; boolean unreal;
         BigDecimal amount = BigDecimal.ZERO, kg = BigDecimal.ZERO, secondary = BigDecimal.ZERO; int rows;
-        BigDecimal direct = BigDecimal.ZERO, mapped = BigDecimal.ZERO, bankPaid = BigDecimal.ZERO; int directCount, mappedCount;
+        BigDecimal direct = BigDecimal.ZERO, mapped = BigDecimal.ZERO, bankPaid = BigDecimal.ZERO, supplierPaymentsNotOnRsGe = BigDecimal.ZERO; int directCount, mappedCount;
         PartyAcc(String tin) { this.tin = tin; }
         void add(BigDecimal a, BigDecimal k) { amount = amount.add(a); kg = kg.add(k); rows++; }
     }
@@ -704,6 +797,7 @@ public class AuditStatementService {
                     .unpaidAfterBank(withBank ? money(a.amount.subtract(a.bankPaid)) : null)
                     .rowCount(a.rows).chosen(chosen.contains(tin != null ? tin : e.getKey())).unreal(a.unreal)
                     .identityBasis(a.identityBasis)
+                    .supplierPaymentsNotOnRsGe(a.supplierPaymentsNotOnRsGe.signum() != 0 ? money(a.supplierPaymentsNotOnRsGe) : null)
                     .build());
         }
         out.sort(Comparator.comparing(Party::getAmount, Comparator.reverseOrder()));

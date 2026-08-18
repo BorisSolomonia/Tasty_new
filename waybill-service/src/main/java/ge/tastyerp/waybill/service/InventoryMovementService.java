@@ -1,6 +1,7 @@
 package ge.tastyerp.waybill.service;
 
 import ge.tastyerp.common.dto.audit.ProductHierarchy;
+import ge.tastyerp.common.dto.audit.DocumentTotalsDto;
 import ge.tastyerp.common.dto.audit.ProductMovementDto;
 import ge.tastyerp.common.dto.waybill.WaybillDto;
 import ge.tastyerp.common.dto.waybill.WaybillGoodDto;
@@ -69,6 +70,7 @@ public class InventoryMovementService {
     static final int MAX_CACHED_RANGES = 4;
 
     private volatile SimpleTtlCache<String, List<ProductMovementDto>> cache;
+    private volatile SimpleTtlCache<String, DocumentTotalsDto> totalsCache;
 
     /**
      * The SALE/PURCHASE list fetches run on their own two threads, not
@@ -104,8 +106,92 @@ public class InventoryMovementService {
         return cache().getOrCompute(key, () -> fetchProductMovements(startDate, endDate));
     }
 
+    /**
+     * RS.ge document totals next to the goods-line totals for the period — the
+     * independent figure the audit statement checks its line-based totals
+     * against (BOR-92 v6). Same fetch path as the movements, so both are read
+     * from the same waybills and the same stored goods.
+     */
+    public DocumentTotalsDto getDocumentTotals(String startDate, String endDate) {
+        String key = startDate + "|" + endDate;
+        SimpleTtlCache<String, DocumentTotalsDto> local = totalsCache;
+        if (local == null) {
+            synchronized (this) {
+                if (totalsCache == null) {
+                    totalsCache = SimpleTtlCache.named("waybill.documentTotals", cacheTtlMs, 8);
+                }
+                local = totalsCache;
+            }
+        }
+        return local.getOrCompute(key, () -> totals(loadDocuments(startDate, endDate), startDate, endDate));
+    }
+
+    static DocumentTotalsDto totals(Documents d, String startDate, String endDate) {
+        return DocumentTotalsDto.builder()
+                .startDate(startDate).endDate(endDate)
+                .purchase(side(d.purchases(), d.goodsByWaybillId(), d.returnWaybillIds(), true))
+                .sale(side(d.sales(), d.goodsByWaybillId(), d.returnWaybillIds(), false))
+                .build();
+    }
+
+    private static DocumentTotalsDto.Side side(List<WaybillDto> waybills, Map<String, List<WaybillGoodDto>> goodsById,
+                                               Set<String> returnIds, boolean purchase) {
+        BigDecimal docAmount = BigDecimal.ZERO, lines = BigDecimal.ZERO, noGoodsAmount = BigDecimal.ZERO, mismatch = BigDecimal.ZERO;
+        int noGoods = 0, mismatched = 0;
+        Set<String> counterparties = new HashSet<>();
+        for (WaybillDto w : waybills) {
+            boolean returned = returnIds.contains(w.getWaybillId());
+            BigDecimal amount = w.getAmount() == null ? BigDecimal.ZERO : w.getAmount().abs();
+            if (returned) amount = amount.negate();
+            docAmount = docAmount.add(amount);
+            String cp = purchase ? w.getSellerTin() : w.getBuyerTin();
+            if (cp != null && !cp.isBlank()) counterparties.add(cp.trim());
+            List<WaybillGoodDto> goods = goodsById.get(w.getWaybillId());
+            if (goods == null || goods.isEmpty()) {
+                noGoods++;
+                noGoodsAmount = noGoodsAmount.add(amount);
+                continue;
+            }
+            BigDecimal lineSum = BigDecimal.ZERO;
+            for (WaybillGoodDto g : goods) {
+                if (g.getName() == null || g.getQuantity() == null) continue;   // exactly what toMovements skips
+                BigDecimal tp = g.getTotalPrice() == null ? BigDecimal.ZERO : g.getTotalPrice().abs();
+                lineSum = lineSum.add(returned ? tp.negate() : tp);
+            }
+            lines = lines.add(lineSum);
+            BigDecimal diff = amount.subtract(lineSum);
+            if (diff.abs().compareTo(new BigDecimal("0.011")) > 0) {
+                mismatched++;
+                mismatch = mismatch.add(diff);
+            }
+        }
+        return DocumentTotalsDto.Side.builder()
+                .waybills(waybills.size())
+                .documentAmount(docAmount.setScale(2, java.math.RoundingMode.HALF_UP))
+                .linesAmount(lines.setScale(2, java.math.RoundingMode.HALF_UP))
+                .waybillsWithoutGoods(noGoods)
+                .amountWithoutGoods(noGoodsAmount.setScale(2, java.math.RoundingMode.HALF_UP))
+                .waybillsWithMismatch(mismatched)
+                .mismatchAmount(mismatch.setScale(2, java.math.RoundingMode.HALF_UP))
+                .counterparties(counterparties.size())
+                .build();
+    }
+
+    /** The waybills of a period with their goods and return flags — the input to both movements and totals. */
+    record Documents(List<WaybillDto> sales, List<WaybillDto> purchases,
+                     Map<String, List<WaybillGoodDto>> goodsByWaybillId, Set<String> returnWaybillIds) {}
+
     private List<ProductMovementDto> fetchProductMovements(String startDate, String endDate) {
-        log.info("Building product movements for {} to {} (cache miss)", startDate, endDate);
+        Documents d = loadDocuments(startDate, endDate);
+        List<ProductMovementDto> movements = new ArrayList<>();
+        movements.addAll(toMovements(d.sales(), WaybillType.SALE, d.goodsByWaybillId(), d.returnWaybillIds()));
+        movements.addAll(toMovements(d.purchases(), WaybillType.PURCHASE, d.goodsByWaybillId(), d.returnWaybillIds()));
+        log.info("Produced {} product movements for {} to {}", movements.size(), startDate, endDate);
+        return movements;
+    }
+
+    private Documents loadDocuments(String startDate, String endDate) {
+        log.info("Loading RS.ge documents for {} to {} (cache miss)", startDate, endDate);
         long t0 = System.currentTimeMillis();
 
         // SALE and PURCHASE lists are independent RS.ge calls — fetch in parallel.
@@ -170,14 +256,9 @@ public class InventoryMovementService {
             waybillGoodsRepository.saveAll(toStore);
         }
         long tGoods = System.currentTimeMillis();
-
-        List<ProductMovementDto> movements = new ArrayList<>();
-        movements.addAll(toMovements(sales, WaybillType.SALE, goodsByWaybillId, returnWaybillIds));
-        movements.addAll(toMovements(purchases, WaybillType.PURCHASE, goodsByWaybillId, returnWaybillIds));
-
-        log.info("Produced {} product movements (lists {} ms, goods {} ms, total {} ms)",
-                movements.size(), tLists - t0, tGoods - tLists, System.currentTimeMillis() - t0);
-        return movements;
+        log.info("Loaded documents (lists {} ms, goods {} ms, total {} ms)",
+                tLists - t0, tGoods - tLists, System.currentTimeMillis() - t0);
+        return new Documents(sales, purchases, goodsByWaybillId, returnWaybillIds);
     }
 
     private List<String> idsOf(List<WaybillDto> waybills) {

@@ -114,6 +114,15 @@ public class WaybillController {
         return ResponseEntity.ok(ApiResponse.success(movements));
     }
 
+    @GetMapping("/document-totals")
+    @Operation(summary = "RS.ge document totals vs goods-line totals for the period — the audit statement's cross-check")
+    public ResponseEntity<ApiResponse<ge.tastyerp.common.dto.audit.DocumentTotalsDto>> getDocumentTotals(
+            @RequestParam String startDate,
+            @RequestParam String endDate) {
+        log.info("HTTP GET /api/waybills/document-totals startDate={} endDate={}", startDate, endDate);
+        return ResponseEntity.ok(ApiResponse.success(inventoryMovementService.getDocumentTotals(startDate, endDate)));
+    }
+
     @GetMapping("/vat")
     @Operation(summary = "Get sold vs purchased VAT summary (legacy rules, backend-calculated)")
     public ResponseEntity<ApiResponse<WaybillVatSummaryDto>> getVatSummary(

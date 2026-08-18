@@ -141,6 +141,8 @@ export interface StatementParty {
   /** Purchases: bank money mapped to this supplier, and purchases minus that. */
   bankPaid: number | null
   unpaidAfterBank: number | null
+  /** Bank rows: ₾ mapped as supplier payment to this party while it is on no RS.ge purchase document in the period. */
+  supplierPaymentsNotOnRsGe: number | null
   rowCount: number
   chosen: boolean
   unreal: boolean
@@ -224,6 +226,15 @@ export interface StatementInventoryRow {
   levels: StatementLevel[]
 }
 
+export interface StatementCheck {
+  code: string
+  label: string
+  status: 'PASSED' | 'FAILED' | 'SKIPPED'
+  expected: number | null
+  actual: number | null
+  detail: string | null
+}
+
 export interface AuditStatement {
   startDate: string
   endDate: string
@@ -237,6 +248,8 @@ export interface AuditStatement {
   bankInflow: StatementRow
   cashInflow: StatementRow
   summary: StatementSummary | null
+  /** Self-checks the server ran on this very payload; a FAILED one is shown, never hidden. */
+  checks: StatementCheck[] | null
   notes: string[]
 }
 

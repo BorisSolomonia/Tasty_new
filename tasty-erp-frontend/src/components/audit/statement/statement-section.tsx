@@ -189,6 +189,7 @@ export function StatementSection() {
       </div>
 
       {statement?.summary ? <SummaryLines summary={statement.summary} /> : null}
+      {statement?.checks ? <ChecksStrip checks={statement.checks} /> : null}
 
       {statement?.notes?.length ? (
         <ul className="list-disc space-y-0.5 border-t border-border px-4 py-2 pl-8 text-[11px] text-muted-foreground">
@@ -345,6 +346,49 @@ function SummaryLines({ summary: s }: { summary: NonNullable<AuditStatement['sum
         withdrawals {g(s.withdrawals)} − undocumented withdrawals {g(s.withdrawalsUndocumented)} + cash to be received from customers{' '}
         {g(s.cashToReceiveFromCustomers)} = <span className="font-semibold">{g(s.cashToPaySuppliers)} to be paid to suppliers as cash</span>
       </p>
+    </div>
+  )
+}
+
+/**
+ * The server re-derived every figure from the parts it also sent and compared
+ * the document totals with RS.ge; this is where that verdict lands. Passed is
+ * one quiet line; failed or skipped checks are spelled out with their figures.
+ */
+function ChecksStrip({ checks }: { checks: AuditStatement['checks'] }) {
+  const [open, setOpen] = React.useState(false)
+  if (!checks) return null
+  const failed = checks.filter((c) => c.status === 'FAILED')
+  const skipped = checks.filter((c) => c.status === 'SKIPPED')
+  const passed = checks.length - failed.length - skipped.length
+  return (
+    <div className="border-t border-border px-4 py-2 text-xs" data-testid="statement-checks">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={cn('font-medium', failed.length ? 'text-destructive' : 'text-success')}>
+          {failed.length ? `${fmtCount(failed.length)} check${failed.length === 1 ? '' : 's'} failed` : `Checks: ${fmtCount(passed)} passed`}
+        </span>
+        {!failed.length && skipped.length ? <span className="text-muted-foreground">· {fmtCount(skipped.length)} skipped (input unavailable)</span> : null}
+        <span className="text-muted-foreground">— every window adds up to its row; RS.ge document totals vs the lines counted here.</span>
+        <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+          {open ? 'Hide' : 'Show all'}
+        </Button>
+      </div>
+      {(open ? checks : [...failed, ...skipped]).length ? (
+        <ul className="mt-1 space-y-0.5">
+          {(open ? checks : [...failed, ...skipped]).map((c) => (
+            <li key={c.code} className={cn('flex flex-wrap gap-x-2', c.status === 'FAILED' ? 'text-destructive' : c.status === 'SKIPPED' ? 'text-muted-foreground' : 'text-muted-foreground')}>
+              <span className="font-medium">{c.status === 'PASSED' ? '✓' : c.status === 'FAILED' ? '✕' : '–'}</span>
+              <span>{c.label}</span>
+              {c.expected !== null || c.actual !== null ? (
+                <span className="tabular-nums">
+                  {c.status === 'FAILED' ? `expected ${fmtGel(c.expected)} · shown ${fmtGel(c.actual)}` : fmtGel(c.actual)}
+                </span>
+              ) : null}
+              {c.detail ? <span>· {c.detail}</span> : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   )
 }
