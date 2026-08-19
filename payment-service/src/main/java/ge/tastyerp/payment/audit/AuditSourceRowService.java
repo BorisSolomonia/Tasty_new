@@ -64,8 +64,13 @@ public class AuditSourceRowService {
     @Value("${waybill.service.url:http://waybill-service:8081}")
     private String waybillServiceUrl;
 
-    /** TTL for the per-range document-movement cache (ms). Default 20 minutes — the feed costs ~35 s to rebuild. */
-    @Value("${audit.layer-movements-cache-ttl-ms:1200000}")
+    /**
+     * TTL for the per-range document-movement cache (ms). Default 3 minutes:
+     * waybill-service keeps the heavy feed warm (refresh-ahead), so this copy
+     * only saves the HTTP transfer — a long TTL here would hide RS.ge changes
+     * waybill-service already has.
+     */
+    @Value("${audit.layer-movements-cache-ttl-ms:180000}")
     private long movementsCacheTtlMs;
 
     /** Distinct date ranges kept at once; see the note at the construction site. */

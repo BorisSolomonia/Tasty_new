@@ -50,6 +50,33 @@ public class RsGeWarmup {
         t.start();
     }
 
+    private volatile boolean warmed;
+
+    /**
+     * Refresh-ahead: every few minutes rebuild the audit's default period, so
+     * a waybill created or corrected on RS.ge reaches /audit within one refresh
+     * interval plus the open-chunk TTL (2 min), without any reader paying the
+     * ~35 s rebuild. The closed-chunk TTL (6 h) bounds how late a *backdated*
+     * correction shows; today's and yesterday's chunks refetch every 2 minutes.
+     */
+    @org.springframework.scheduling.annotation.Scheduled(
+            fixedDelayString = "${rsge.warmup.refresh-minutes:5}",
+            initialDelayString = "${rsge.warmup.refresh-minutes:5}",
+            timeUnit = java.util.concurrent.TimeUnit.MINUTES)
+    public void refresh() {
+        if (!enabled || !warmed) {
+            return;
+        }
+        long t0 = System.currentTimeMillis();
+        try {
+            inventoryMovementService.refreshRange(startDate, java.time.LocalDate.now().toString());
+            log.info("Audit refresh-ahead done in {} ms", System.currentTimeMillis() - t0);
+        } catch (Exception e) {
+            log.warn("Audit refresh-ahead failed after {} ms (readers fall back to on-demand): {}",
+                    System.currentTimeMillis() - t0, e.getMessage());
+        }
+    }
+
     void warm() {
         long t0 = System.currentTimeMillis();
         try {
@@ -64,6 +91,7 @@ public class RsGeWarmup {
             inventoryMovementService.getDocumentTotals(startDate, today);
             log.info("Audit warm-up complete: {} document lines for {}..{} in {} ms",
                     lines, startDate, today, System.currentTimeMillis() - t0);
+            warmed = true;
         } catch (Exception e) {
             log.warn("RS.ge warm-up failed after {} ms (requests will fetch on demand): {}",
                     System.currentTimeMillis() - t0, e.getMessage());

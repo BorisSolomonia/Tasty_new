@@ -7,6 +7,7 @@ import org.springframework.context.annotation.ComponentScan;
 
 @SpringBootApplication
 @ComponentScan(basePackages = "ge.tastyerp")
+@org.springframework.scheduling.annotation.EnableScheduling
 public class WaybillServiceApplication {
 
     public static void main(String[] args) {

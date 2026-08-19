@@ -161,11 +161,35 @@ public final class SimpleTtlCache<K, V> {
         }
     }
 
+    /**
+     * Store a value computed elsewhere (refresh-ahead): the next reader gets it
+     * without paying for the load, and the TTL restarts now.
+     */
+    public void put(K key, V value) {
+        store(key, value, clock.getAsLong());
+    }
+
     private void store(K key, V value, long now) {
-        if (map.size() >= maxEntries) {
+        if (map.size() >= maxEntries && !map.containsKey(key)) {
             sweepExpired(now);
-            if (map.size() >= maxEntries) {
-                map.clear();
+            // Still full: drop the entries closest to expiry until one slot is free.
+            // It used to clear the whole map, which meant a range one chunk larger
+            // than the bound could never be held — every sweep wiped what the
+            // previous one had just cached (BOR-92: the RS.ge chunk cache at 400
+            // against ~440 chunks for 2023→today).
+            while (map.size() >= maxEntries) {
+                K oldest = null;
+                long oldestExpiry = Long.MAX_VALUE;
+                for (Map.Entry<K, Entry<V>> e : map.entrySet()) {
+                    if (e.getValue().expiresAtMillis() < oldestExpiry) {
+                        oldestExpiry = e.getValue().expiresAtMillis();
+                        oldest = e.getKey();
+                    }
+                }
+                if (oldest == null) {
+                    break;
+                }
+                map.remove(oldest);
             }
         }
         map.put(key, new Entry<>(value, now + ttlMillis));

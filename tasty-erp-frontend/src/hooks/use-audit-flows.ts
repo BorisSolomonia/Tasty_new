@@ -43,6 +43,13 @@ import {
 export const AUDIT_LAYER_KEY = 'audit-layer'
 
 const STALE = 1000 * 60 * 2
+/**
+ * The audit page stays open for long stretches while statements are uploaded
+ * and RS.ge moves; its headline queries re-ask on this interval (foreground
+ * only), so what it shows is never older than this plus the servers' own
+ * feed refresh (waybill-service refreshes the default period every 5 min).
+ */
+export const AUDIT_REFRESH_MS = 1000 * 60 * 5
 
 /** The single canonical three-flow payload. */
 export function useAuditFlows(params: AuditPeriodParams, enabled = true) {
@@ -50,6 +57,8 @@ export function useAuditFlows(params: AuditPeriodParams, enabled = true) {
     queryKey: [AUDIT_LAYER_KEY, 'flows', params.startDate, params.endDate, params.product ?? ''],
     queryFn: () => auditLayerApi.getFlows(params),
     staleTime: STALE,
+    refetchInterval: AUDIT_REFRESH_MS,
+    refetchIntervalInBackground: false,
     // No retry: over a wide range this is a long scan, and a silent second
     // attempt would double the wait. A failure surfaces at once and the
     // operator decides whether to re-run it.
@@ -84,6 +93,8 @@ export function useAuditStatement(params: { startDate: string; endDate: string; 
     queryKey: [AUDIT_LAYER_KEY, 'statement', params.startDate, params.endDate, params.operator ?? ''],
     queryFn: () => auditLayerApi.getStatement(params),
     staleTime: STALE,
+    refetchInterval: AUDIT_REFRESH_MS,
+    refetchIntervalInBackground: false,
     retry: false,
     enabled,
   })

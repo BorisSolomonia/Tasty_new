@@ -114,6 +114,27 @@ public class InventoryMovementService {
         return cache().getOrCompute(key, () -> fetchProductMovements(startDate, endDate));
     }
 
+    /**
+     * Refresh-ahead (BOR-92): rebuild the documents, movements and totals of one
+     * range and store them, so readers keep getting a warm answer while RS.ge
+     * changes flow in. Called by the scheduler for the audit's default period.
+     */
+    public void refreshRange(String startDate, String endDate) {
+        guard(startDate, endDate);
+        String key = startDate + "|" + endDate;
+        Documents d = loadDocuments(startDate, endDate);
+        documents(startDate, endDate);   // ensures the cache object exists
+        documentsCache.put(key, d);
+        List<ProductMovementDto> movements = new ArrayList<>();
+        movements.addAll(toMovements(d.sales(), WaybillType.SALE, d.goodsByWaybillId(), d.returnWaybillIds()));
+        movements.addAll(toMovements(d.purchases(), WaybillType.PURCHASE, d.goodsByWaybillId(), d.returnWaybillIds()));
+        cache().put(key, movements);
+        getDocumentTotals(startDate, endDate);   // creates the totals cache if needed
+        totalsCache.put(key, totals(d, startDate, endDate));
+        log.info("Refreshed documents for {}..{}: {} waybills, {} lines", startDate, endDate,
+                d.sales().size() + d.purchases().size(), movements.size());
+    }
+
     /** A period nobody could mean (year 0202, a decade-long sweep) is refused here, before any thread is spent on it. */
     private static void guard(String startDate, String endDate) {
         java.time.LocalDate s = ge.tastyerp.common.util.DateUtils.parseDate(startDate);

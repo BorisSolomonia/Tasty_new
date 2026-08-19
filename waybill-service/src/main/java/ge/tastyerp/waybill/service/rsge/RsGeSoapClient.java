@@ -113,7 +113,9 @@ public class RsGeSoapClient {
     static final long CLOSED_CHUNK_TTL_MS = 6L * 60 * 60 * 1000;
     static final long OPEN_CHUNK_TTL_MS = 2L * 60 * 1000;
     private final SimpleTtlCache<String, List<Map<String, Object>>> closedChunks =
-            SimpleTtlCache.named("rsge.chunks.closed", CLOSED_CHUNK_TTL_MS, 400);
+            // 2023-01-01→today is ~440 three-day chunks; at 400 the bound was hit on
+            // every full-period sweep and the cache was wiped mid-way (BOR-92).
+            SimpleTtlCache.named("rsge.chunks.closed", CLOSED_CHUNK_TTL_MS, 1200);
     private final SimpleTtlCache<String, List<Map<String, Object>>> openChunks =
             SimpleTtlCache.named("rsge.chunks.open", OPEN_CHUNK_TTL_MS, 32);
 
