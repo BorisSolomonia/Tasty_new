@@ -2,7 +2,7 @@ import * as React from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { startOfMonth, endOfMonth, subMonths, startOfQuarter, endOfQuarter } from 'date-fns'
 import { AlertTriangle, ChevronRight, Download, RefreshCw, ShieldCheck } from 'lucide-react'
-import { auditApi, configApi } from '@/lib/api-client'
+import { auditApi, configApi, waybillsApi } from '@/lib/api-client'
 import type {
   AuditDashboard,
   CategoryLedgerInput,
@@ -1481,6 +1481,16 @@ async function exportLedgerWorkbook(data: AuditDashboard) {
   // xlsx (~130 KB gzipped) is loaded only when the user actually exports,
   // keeping it out of the initial page chunk.
   const XLSX = await import('xlsx')
+  // The document lines behind the ledger — the exact RS.ge product names, as
+  // purchased and as sold — with the operator's group overrides applied the
+  // way the server applies them (exact name, case-insensitive).
+  const [lines, overrides] = await Promise.all([
+    waybillsApi.getProductMovements(data.startDate, data.endDate),
+    configApi.getProductCategories().catch(() => [] as Array<{ name: string; category: string }>),
+  ])
+  const overrideByName = new Map(overrides.map((o) => [o.name.trim().toLowerCase(), o.category]))
+  const groupOf = (l: { productName: string | null; parentCategory: string | null }) =>
+    (l.productName ? overrideByName.get(l.productName.trim().toLowerCase()) : undefined) ?? l.parentCategory ?? 'OTHER'
   const rows: Array<Record<string, string | number>> = []
   for (const ledger of data.inventoryLedgers) {
     for (const r of ledger.dailyRows) {
@@ -1501,5 +1511,39 @@ async function exportLedgerWorkbook(data: AuditDashboard) {
   const sheet = XLSX.utils.json_to_sheet(rows)
   const workbook = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(workbook, sheet, 'Daily Ledger')
+
+  const lineRows = lines
+    .slice()
+    .sort((a, b) => (a.date ?? '').localeCompare(b.date ?? '') || (a.type ?? '').localeCompare(b.type ?? ''))
+    .map((l) => ({
+      Date: l.date ?? '',
+      Type: l.type ?? '',
+      Waybill: l.waybillId ?? '',
+      'Counterparty TIN': l.counterpartyId ?? '',
+      Counterparty: l.counterpartyName ?? '',
+      Product: l.productName ?? '',
+      Group: groupOf(l),
+      Quantity: l.quantityKg ?? '',
+      Unit: l.unit ?? '',
+      'Amount (GEL)': l.amount ?? '',
+    }))
+  const purchaseLines = lineRows.filter((r) => r.Type === 'PURCHASE')
+  const saleLines = lineRows.filter((r) => r.Type === 'SALE')
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(purchaseLines), 'Purchased lines')
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(saleLines), 'Sold lines')
+
+  // Product totals: each exact product name once per type, with its group and summed quantity / amount.
+  const byProduct = new Map<string, { Type: string; Product: string; Group: string; Unit: string; Lines: number; Quantity: number; 'Amount (GEL)': number }>()
+  for (const l of lines) {
+    const key = `${l.type}|${l.productName ?? ''}|${l.unit ?? ''}`
+    const acc = byProduct.get(key) ?? { Type: l.type ?? '', Product: l.productName ?? '', Group: groupOf(l), Unit: l.unit ?? '', Lines: 0, Quantity: 0, 'Amount (GEL)': 0 }
+    acc.Lines += 1
+    acc.Quantity += l.quantityKg ?? 0
+    acc['Amount (GEL)'] += l.amount ?? 0
+    byProduct.set(key, acc)
+  }
+  const productRows = [...byProduct.values()].sort((a, b) => a.Type.localeCompare(b.Type) || b['Amount (GEL)'] - a['Amount (GEL)'])
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(productRows), 'Products')
+
   XLSX.writeFile(workbook, `audit-ledger_${data.startDate}_${data.endDate}.xlsx`)
 }

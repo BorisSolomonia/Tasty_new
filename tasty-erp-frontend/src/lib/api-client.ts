@@ -80,6 +80,21 @@ export async function jsonData<T>(response: Response): Promise<T> {
 }
 
 // Waybills API
+/** One goods line of an RS.ge waybill, as waybill-service serves it. */
+export interface ProductMovementLine {
+  date: string | null
+  type: 'PURCHASE' | 'SALE' | null
+  productName: string | null
+  /** Automatic group (before operator overrides). */
+  parentCategory: string | null
+  quantityKg: number | null
+  unit: string | null
+  amount: number | null
+  waybillId: string | null
+  counterpartyId: string | null
+  counterpartyName: string | null
+}
+
 export const waybillsApi = {
   getAll: async (params?: {
     customerId?: string
@@ -113,6 +128,12 @@ export const waybillsApi = {
   getVatSummary: async (params: { startDate: string; endDate: string; afterCutoffOnly?: boolean }) => {
     const response = await fetchWithAuth('/waybills/vat', { params })
     return jsonData<WaybillVatSummary>(response)
+  },
+
+  /** Every RS.ge document line of the period — the exact product names, as purchased and as sold. */
+  getProductMovements: async (startDate: string, endDate: string) => {
+    const response = await fetchWithAuth('/waybills/product-movements', { params: { startDate, endDate } })
+    return jsonData<ProductMovementLine[]>(response)
   },
 
   // Pre-aggregated customer sales totals from RS.ge (one object per customer, no raw waybills)
