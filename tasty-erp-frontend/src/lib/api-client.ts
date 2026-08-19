@@ -144,6 +144,38 @@ export const waybillsApi = {
 }
 
 // Payments API
+/** One item of the shared checklist at the bottom of /payments. */
+export interface TodoItem {
+  id: string
+  text: string
+  done: boolean
+  createdBy: string | null
+  createdAt: string | null
+  doneBy: string | null
+  doneAt: string | null
+}
+
+export const todosApi = {
+  list: async () => {
+    const response = await fetchWithAuth('/payments/todos')
+    return jsonData<TodoItem[]>(response)
+  },
+  add: async (text: string, author: string | null) => {
+    const response = await fetchWithAuth('/payments/todos', { method: 'POST', body: JSON.stringify({ text, author }) })
+    return jsonData<TodoItem>(response)
+  },
+  setDone: async (id: string, done: boolean, by: string | null) => {
+    const response = await fetchWithAuth(`/payments/todos/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      params: { done: String(done), by: by ?? undefined },
+    })
+    return jsonData<TodoItem>(response)
+  },
+  remove: async (id: string) => {
+    await fetchWithAuth(`/payments/todos/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  },
+}
+
 export const paymentsApi = {
   getAll: async (startDate?: string, endDate?: string, customerId?: string, source?: string) => {
     const response = await fetchWithAuth('/payments', {

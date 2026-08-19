@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { addDays } from 'date-fns'
 import { paymentsApi, waybillsApi, configApi, debtsApi, apiErrorMessage } from '@/lib/api-client'
 import { Card } from '@/components/ui/card'
+import { TodoList } from '@/components/payments/todo-list'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { formatCurrency, formatDateISO, canonicalId } from '@/lib/utils'
@@ -826,6 +827,9 @@ export function PaymentsPage() {
           </div>
         </Card>
       )}
+
+      {/* Shared checklist for the team working this page. */}
+      <TodoList />
     </div>
   )
 }
